@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
+using System.Runtime.InteropServices;
 
 public sealed class HotkeyCaptureForm : Form
 {
@@ -21,11 +22,14 @@ public sealed class HotkeyCaptureForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true; MinimizeBox = true;
-        Width = 520; Height = 280;
+        Width = 560; Height = 340;
         KeyPreview = true;
         AutoScaleMode = AutoScaleMode.Dpi;
-        MinimumSize = new Size(520, 300);
+        AutoScroll = true;
+        AutoSize = false;
+        MinimumSize = new Size(560, 360);
         SizeGripStyle = SizeGripStyle.Show;
+        TopMost = true;
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(16), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // prompt
@@ -37,9 +41,12 @@ public sealed class HotkeyCaptureForm : Form
         _prompt = new Label 
         { 
             Text = "Press a keyboard shortcut to use as your global hotkey.\r\n" +
-                   "Must include Ctrl, Alt, or Shift (e.g., Ctrl+Alt+R)",
-            AutoSize = true, 
-            Dock = DockStyle.Fill
+                   "Must include Ctrl, Alt, Shift, or Win plus a non-modifier key (e.g., Ctrl+Alt+R, Win+T)",
+            AutoSize = true,
+            MaximumSize = new Size(720, 0),
+            Dock = DockStyle.Fill,
+            UseCompatibleTextRendering = true,
+            Margin = new Padding(0, 0, 0, 6)
         };
         layout.Controls.Add(_prompt, 0, 0);
 
@@ -58,17 +65,19 @@ public sealed class HotkeyCaptureForm : Form
         _hint = new Label 
         { 
             Text = "Waiting for input...",
-            AutoSize = true, 
+            AutoSize = true,
+            MaximumSize = new Size(720, 0),
             Dock = DockStyle.Fill,
+            UseCompatibleTextRendering = true,
             ForeColor = SystemColors.GrayText,
-            Margin = new Padding(0, 4, 0, 0)
+            Margin = new Padding(0, 4, 0, 6)
         };
         layout.Controls.Add(_hint, 0, 2);
 
         // spacer to push buttons to bottom when resized taller
         layout.Controls.Add(new Panel { Dock = DockStyle.Fill }, 0, 3);
 
-        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(10), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Anchor = AnchorStyles.Right | AnchorStyles.Top };
+        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(10), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill };
         _ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Enabled = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _clear = new Button { Text = "Clear", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
@@ -82,6 +91,7 @@ public sealed class HotkeyCaptureForm : Form
         AcceptButton = _ok; CancelButton = _cancel;
 
         KeyDown += OnKeyDownCapture;
+        Shown += (_, __) => AdjustSizeToContent(layout);
     }
 
     private void ClearCapture()
@@ -99,7 +109,8 @@ public sealed class HotkeyCaptureForm : Form
     private void OnKeyDownCapture(object? sender, KeyEventArgs e)
     {
         // Ignore pure modifier presses
-        if (e.KeyCode == Keys.ControlKey || e.KeyCode == Keys.ShiftKey || e.KeyCode == Keys.Menu)
+        if (e.KeyCode == Keys.ControlKey || e.KeyCode == Keys.ShiftKey || e.KeyCode == Keys.Menu ||
+            e.KeyCode == Keys.LWin || e.KeyCode == Keys.RWin)
         {
             e.SuppressKeyPress = true; return;
         }
@@ -108,10 +119,12 @@ public sealed class HotkeyCaptureForm : Form
         if (e.Control) mods |= 0x0002; // MOD_CONTROL
         if (e.Alt) mods |= 0x0001;     // MOD_ALT
         if (e.Shift) mods |= 0x0004;   // MOD_SHIFT
+        bool winDown = IsWinDown();
+        if (winDown) mods |= 0x0008;   // MOD_WIN
 
         Modifiers = mods;
         Key = (uint)e.KeyCode;
-        Display = BuildDisplay(e.Control, e.Alt, e.Shift, e.KeyCode);
+        Display = BuildDisplay(e.Control, e.Alt, e.Shift, winDown, e.KeyCode);
         _display.Text = Display;
 
         if (mods != 0 && Key != 0)
@@ -124,7 +137,7 @@ public sealed class HotkeyCaptureForm : Form
         else
         {
             _display.BackColor = Color.LightCoral;
-            _hint.Text = "⚠ Must include Ctrl, Alt, or Shift modifier key.";
+            _hint.Text = "⚠ Must include Ctrl, Alt, Shift, or Win and a non-modifier key.";
             _hint.ForeColor = Color.Red;
             _ok.Enabled = false;
         }
@@ -132,13 +145,42 @@ public sealed class HotkeyCaptureForm : Form
         e.SuppressKeyPress = true;
     }
 
-    private static string BuildDisplay(bool ctrl, bool alt, bool shift, Keys key)
+    private static string BuildDisplay(bool ctrl, bool alt, bool shift, bool win, Keys key)
     {
         System.Collections.Generic.List<string> parts = new();
         if (ctrl) parts.Add("Ctrl");
         if (alt) parts.Add("Alt");
         if (shift) parts.Add("Shift");
+        if (win) parts.Add("Win");
         parts.Add(key.ToString());
         return string.Join("+", parts);
+    }
+
+    [DllImport("user32.dll")] private static extern short GetKeyState(int nVirtKey);
+    private const int VK_LWIN = 0x5B;
+    private const int VK_RWIN = 0x5C;
+    private static bool IsWinDown()
+    {
+        try { return ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0); }
+        catch { return false; }
+    }
+
+    private void AdjustSizeToContent(Control layout)
+    {
+        try
+        {
+            // Constrain labels to current width so they wrap correctly
+            int wrapW = Math.Max(300, ClientSize.Width - 40);
+            _prompt.MaximumSize = new Size(wrapW, 0);
+            _hint.MaximumSize = new Size(wrapW, 0);
+            layout.PerformLayout();
+            var pref = layout.PreferredSize;
+            int pad = 24;
+            var wa = Screen.FromControl(this).WorkingArea;
+            int w = Math.Min(wa.Width - 80, Math.Max(MinimumSize.Width, pref.Width + pad));
+            int h = Math.Min(wa.Height - 80, Math.Max(MinimumSize.Height, pref.Height + pad));
+            ClientSize = new Size(w, h);
+        }
+        catch { }
     }
 }
