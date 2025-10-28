@@ -7,6 +7,7 @@ using System.Windows.Forms;
 public sealed class AppConfig
 {
     public bool AutoPaste { get; set; } = true;
+    public bool UseClipboardFallback { get; set; } = true;
     public HotkeyConfig Hotkey { get; set; } = new();
     public LlmConfig Llm { get; set; } = new();
 }

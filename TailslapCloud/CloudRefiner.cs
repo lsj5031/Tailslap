@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -27,6 +28,7 @@ public sealed class CloudRefiner
         if (!_cfg.Enabled) throw new InvalidOperationException("Cloud LLM is disabled.");
         var endpoint = Combine(_cfg.BaseUrl.TrimEnd('/'), "chat/completions");
         try { Logger.Log($"Calling LLM endpoint: {endpoint}, model={_cfg.Model}, temp={_cfg.Temperature}"); } catch { }
+        try { Logger.Log($"LLM input fingerprint: len={text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"); } catch { }
 
         var req = new ChatRequest
         {
@@ -46,6 +48,7 @@ public sealed class CloudRefiner
             try
             {
                 var json = JsonSerializer.Serialize(req, JsonOpts);
+                try { Logger.Log($"LLM request json size={json.Length} chars"); } catch { }
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
                 using var resp = await _http.PostAsync(endpoint, content, ct).ConfigureAwait(false);
                 try { Logger.Log($"LLM response status: {(int)resp.StatusCode} {resp.StatusCode}"); } catch { }
@@ -64,7 +67,9 @@ public sealed class CloudRefiner
                 var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 var parsed = JsonSerializer.Deserialize<ChatResponse>(body, JsonOpts) ?? throw new Exception("Invalid response JSON");
                 if (parsed.Choices is not { Count: > 0 } || parsed.Choices[0].Message is null) throw new Exception("No choices in response");
-                return parsed.Choices[0].Message.Content?.Trim() ?? "";
+                var result = parsed.Choices[0].Message.Content?.Trim() ?? "";
+                try { Logger.Log($"LLM output fingerprint: len={result.Length}, sha256={Sha256Hex(result)}"); } catch { }
+                return result;
             }
             catch (Exception ex) when (attempts > 0)
             {
@@ -76,6 +81,18 @@ public sealed class CloudRefiner
     }
 
     private static string Combine(string a, string b) => a.EndsWith("/") ? a + b : a + "/" + b;
+
+    private static string Sha256Hex(string s)
+    {
+        try
+        {
+            using var sha = SHA256.Create();
+            var bytes = Encoding.UTF8.GetBytes(s);
+            var hash = sha.ComputeHash(bytes);
+            return Convert.ToHexString(hash);
+        }
+        catch { return ""; }
+    }
 
     private sealed class ChatRequest
     {

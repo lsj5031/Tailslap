@@ -3,8 +3,17 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationIcon Condition="Exists('..\\Icons\\tailslap.ico')">..\Icons\tailslap.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Content Include="..\Icons\*.ico">
+      <Link>Icons\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  
 </Project>

@@ -7,6 +7,7 @@ public sealed class SettingsForm : Form
     private readonly AppConfig _cfg;
     private CheckBox _enabled;
     private CheckBox _autoPaste;
+    private CheckBox _clipboardFallback;
     private TextBox _baseUrl;
     private TextBox _model;
     private TextBox _temperature;
@@ -31,13 +32,17 @@ public sealed class SettingsForm : Form
         var tabs = new TabControl { Dock = DockStyle.Fill };
 
         // General tab
-        var general = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 1, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        var general = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 2, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         general.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         general.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _autoPaste = new CheckBox { Text = "Auto Paste after refine", Checked = _cfg.AutoPaste, AutoSize = true, Dock = DockStyle.Fill };
         general.Controls.Add(new Label { Text = "Auto Paste", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
         general.Controls.Add(_autoPaste, 1, 0);
+        _clipboardFallback = new CheckBox { Text = "Use clipboard when no selection is captured", Checked = _cfg.UseClipboardFallback, AutoSize = true, Dock = DockStyle.Fill };
+        general.Controls.Add(new Label { Text = "Clipboard Fallback", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 1);
+        general.Controls.Add(_clipboardFallback, 1, 1);
 
         // LLM tab
         var llm = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 8, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
@@ -103,5 +108,6 @@ public sealed class SettingsForm : Form
         if (!string.IsNullOrWhiteSpace(k)) _cfg.Llm.ApiKey = k.Trim();
         _cfg.Llm.HttpReferer = string.IsNullOrWhiteSpace(_referer.Text) ? null : _referer.Text.Trim();
         _cfg.Llm.XTitle = string.IsNullOrWhiteSpace(_xTitle.Text) ? null : _xTitle.Text.Trim();
+        _cfg.UseClipboardFallback = _clipboardFallback.Checked;
     }
 }

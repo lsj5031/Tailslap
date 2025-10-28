@@ -1,6 +1,8 @@
 using System;
 using System.Drawing;
 using System.Diagnostics;
+using System.Text;
+using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Threading.Tasks;
@@ -11,7 +13,8 @@ public class MainForm : Form
     private readonly ContextMenuStrip _menu;
     private readonly System.Windows.Forms.Timer _animTimer;
     private int _frame = 0;
-    private readonly Icon[] _frames;
+    private Icon[] _frames;
+    private Icon _idleIcon;
     private const int WM_HOTKEY = 0x0312;
     private const int HOTKEY_ID = 1;
 
@@ -47,15 +50,50 @@ public class MainForm : Form
         _menu.Items.Add(autoStartItem);
         _menu.Items.Add("Quit", null, (_, __) => { Application.Exit(); });
 
-        _tray = new NotifyIcon { Icon = Properties.Resources.IconIdle, Visible = true, Text = "Tailslap Cloud" };
-        _tray.ContextMenuStrip = _menu;
+        _idleIcon = LoadIdleIcon();
+        _frames = LoadChewingFramesOrFallback();
 
-        _frames = new[] { Properties.Resources.IconWork1, Properties.Resources.IconWork2 };
+        _tray = new NotifyIcon { Icon = _idleIcon, Visible = true, Text = "Tailslap Cloud" };
+        _tray.ContextMenuStrip = _menu;
         _animTimer = new System.Windows.Forms.Timer { Interval = 150 };
         _animTimer.Tick += (_, __) => { _tray.Icon = _frames[_frame++ % _frames.Length]; };
         _currentMods = cfg.Hotkey.Modifiers;
         _currentVk = cfg.Hotkey.Key;
         try { Logger.Log($"MainForm initialized. Planned hotkey mods={_currentMods}, key={_currentVk}"); } catch { }
+    }
+
+    private Icon[] LoadChewingFramesOrFallback()
+    {
+        try
+        {
+            var list = new System.Collections.Generic.List<Icon>(4);
+            // Prefer icons shipped next to the exe: .\Icons\Chewing1-4.ico
+            string baseDir = Application.StartupPath;
+            string iconsDir = System.IO.Path.Combine(baseDir, "Icons");
+            for (int i = 1; i <= 4; i++)
+            {
+                string p = System.IO.Path.Combine(iconsDir, $"Chewing{i}.ico");
+                if (!System.IO.File.Exists(p)) p = System.IO.Path.Combine(iconsDir, $"chewing{i}.ico");
+                if (System.IO.File.Exists(p)) { try { list.Add(new Icon(p)); } catch { } }
+            }
+            if (list.Count > 0) return list.ToArray();
+        }
+        catch { }
+        // Fallback to idle icon to ensure at least one frame exists
+        return new[] { _idleIcon };
+    }
+
+    private Icon LoadIdleIcon()
+    {
+        try
+        {
+            string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
+            string p = System.IO.Path.Combine(iconsDir, "Chewing1.ico");
+            if (!System.IO.File.Exists(p)) p = System.IO.Path.Combine(iconsDir, "chewing1.ico");
+            if (System.IO.File.Exists(p)) return new Icon(p);
+        }
+        catch { }
+        return SystemIcons.Application;
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -94,11 +132,11 @@ public class MainForm : Form
             StartAnim();
             var cfg = _config.LoadOrDefault();
             try { Logger.Log("Starting capture from selection/clipboard"); } catch { }
-            var text = _clip.CaptureSelectionOrClipboard();
-            try { Logger.Log($"Captured length: {text?.Length ?? 0}"); } catch { }
+            var text = await _clip.CaptureSelectionOrClipboardAsync(cfg.UseClipboardFallback);
+            try { Logger.Log($"Captured length: {text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"); } catch { }
             if (string.IsNullOrWhiteSpace(text)) { Notify("No text selected or in clipboard.", true); return; }
             var refined = await _refiner.RefineAsync(text);
-            try { Logger.Log($"Refined length: {refined?.Length ?? 0}"); } catch { }
+            try { Logger.Log($"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}"); } catch { }
             if (string.IsNullOrWhiteSpace(refined)) { Notify("Provider returned empty result.", true); return; }
             _clip.SetText(refined);
             await Task.Delay(100);
@@ -115,8 +153,20 @@ public class MainForm : Form
         finally { StopAnim(); }
     }
 
+    private static string Sha256Hex(string s)
+    {
+        try
+        {
+            using var sha = SHA256.Create();
+            var bytes = Encoding.UTF8.GetBytes(s);
+            var hash = sha.ComputeHash(bytes);
+            return Convert.ToHexString(hash);
+        }
+        catch { return ""; }
+    }
+
     private void StartAnim() => _animTimer.Start();
-    private void StopAnim() { _animTimer.Stop(); _tray.Icon = Properties.Resources.IconIdle; }
+    private void StopAnim() { _animTimer.Stop(); _tray.Icon = _idleIcon; }
     private void Notify(string msg, bool error = false) => _tray.ShowBalloonTip(2000, "Tailslap", msg, error ? ToolTipIcon.Error : ToolTipIcon.Info);
 
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
