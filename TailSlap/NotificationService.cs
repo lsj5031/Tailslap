@@ -150,11 +150,27 @@ public static class NotificationService
                 _ => ToolTipIcon.Info
             };
 
-            _trayIcon!.ShowBalloonTip(
-                notification.DurationMs / 1000,
-                notification.Title,
-                notification.Message,
-                icon);
+            // Add additional safety check for tray icon
+            if (_trayIcon == null)
+            {
+                ShowFallbackMessageBox(notification.Title, notification.Message, notification.Type);
+                return;
+            }
+
+            try
+            {
+                _trayIcon.ShowBalloonTip(
+                    notification.DurationMs / 1000,
+                    notification.Title,
+                    notification.Message,
+                    icon);
+            }
+            catch (Exception ex)
+            {
+                try { Logger.Log($"Balloon tip failed: {ex.Message}"); } catch { }
+                // Fallback to message box if balloon tip fails
+                ShowFallbackMessageBox(notification.Title, notification.Message, notification.Type);
+            }
 
             // Also log the notification
             try 
@@ -166,7 +182,7 @@ public static class NotificationService
         catch (Exception ex)
         {
             try { Logger.Log($"Failed to show notification: {ex.Message}"); } catch { }
-            ShowFallbackMessageBox(notification.Title, notification.Message, notification.Type);
+            try { ShowFallbackMessageBox(notification.Title, notification.Message, notification.Type); } catch { }
         }
     }
 

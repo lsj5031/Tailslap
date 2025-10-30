@@ -245,14 +245,14 @@ public class MainForm : Form
             try { Logger.Log($"Captured length: {text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"); } catch { }
             if (string.IsNullOrWhiteSpace(text)) 
             { 
-                NotificationService.ShowWarning("No text selected or in clipboard.");
+                try { NotificationService.ShowWarning("No text selected or in clipboard."); } catch { }
                 return; 
             }
             var refined = await _refiner.RefineAsync(text);
             try { Logger.Log($"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}"); } catch { }
             if (string.IsNullOrWhiteSpace(refined)) 
             { 
-                NotificationService.ShowError("Provider returned empty result.");
+                try { NotificationService.ShowError("Provider returned empty result."); } catch { }
                 return; 
             }
             
@@ -270,21 +270,21 @@ public class MainForm : Form
                 if (!pasteSuccess)
                 {
                     // Error already shown by Paste method, but we can continue
-                    NotificationService.ShowInfo("Text is ready. You can paste manually with Ctrl+V.");
+                    try { NotificationService.ShowInfo("Text is ready. You can paste manually with Ctrl+V."); } catch { }
                 }
             }
             else
             {
-                NotificationService.ShowTextReadyNotification();
+                try { NotificationService.ShowTextReadyNotification(); } catch { }
             }
             
             try { HistoryService.Append(text, refined, cfg.Llm.Model); } catch { }
-            Logger.Log("Refinement completed successfully.");
+            try { Logger.Log("Refinement completed successfully."); } catch { }
         }
         catch (Exception ex) 
         { 
-            NotificationService.ShowError("Refinement failed: " + ex.Message); 
-            Logger.Log("Error: " + ex.Message); 
+            try { NotificationService.ShowError("Refinement failed: " + ex.Message); } catch { }
+            try { Logger.Log("Error: " + ex.Message); } catch { }
         }
         finally { StopAnim(); }
     }

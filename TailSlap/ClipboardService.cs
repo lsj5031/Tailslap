@@ -67,21 +67,84 @@ public sealed class ClipboardService
     private static string DescribeWindow(IntPtr hWnd)
     {
         if (hWnd == IntPtr.Zero) return "hWnd=0";
+        
         var title = new StringBuilder(256);
         var cls = new StringBuilder(128);
-        try { GetWindowText(hWnd, title, title.Capacity); } catch { }
-        try { GetClassName(hWnd, cls, cls.Capacity); } catch { }
         string proc = "?";
+        
+        // Safely get window title
         try
         {
-            GetWindowThreadProcessId(hWnd, out uint pid);
-            if (pid != 0)
+            int titleLength = GetWindowText(hWnd, title, title.Capacity);
+            if (titleLength == 0)
             {
-                using var p = Process.GetProcessById((int)pid);
-                proc = p.ProcessName + ":" + pid;
+                title.Clear();
+                title.Append("(no title)");
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"DescribeWindow: GetWindowText failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            title.Clear();
+            title.Append("(title error)");
+        }
+        
+        // Safely get window class
+        try
+        {
+            int classLength = GetClassName(hWnd, cls, cls.Capacity);
+            if (classLength == 0)
+            {
+                cls.Clear();
+                cls.Append("(no class)");
+            }
+        }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"DescribeWindow: GetClassName failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            cls.Clear();
+            cls.Append("(class error)");
+        }
+        
+        // Safely get process information
+        try
+        {
+            uint threadId = GetWindowThreadProcessId(hWnd, out uint pid);
+            if (threadId != 0)
+            {
+                if (pid != 0)
+                {
+                    try
+                    {
+                        using var p = Process.GetProcessById((int)pid);
+                        proc = p.ProcessName + ":" + pid;
+                    }
+                    catch (ArgumentException)
+                    {
+                        proc = $"(invalid pid: {pid})";
+                    }
+                    catch (Exception ex)
+                    {
+                        try { Logger.Log($"DescribeWindow: Process.GetProcessById failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                        proc = $"(process error: {pid})";
+                    }
+                }
+                else
+                {
+                    proc = "(no pid)";
+                }
+            }
+            else
+            {
+                proc = "(pid error)";
+            }
+        }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"DescribeWindow: GetWindowThreadProcessId failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            proc = "(pid error)";
+        }
+        
         return $"hWnd=0x{hWnd.ToInt64():X}, class={cls}, title={title}, proc={proc}";
     }
 
@@ -129,90 +192,166 @@ public sealed class ClipboardService
         var sw = Stopwatch.StartNew();
         ClearCacheIfNeeded();
         
-        try { Logger.Log($"Capture start. ThreadId={Thread.CurrentThread.ManagedThreadId}, Apt={Thread.CurrentThread.GetApartmentState()}, Fallback={useClipboardFallback}"); } catch { }
+        try { Logger.Log($"=== CAPTURE START === ThreadId={Thread.CurrentThread.ManagedThreadId}, Apt={Thread.CurrentThread.GetApartmentState()}, Fallback={useClipboardFallback}"); } catch { }
         LogClipboardState("Before");
         string? originalClipboard = null;
         try 
         { 
+            try { Logger.Log("Step 1: Checking clipboard for text..."); } catch { }
             if (Clipboard.ContainsText()) 
+            {
+                try { Logger.Log("Step 1a: Clipboard contains text, reading..."); } catch { }
                 originalClipboard = Clipboard.GetText(TextDataFormat.UnicodeText); 
-            try { Logger.Log($"Original clipboard captured: len={(originalClipboard?.Length ?? 0)}"); } catch { }
+                try { Logger.Log($"Step 1b: Original clipboard captured: len={(originalClipboard?.Length ?? 0)}"); } catch { }
+            }
+            else
+            {
+                try { Logger.Log("Step 1a: Clipboard does not contain text"); } catch { }
+            }
         } 
         catch (Exception ex) 
         { 
-            try { Logger.Log($"Read original clipboard failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
-            NotificationService.ShowWarning("Unable to access clipboard. Check if another application is using it.");
+            try { Logger.Log($"Step 1 ERROR: Read original clipboard failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            try { NotificationService.ShowWarning("Unable to access clipboard. Check if another application is using it."); } catch { }
         }
         
         IntPtr foregroundWindow = IntPtr.Zero;
         try 
         { 
+            try { Logger.Log("Step 2: Getting foreground window..."); } catch { }
             foregroundWindow = GetForegroundWindow();
-            try { Logger.Log($"Foreground before: {DescribeWindow(foregroundWindow)}"); } catch { }
+            try { Logger.Log($"Step 2a: Foreground window obtained: {DescribeWindow(foregroundWindow)}"); } catch { }
         }
         catch (Exception ex) 
         { 
-            try { Logger.Log($"GetForegroundWindow failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            try { Logger.Log($"Step 2 ERROR: GetForegroundWindow failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
         }
         
-        // 1) Try UI Automation first
+        // Check window class for logging purposes (but don't skip any operations)
+        string windowClass = "unknown";
         try
         {
-            var uia = TryGetSelectionViaUIA();
-            if (!string.IsNullOrWhiteSpace(uia))
+            try { Logger.Log("Step 3: Analyzing foreground window..."); } catch { }
+            if (foregroundWindow != IntPtr.Zero)
             {
-                RecordCaptureSuccess("UIA", true);
-                try { Logger.Log($"UIA selection captured: len={uia.Length}"); } catch { }
-                return uia;
-            }
-            else 
-            { 
-                RecordCaptureSuccess("UIA", false);
-                try { Logger.Log("UIA selection unavailable or empty"); } catch { } 
-            }
-            // UIA hit-test near caret as a secondary attempt
-            var uiaPt = TryGetSelectionViaUIAFromCaret();
-            if (!string.IsNullOrWhiteSpace(uiaPt))
-            {
-                RecordCaptureSuccess("UIA_FromPoint", true);
-                try { Logger.Log($"UIA(FromPoint) selection captured: len={uiaPt.Length}"); } catch { }
-                return uiaPt;
+                try { Logger.Log($"Step 3a: Checking window class for hWnd=0x{foregroundWindow.ToInt64():X}"); } catch { }
+                var cls = new StringBuilder(128);
+                try
+                {
+                    int classLength = GetClassName(foregroundWindow, cls, cls.Capacity);
+                    if (classLength > 0)
+                    {
+                        windowClass = cls.ToString();
+                        try { Logger.Log($"Step 3b: Window class='{windowClass}'"); } catch { }
+                    }
+                    else
+                    {
+                        windowClass = "(no class)";
+                        try { Logger.Log("Step 3b: No window class available"); } catch { }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try { Logger.Log($"Step 3b ERROR: GetClassName failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                    windowClass = "(class error)";
+                }
             }
             else
             {
-                RecordCaptureSuccess("UIA_FromPoint", false);
+                try { Logger.Log("Step 3a: No foreground window to check"); } catch { }
+                windowClass = "(no window)";
             }
         }
-        catch (Exception ex) 
-        { 
-            try { Logger.Log($"UIA selection error: {ex.GetType().Name}: {ex.Message}"); } catch { }
-            // Continue to other methods instead of crashing
+        catch (Exception ex)
+        {
+            try { Logger.Log($"Step 3 ERROR: Window analysis failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+            windowClass = "(analysis error)";
         }
 
-        // 1b) UIA deep search (caret point and subtree scan)
-        try
+        // 1) Try UI Automation first (but skip for Firefox due to COM crashes)
+        bool isFirefox = windowClass.Equals("MozillaWindowClass", StringComparison.Ordinal);
+        if (!isFirefox)
         {
-            var uiaDeep = TryGetSelectionViaUIADeep(foregroundWindow);
-            if (!string.IsNullOrWhiteSpace(uiaDeep))
+            try
             {
-                try { Logger.Log($"UIA(deep) selection captured: len={uiaDeep.Length}"); } catch { }
-                return uiaDeep;
+                try { Logger.Log($"Step 4: Attempting UI Automation for {windowClass}..."); } catch { }
+                var uia = TryGetSelectionViaUIA();
+                if (!string.IsNullOrWhiteSpace(uia))
+                {
+                    RecordCaptureSuccess("UIA", true);
+                    try { Logger.Log($"Step 4a: UIA selection captured: len={uia.Length}"); } catch { }
+                    try { Logger.Log("=== CAPTURE SUCCESS (UIA) ==="); } catch { }
+                    return uia;
+                }
+                else 
+                { 
+                    RecordCaptureSuccess("UIA", false);
+                    try { Logger.Log("Step 4a: UIA selection unavailable or empty"); } catch { } 
+                }
+                // UIA hit-test near caret as a secondary attempt
+                try { Logger.Log("Step 4b: Attempting UIA FromPoint..."); } catch { }
+                var uiaPt = TryGetSelectionViaUIAFromCaret();
+                if (!string.IsNullOrWhiteSpace(uiaPt))
+                {
+                    RecordCaptureSuccess("UIA_FromPoint", true);
+                    try { Logger.Log($"Step 4c: UIA(FromPoint) selection captured: len={uiaPt.Length}"); } catch { }
+                    try { Logger.Log("=== CAPTURE SUCCESS (UIA FromPoint) ==="); } catch { }
+                    return uiaPt;
+                }
+                else
+                {
+                    RecordCaptureSuccess("UIA_FromPoint", false);
+                    try { Logger.Log("Step 4c: UIA(FromPoint) selection unavailable or empty"); } catch { }
+                }
             }
-            else { try { Logger.Log("UIA(deep) found no selection"); } catch { } }
+            catch (Exception ex) 
+            { 
+                try { Logger.Log($"Step 4 ERROR: UIA selection error: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                // Continue to other methods instead of crashing
+            }
         }
-        catch (Exception ex) { try { Logger.Log($"UIA(deep) error: {ex.GetType().Name}: {ex.Message}"); } catch { } }
+        else
+        {
+            try { Logger.Log("Step 4: Skipping UI Automation for Firefox (MozillaWindowClass) to prevent COM crashes"); } catch { }
+        }
+
+        // 1b) UIA deep search (caret point and subtree scan) - skip for Firefox
+        if (!isFirefox)
+        {
+            try
+            {
+                var uiaDeep = TryGetSelectionViaUIADeep(foregroundWindow);
+                if (!string.IsNullOrWhiteSpace(uiaDeep))
+                {
+                    try { Logger.Log($"UIA(deep) selection captured: len={uiaDeep.Length}"); } catch { }
+                    return uiaDeep;
+                }
+                else { try { Logger.Log("UIA(deep) found no selection"); } catch { } }
+            }
+            catch (Exception ex) { try { Logger.Log($"UIA(deep) error: {ex.GetType().Name}: {ex.Message}"); } catch { } }
+        }
+        else
+        {
+            try { Logger.Log("Step 4b: Skipping UIA deep search for Firefox to prevent COM crashes"); } catch { }
+        }
 
         // 2) Win32 direct read (standard edit controls)
         try
         {
+            try { Logger.Log("Step 5: Attempting Win32 selection read..."); } catch { }
             var win32Sel = TryGetSelectionViaWin32(foregroundWindow);
             if (!string.IsNullOrWhiteSpace(win32Sel))
             {
-                try { Logger.Log($"Win32 selection captured: len={win32Sel.Length}"); } catch { }
+                try { Logger.Log($"Step 5a: Win32 selection captured: len={win32Sel.Length}"); } catch { }
+                try { Logger.Log("=== CAPTURE SUCCESS (Win32) ==="); } catch { }
                 return win32Sel;
             }
+            else
+            {
+                try { Logger.Log("Step 5a: Win32 selection unavailable or empty"); } catch { }
+            }
         }
-        catch (Exception ex) { try { Logger.Log($"Win32 selection error: {ex.GetType().Name}: {ex.Message}"); } catch { } }
+        catch (Exception ex) { try { Logger.Log($"Step 5 ERROR: Win32 selection error: {ex.GetType().Name}: {ex.Message}"); } catch { } }
 
         // 3) Clipboard-based copy without clearing, using sequence number + multiple methods
         uint seqBefore = 0;
@@ -224,9 +363,15 @@ public sealed class ClipboardService
         int timeoutPrimary = 600;  // Reduced from 1200ms
         int timeoutAlt = 300;      // Reduced from 1200ms
         
+        try { Logger.Log("Step 6c: Starting SendKeys copy attempts..."); } catch { }
         // Try SendKeys first (fastest for most apps)
         if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.SendKeysCtrlC, out var copied, timeoutPrimary))
-        { try { Logger.Log($"Captured via SendKeys Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
+        { 
+            try { Logger.Log($"Step 7: Captured via SendKeys Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { 
+                try { Logger.Log("=== CAPTURE SUCCESS (SendKeys) ==="); } catch { }
+            } 
+            return copied; 
+        }
         
         // Quick fallback to original clipboard if available
         if (useClipboardFallback && (originalClipboard?.Length > 0))
@@ -250,7 +395,8 @@ public sealed class ClipboardService
         try { Logger.Log("All copy attempts failed to update clipboard"); } catch { }
         if (useClipboardFallback && (originalClipboard?.Length > 0))
         { try { Logger.Log($"No selection captured; using original clipboard (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return originalClipboard!; }
-        try { Logger.Log($"No selection captured; not falling back to existing clipboard (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { }
+        try { Logger.Log($"Step FINAL: No selection captured; not falling back to existing clipboard (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { }
+        try { Logger.Log("=== CAPTURE FAILED ==="); } catch { }
         return string.Empty;
     }
 
@@ -462,8 +608,8 @@ public sealed class ClipboardService
             {
                 var fg = GetForegroundWindow();
                 var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-                uint tid = GetWindowThreadProcessId(fg, out _);
-                if (!GetGUIThreadInfo(tid, ref info)) return null;
+                uint threadId = GetWindowThreadProcessId(fg, out uint tid);
+                if (threadId == 0 || !GetGUIThreadInfo(threadId, ref info)) return null;
                 if (info.hwndCaret == IntPtr.Zero) return null;
                 var rc = info.rcCaret;
                 var pt = new POINT { X = rc.Left + 1, Y = rc.Top + (rc.Bottom - rc.Top) / 2 };
@@ -549,9 +695,15 @@ public sealed class ClipboardService
             try
             {
                 // Attempt selection from caret point
-                var caretSel = TryGetSelectionAtCaretPoint();
-                if (!string.IsNullOrWhiteSpace(caretSel)) return caretSel;
-
+                try
+                {
+                    var caretSel = TryGetSelectionAtCaretPoint();
+                    if (!string.IsNullOrWhiteSpace(caretSel)) return caretSel;
+                }
+                catch (Exception ex)
+                {
+                    try { Logger.Log($"UIA caret method failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                }
                 if (hwndForeground == IntPtr.Zero) return null;
                 AutomationElement? root = null;
                 try 
@@ -640,8 +792,8 @@ public sealed class ClipboardService
             var hwnd = GetForegroundWindow();
             if (hwnd == IntPtr.Zero) return null;
             var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-            uint tid = GetWindowThreadProcessId(hwnd, out _);
-            if (!GetGUIThreadInfo(tid, ref info)) return null;
+            uint threadId = GetWindowThreadProcessId(hwnd, out uint tid);
+            if (threadId == 0 || !GetGUIThreadInfo(threadId, ref info)) return null;
             var owner = info.hwndCaret != IntPtr.Zero ? info.hwndCaret : hwnd;
             int cx = info.rcCaret.Left + ((info.rcCaret.Right - info.rcCaret.Left) / 2);
             int cy = info.rcCaret.Top + ((info.rcCaret.Bottom - info.rcCaret.Top) / 2);
@@ -667,22 +819,22 @@ public sealed class ClipboardService
         try
         {
             var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-            uint tid = GetWindowThreadProcessId(hwndForeground, out uint _);
-            if (GetGUIThreadInfo(tid, ref info))
+            uint threadId = GetWindowThreadProcessId(hwndForeground, out uint _);
+            if (threadId != 0 && GetGUIThreadInfo(threadId, ref info))
             {
                 if (info.hwndFocus != IntPtr.Zero) return info.hwndFocus;
                 if (info.hwndActive != IntPtr.Zero) return info.hwndActive;
             }
             // Fallback: attach to target thread and query GetFocus directly
             uint currentTid = GetCurrentThreadId();
-            if (tid != 0 && currentTid != tid)
+            if (threadId != 0 && currentTid != threadId)
             {
                 try
                 {
-                    if (AttachThreadInput(currentTid, tid, true))
+                    if (AttachThreadInput(currentTid, threadId, true))
                     {
                         try { var f = GetFocus(); if (f != IntPtr.Zero) return f; }
-                        finally { AttachThreadInput(currentTid, tid, false); }
+                        finally { AttachThreadInput(currentTid, threadId, false); }
                     }
                 }
                 catch { }
@@ -699,17 +851,32 @@ public sealed class ClipboardService
         result = string.Empty;
         try
         {
-            try { Logger.Log($"TryCopyAndRead start: method={method}, seqBefore={seqBefore}"); } catch { }
+            try { Logger.Log($"TryCopyAndRead start: method={method}, seqBefore={seqBefore}, timeoutMs={timeoutMs}"); } catch { }
             if (hwnd != IntPtr.Zero)
             {
                 try
                 {
-                    if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+                    try { Logger.Log($"TryCopyAndRead: Preparing window 0x{hwnd.ToInt64():X} for copy"); } catch { }
+                    if (IsIconic(hwnd)) 
+                    { 
+                        try { Logger.Log($"TryCopyAndRead: Restoring minimized window"); } catch { }
+                        ShowWindow(hwnd, SW_RESTORE); 
+                    }
+                    try { Logger.Log($"TryCopyAndRead: Bringing window to top"); } catch { }
                     BringWindowToTop(hwnd);
+                    try { Logger.Log($"TryCopyAndRead: Setting window as foreground"); } catch { }
                     SetForegroundWindow(hwnd);
                 }
-                catch { }
-                Thread.Sleep(60);
+                catch (Exception ex)
+                {
+                    try { Logger.Log($"TryCopyAndRead: Window preparation failed: {ex.GetType().Name}: {ex.Message}"); } catch { }
+                }
+                try { Logger.Log($"TryCopyAndRead: Waiting 60ms for window to settle"); } catch { }
+                try { Thread.Sleep(60); } catch { }
+            }
+            else
+            {
+                try { Logger.Log($"TryCopyAndRead: No window handle (hwnd=0)"); } catch { }
             }
             IntPtr targetForMessage = hwnd;
             if (method == CopyMethod.WmCopy)
@@ -894,7 +1061,7 @@ public sealed class ClipboardService
             catch (Exception ex) { tcs.SetException(ex); }
         });
         th.IsBackground = true;
-        th.SetApartmentState(ApartmentState.STA);
+        th.SetApartmentState(ApartmentState.MTA); // Use MTA for UI Automation as per Microsoft docs
         th.Start();
         return tcs.Task;
     }
