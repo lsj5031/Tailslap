@@ -1,6 +1,6 @@
-# TailslapCloud
+# TailSlap
 
-A Windows utility that enhances your clipboard and text refinement experience with cloud-based processing. TailslapCloud runs in the system tray and allows you to quickly refine selected text using AI-powered processing.
+A Windows utility that enhances your clipboard and text refinement experience with AI-powered processing. TailSlap runs in the system tray and allows you to quickly refine selected text using LLM services.
 
 ## Features
 
@@ -13,7 +13,7 @@ A Windows utility that enhances your clipboard and text refinement experience wi
 
 ## Installation
 
-1. Download the latest release from the [releases page](https://github.com/yourusername/TailslapCloud/releases)
+1. Download the latest release from the [releases page](https://github.com/yourusername/TailSlap/releases)
 2. Run the installer or extract the portable version
 3. The application will start automatically and appear in your system tray
 
@@ -25,7 +25,7 @@ A Windows utility that enhances your clipboard and text refinement experience wi
 
 ### System Tray Menu
 
-Right-click the TailslapCloud icon in the system tray to access:
+Right-click the TailSlap icon in the system tray to access:
 - **Refine Now**: Process the currently selected text
 - **Auto Paste**: Toggle automatic pasting of refined text
 - **Change Hotkey**: Set a custom keyboard shortcut
@@ -36,20 +36,20 @@ Right-click the TailslapCloud icon in the system tray to access:
 ## Configuration
 
 Configuration is stored in a JSON file located at:
-`%APPDATA%\TailslapCloud\config.json`
+`%APPDATA%\TailSlap\config.json`
 
 You can edit this file directly or use the Settings dialog in the system tray menu.
 
 ## Logs
 
 Application logs are stored at:
-`%APPDATA%\TailslapCloud\app.log`
+`%APPDATA%\TailSlap\app.log`
 
 ## Requirements
 
 - Windows 10 or later
 - .NET 6.0 or later
-- Internet connection for cloud processing
+- Internet connection for LLM processing
 
 ## Building from Source
 
@@ -68,4 +68,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Support
 
-For support, please [open an issue](https://github.com/yourusername/TailslapCloud/issues) on GitHub.
+For support, please [open an issue](https://github.com/yourusername/TailSlap/issues) on GitHub.

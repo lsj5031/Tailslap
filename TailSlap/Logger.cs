@@ -3,7 +3,7 @@ using System.IO;
 
 public static class Logger
 {
-    private static string LogPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailslapCloud", "app.log");
+    private static string LogPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap", "app.log");
 
     public static void Log(string message)
     {

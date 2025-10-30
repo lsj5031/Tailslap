@@ -20,7 +20,7 @@ public class MainForm : Form
 
     private readonly ConfigService _config;
     private readonly ClipboardService _clip;
-    private readonly CloudRefiner _refiner;
+    private readonly TextRefiner _refiner;
     private uint _currentMods;
     private uint _currentVk;
 
@@ -33,7 +33,7 @@ public class MainForm : Form
         _config = new ConfigService();
         var cfg = _config.LoadOrDefault();
         _clip = new ClipboardService();
-        _refiner = new CloudRefiner(cfg.Llm);
+        _refiner = new TextRefiner(cfg.Llm);
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, async (_, __) => await RefineSelectionAsync());
@@ -43,20 +43,25 @@ public class MainForm : Form
         _menu.Items.Add("Change Hotkey", null, (_, __) => ChangeHotkey(cfg));
         _menu.Items.Add("Settings...", null, (_, __) => ShowSettings(cfg));
         _menu.Items.Add("Open Config...", null, (_, __) => { try { Process.Start("notepad", _config.GetConfigPath()); } catch { Notify("Failed to open config.", true); } });
-        _menu.Items.Add("Open Logs...", null, (_, __) => { try { Process.Start("notepad", System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData), "TailslapCloud", "app.log")); } catch { Notify("Failed to open logs.", true); } });
+        _menu.Items.Add("Open Logs...", null, (_, __) => { try { Process.Start("notepad", System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData), "TailSlap", "app.log")); } catch { Notify("Failed to open logs.", true); } });
         _menu.Items.Add("History...", null, (_, __) => { try { using var hf = new HistoryForm(); hf.ShowDialog(); } catch { Notify("Failed to open history.", true); } });
-        var autoStartItem = new ToolStripMenuItem("Start with Windows") { Checked = AutoStartService.IsEnabled("TailslapCloud") };
-        autoStartItem.Click += (_, __) => { AutoStartService.Toggle("TailslapCloud"); autoStartItem.Checked = AutoStartService.IsEnabled("TailslapCloud"); };
+        var autoStartItem = new ToolStripMenuItem("Start with Windows") { Checked = AutoStartService.IsEnabled("TailSlap") };
+        autoStartItem.Click += (_, __) => { AutoStartService.Toggle("TailSlap"); autoStartItem.Checked = AutoStartService.IsEnabled("TailSlap"); };
         _menu.Items.Add(autoStartItem);
         _menu.Items.Add("Quit", null, (_, __) => { Application.Exit(); });
 
         _idleIcon = LoadIdleIcon();
         _frames = LoadChewingFramesOrFallback();
 
-        _tray = new NotifyIcon { Icon = _idleIcon, Visible = true, Text = "Tailslap Cloud" };
+        _tray = new NotifyIcon { Icon = _idleIcon, Visible = true, Text = "TailSlap" };
         _tray.ContextMenuStrip = _menu;
-        _animTimer = new System.Windows.Forms.Timer { Interval = 150 };
-        _animTimer.Tick += (_, __) => { _tray.Icon = _frames[_frame++ % _frames.Length]; };
+        _animTimer = new System.Windows.Forms.Timer { Interval = 100 }; // Faster animation for better visibility
+        _animTimer.Tick += (_, __) => { 
+            _tray.Icon = _frames[_frame++ % _frames.Length]; 
+            // Add subtle pulsing effect during animation
+            if (_frame % 4 == 0) _tray.Text = "TailSlap - Processing...";
+            else _tray.Text = "TailSlap";
+        };
         _currentMods = cfg.Hotkey.Modifiers;
         _currentVk = cfg.Hotkey.Key;
         try { Logger.Log($"MainForm initialized. Planned hotkey mods={_currentMods}, key={_currentVk}"); } catch { }
@@ -67,16 +72,44 @@ public class MainForm : Form
         try
         {
             var list = new System.Collections.Generic.List<Icon>(4);
-            // Prefer icons shipped next to the exe: .\Icons\Chewing1-4.ico
             string baseDir = Application.StartupPath;
             string iconsDir = System.IO.Path.Combine(baseDir, "Icons");
+            
+            // Determine optimal icon size based on DPI
+            int preferredSize = GetOptimalIconSize();
+            
             for (int i = 1; i <= 4; i++)
             {
-                string p = System.IO.Path.Combine(iconsDir, $"Chewing{i}.ico");
-                if (!System.IO.File.Exists(p)) p = System.IO.Path.Combine(iconsDir, $"chewing{i}.ico");
-                if (System.IO.File.Exists(p)) { try { list.Add(new Icon(p)); } catch { } }
+                // Try to load enhanced icons first, then fallback to standard
+                string[] iconPaths = {
+                    System.IO.Path.Combine(iconsDir, $"Chewing{i}_enhanced.ico"),
+                    System.IO.Path.Combine(iconsDir, $"Chewing{i}.ico"),
+                    System.IO.Path.Combine(iconsDir, $"chewing{i}.ico")
+                };
+                
+                foreach (string p in iconPaths)
+                {
+                    if (System.IO.File.Exists(p)) 
+                    { 
+                        try 
+                        { 
+                            var icon = new Icon(p, preferredSize, preferredSize);
+                            list.Add(icon);
+                            break; // Use first available for this frame
+                        } 
+                        catch 
+                        { 
+                            try { list.Add(new Icon(p)); } catch { } 
+                        } 
+                    }
+                }
             }
-            if (list.Count > 0) return list.ToArray();
+            
+            if (list.Count > 0) 
+            {
+                try { Logger.Log($"Loaded {list.Count} animation frames at {preferredSize}px"); } catch { }
+                return list.ToArray();
+            }
         }
         catch { }
         // Fallback to idle icon to ensure at least one frame exists
@@ -88,12 +121,85 @@ public class MainForm : Form
         try
         {
             string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
-            string p = System.IO.Path.Combine(iconsDir, "Chewing1.ico");
-            if (!System.IO.File.Exists(p)) p = System.IO.Path.Combine(iconsDir, "chewing1.ico");
-            if (System.IO.File.Exists(p)) return new Icon(p);
+            int preferredSize = GetOptimalIconSize();
+            
+            // Try enhanced icons first, then standard icons
+            string[] iconPaths = {
+                System.IO.Path.Combine(iconsDir, "Idle_enhanced.ico"),
+                System.IO.Path.Combine(iconsDir, "Chewing1.ico"),
+                System.IO.Path.Combine(iconsDir, "chewing1.ico")
+            };
+            
+            foreach (string p in iconPaths)
+            {
+                if (System.IO.File.Exists(p)) 
+                { 
+                    try 
+                    { 
+                        var icon = new Icon(p, preferredSize, preferredSize);
+                        try { Logger.Log($"Loaded idle icon at {preferredSize}px from {p}"); } catch { }
+                        return icon;
+                    } 
+                    catch 
+                    { 
+                        try { return new Icon(p); } catch { } 
+                    } 
+                }
+            }
         }
         catch { }
         return SystemIcons.Application;
+    }
+
+    public static Icon LoadMainIcon()
+    {
+        try
+        {
+            string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
+            string mainIconPath = System.IO.Path.Combine(iconsDir, "TailSlap.ico");
+            int preferredSize = GetOptimalIconSize();
+            
+            if (System.IO.File.Exists(mainIconPath))
+            {
+                try 
+                { 
+                    var icon = new Icon(mainIconPath, preferredSize, preferredSize);
+                    try { Logger.Log($"Loaded main icon at {preferredSize}px from {mainIconPath}"); } catch { }
+                    return icon;
+                } 
+                catch 
+                { 
+                    try { return new Icon(mainIconPath); } catch { } 
+                }
+            }
+        }
+        catch { }
+        return SystemIcons.Application;
+    }
+
+    private static int GetOptimalIconSize()
+    {
+        try
+        {
+            using (var graphics = Graphics.FromHwnd(IntPtr.Zero))
+            {
+                float dpiX = graphics.DpiX;
+                // Scale icon size based on DPI: 96dpi = 16px, 192dpi = 32px, etc.
+                int baseSize = 16;
+                float scaleFactor = dpiX / 96.0f;
+                int scaledSize = (int)(baseSize * scaleFactor);
+                
+                // Clamp to reasonable sizes and ensure even numbers
+                scaledSize = Math.Max(16, Math.Min(48, scaledSize));
+                if (scaledSize % 2 != 0) scaledSize++;
+                
+                return scaledSize;
+            }
+        }
+        catch
+        {
+            return 16; // Fallback to standard size
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -167,7 +273,7 @@ public class MainForm : Form
 
     private void StartAnim() => _animTimer.Start();
     private void StopAnim() { _animTimer.Stop(); _tray.Icon = _idleIcon; }
-    private void Notify(string msg, bool error = false) => _tray.ShowBalloonTip(2000, "Tailslap", msg, error ? ToolTipIcon.Error : ToolTipIcon.Info);
+    private void Notify(string msg, bool error = false) => _tray.ShowBalloonTip(2000, "TailSlap", msg, error ? ToolTipIcon.Error : ToolTipIcon.Info);
 
     [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
     [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);

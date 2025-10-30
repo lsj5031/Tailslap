@@ -15,7 +15,7 @@ internal static class Program
         // Ensure per-monitor DPI scaling for all dialogs
         try { Application.SetHighDpiMode(HighDpiMode.PerMonitorV2); } catch { }
 
-        using var mutex = new Mutex(true, "TailslapCloud_SingleInstance", out bool created);
+        using var mutex = new Mutex(true, "TailSlap_SingleInstance", out bool created);
         if (!created) return;
 
         ApplicationConfiguration.Initialize();

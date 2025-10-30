@@ -5,7 +5,7 @@ using System.Text.Json;
 
 public static class HistoryService
 {
-    private static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailslapCloud");
+    private static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap");
     private static string FilePath => Path.Combine(Dir, "history.jsonl");
     private const int MaxEntries = 50;
 

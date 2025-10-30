@@ -39,7 +39,7 @@ public sealed class LlmConfig
 
 public sealed class ConfigService
 {
-    private static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailslapCloud");
+    private static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap");
     private static string FilePath => Path.Combine(Dir, "config.json");
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 

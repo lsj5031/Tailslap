@@ -17,6 +17,7 @@ public sealed class HistoryForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Width = 950; Height = 620;
         AutoScaleMode = AutoScaleMode.Dpi;
+        Icon = MainForm.LoadMainIcon();
 
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 300 };
         _list = new ListBox { Dock = DockStyle.Fill, HorizontalScrollbar = true };

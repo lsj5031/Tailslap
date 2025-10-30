@@ -19,7 +19,7 @@ public sealed class SettingsForm : Form
     public SettingsForm(AppConfig cfg)
     {
         _cfg = cfg;
-        Text = "Tailslap Settings";
+        Text = "TailSlap Settings";
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true;
@@ -28,6 +28,7 @@ public sealed class SettingsForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         MinimumSize = new Size(600, 500);
         SizeGripStyle = SizeGripStyle.Show;
+        Icon = MainForm.LoadMainIcon();
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
 
@@ -49,7 +50,7 @@ public sealed class SettingsForm : Form
         llm.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         llm.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int i = 0; i < 8; i++) llm.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _enabled = new CheckBox { Text = "Enable Cloud LLM", Checked = _cfg.Llm.Enabled, AutoSize = true, Dock = DockStyle.Fill };
+        _enabled = new CheckBox { Text = "Enable LLM Processing", Checked = _cfg.Llm.Enabled, AutoSize = true, Dock = DockStyle.Fill };
         llm.Controls.Add(new Label { Text = "Enabled", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
         llm.Controls.Add(_enabled, 1, 0);
         _baseUrl = new TextBox { Text = _cfg.Llm.BaseUrl, Dock = DockStyle.Fill };

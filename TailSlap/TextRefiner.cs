@@ -8,13 +8,13 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-public sealed class CloudRefiner
+public sealed class TextRefiner
 {
     private readonly LlmConfig _cfg;
     private readonly HttpClient _http;
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public CloudRefiner(LlmConfig cfg)
+    public TextRefiner(LlmConfig cfg)
     {
         _cfg = cfg;
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
@@ -25,7 +25,7 @@ public sealed class CloudRefiner
 
     public async Task<string> RefineAsync(string text, CancellationToken ct = default)
     {
-        if (!_cfg.Enabled) throw new InvalidOperationException("Cloud LLM is disabled.");
+        if (!_cfg.Enabled) throw new InvalidOperationException("LLM processing is disabled.");
         var endpoint = Combine(_cfg.BaseUrl.TrimEnd('/'), "chat/completions");
         try { Logger.Log($"Calling LLM endpoint: {endpoint}, model={_cfg.Model}, temp={_cfg.Temperature}"); } catch { }
         try { Logger.Log($"LLM input fingerprint: len={text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"); } catch { }
@@ -61,7 +61,7 @@ public sealed class CloudRefiner
                         continue;
                     }
                     var errorBody = await resp.Content.ReadAsStringAsync(ct);
-                    throw new Exception($"Cloud LLM error {resp.StatusCode}: {errorBody}");
+                    throw new Exception($"LLM error {resp.StatusCode}: {errorBody}");
                 }
 
                 var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);

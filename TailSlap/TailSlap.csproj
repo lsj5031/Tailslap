@@ -7,11 +7,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <ApplicationIcon Condition="Exists('..\\Icons\\tailslap.ico')">..\Icons\tailslap.ico</ApplicationIcon>
+    <ApplicationIcon Condition="Exists('Icons\\TailSlap.ico')">Icons\TailSlap.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="..\Icons\*.ico">
-      <Link>Icons\%(Filename)%(Extension)</Link>
+    <Content Include="Icons\*.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

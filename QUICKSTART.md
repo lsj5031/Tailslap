@@ -1,20 +1,20 @@
-# Tailslap Cloud - Quick Start Guide
+# TailSlap - Quick Start Guide
 
 ## What Was Built
 
-A complete Windows WinForms tray application for text refinement via cloud LLM, built per your detailed plan.
+A complete Windows WinForms tray application for text refinement via LLM services, built per your detailed plan.
 
 ## Project Structure
 
 ```
-TailslapCloud/
-├── TailslapCloud.csproj          # Project file (.NET 9, WinForms)
+TailSlap/
+├── TailSlap.csproj               # Project file (.NET 9, WinForms)
 ├── Program.cs                     # Entry point with single-instance mutex
 ├── MainForm.cs                    # Main form (hidden, tray-only)
 ├── ConfigService.cs               # JSON config management
 ├── Dpapi.cs                       # API key encryption (DPAPI)
 ├── ClipboardService.cs            # Clipboard operations
-├── CloudRefiner.cs                # LLM HTTP client with retry logic
+├── TextRefiner.cs                 # LLM HTTP client with retry logic
 ├── AutoStartService.cs            # Windows startup registry
 ├── Logger.cs                      # File logging
 ├── Properties/
@@ -27,13 +27,13 @@ TailslapCloud/
 
 ## Built Output
 
-Location: `TailslapCloud\bin\Release\net9.0-windows\win-x64\publish\`
+Location: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\`
 
 Files:
-- `TailslapCloud.exe` - Main executable (156 KB)
-- `TailslapCloud.dll` - Application assembly
-- `TailslapCloud.runtimeconfig.json` - Runtime configuration
-- `TailslapCloud.deps.json` - Dependency manifest
+- `TailSlap.exe` - Main executable (156 KB)
+- `TailSlap.dll` - Application assembly
+- `TailSlap.runtimeconfig.json` - Runtime configuration
+- `TailSlap.deps.json` - Dependency manifest
 
 ## How to Run
 
@@ -42,12 +42,12 @@ Files:
 
 2. **Run the application**:
    ```
-   TailslapCloud\bin\Release\net9.0-windows\win-x64\publish\TailslapCloud.exe
+   TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe
    ```
 
 3. **First Run**:
    - App appears in system tray (green circle icon)
-   - Config file created at: `%APPDATA%\TailslapCloud\config.json`
+   - Config file created at: `%APPDATA%\TailSlap\config.json`
    - Default hotkey: `Ctrl+Alt+R`
 
 ## Quick Test
@@ -61,10 +61,10 @@ Files:
 5. Watch the tray icon animate (yellow/orange)
 6. Refined text is pasted back
 
-### Test with Cloud Provider (e.g., OpenRouter)
+### Test with LLM Provider (e.g., OpenRouter)
 
 1. **Get an API key** from https://openrouter.ai
-2. **Edit config** at `%APPDATA%\TailslapCloud\config.json`:
+2. **Edit config** at `%APPDATA%\TailSlap\config.json`:
    ```json
    {
      "Llm": {
@@ -165,7 +165,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 1. **Test the application** with your preferred LLM provider
 2. **Customize the config** for your use case
-3. **Set up API key** securely if using cloud provider
+3. **Set up API key** securely if using LLM provider
 4. **Enable auto-start** if you want it to run on boot
 
 ## Troubleshooting
@@ -180,8 +180,8 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 **LLM request fails:**
 - For Ollama: Ensure it's running (`ollama serve`)
-- For cloud: Check API key and BaseUrl
-- Review logs at `%APPDATA%\TailslapCloud\app.log`
+- For LLM providers: Check API key and BaseUrl
+- Review logs at `%APPDATA%\TailSlap\app.log`
 
 **Icon not visible:**
 - Check system tray overflow area
@@ -192,7 +192,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 - **Framework**: .NET 9 (targets net9.0-windows)
 - **UI**: WinForms (System.Windows.Forms)
 - **Icons**: Embedded as base64 in Resources.resx
-- **Config**: JSON in %APPDATA%\TailslapCloud\
+- **Config**: JSON in %APPDATA%\TailSlap\
 - **Encryption**: Windows DPAPI (user-scoped)
 - **No external dependencies**: Uses only built-in .NET libraries
 

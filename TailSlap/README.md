@@ -1,6 +1,6 @@
-# Tailslap Cloud - Text Refinement Tool
+# TailSlap - Text Refinement Tool
 
-A Windows system tray application that refines text using cloud-based LLM services.
+A Windows system tray application that refines text using AI-powered LLM services.
 
 ## Features
 
@@ -20,12 +20,12 @@ A Windows system tray application that refines text using cloud-based LLM servic
 ## Installation
 
 1. Download or build the application
-2. Run `TailslapCloud.exe`
+2. Run `TailSlap.exe`
 3. The app will appear in your system tray (look for the green circle icon)
 
 ## Configuration
 
-Configuration is stored in: `%APPDATA%\TailslapCloud\config.json`
+Configuration is stored in: `%APPDATA%\TailSlap\config.json`
 
 ### Default Configuration
 
@@ -98,18 +98,18 @@ Right-click the tray icon for options:
 
 ## Logs
 
-Application logs are stored in: `%APPDATA%\TailslapCloud\app.log`
+Application logs are stored in: `%APPDATA%\TailSlap\app.log`
 
 ## Building from Source
 
 ```bash
-cd TailslapCloud
+cd TailSlap
 dotnet restore
 dotnet build -c Release
 dotnet publish -c Release
 ```
 
-Output: `bin\Release\net9.0-windows\win-x64\publish\TailslapCloud.exe`
+Output: `bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
 
 ## Troubleshooting
 
@@ -120,7 +120,7 @@ Output: `bin\Release\net9.0-windows\win-x64\publish\TailslapCloud.exe`
 ### LLM request failed
 - Verify the LLM service is running (for local Ollama)
 - Check the BaseUrl in config.json
-- Check API key is set (for cloud providers)
+- Check API key is set (for LLM providers)
 - Review app.log for detailed errors
 
 ### Icon not appearing
@@ -130,7 +130,7 @@ Output: `bin\Release\net9.0-windows\win-x64\publish\TailslapCloud.exe`
 ## Security Notes
 
 - API keys are encrypted using Windows DPAPI (user-scoped)
-- Use HTTPS for cloud endpoints
+- Use HTTPS for LLM endpoints
 - HTTP is acceptable for localhost only
 - Logs do NOT contain sensitive text content
 

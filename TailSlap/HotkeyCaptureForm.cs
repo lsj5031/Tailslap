@@ -30,6 +30,7 @@ public sealed class HotkeyCaptureForm : Form
         MinimumSize = new Size(560, 360);
         SizeGripStyle = SizeGripStyle.Show;
         TopMost = true;
+        Icon = MainForm.LoadMainIcon();
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(16), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));   // prompt

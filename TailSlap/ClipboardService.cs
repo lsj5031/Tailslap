@@ -8,6 +8,11 @@ using System.Windows.Automation;
 
 public sealed class ClipboardService
 {
+    // Performance metrics
+    private static readonly System.Collections.Generic.Dictionary<string, int> _captureStats = new();
+    private static readonly System.Collections.Generic.Dictionary<string, IntPtr> _windowHandleCache = new();
+    private static DateTime _lastCacheClear = DateTime.Now;
+
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
@@ -122,6 +127,8 @@ public sealed class ClipboardService
     public string CaptureSelectionOrClipboard(bool useClipboardFallback = false)
     {
         var sw = Stopwatch.StartNew();
+        ClearCacheIfNeeded();
+        
         try { Logger.Log($"Capture start. ThreadId={Thread.CurrentThread.ManagedThreadId}, Apt={Thread.CurrentThread.GetApartmentState()}, Fallback={useClipboardFallback}"); } catch { }
         LogClipboardState("Before");
         string? originalClipboard = null;
@@ -142,16 +149,26 @@ public sealed class ClipboardService
             var uia = TryGetSelectionViaUIA();
             if (!string.IsNullOrWhiteSpace(uia))
             {
+                RecordCaptureSuccess("UIA", true);
                 try { Logger.Log($"UIA selection captured: len={uia.Length}"); } catch { }
                 return uia;
             }
-            else { try { Logger.Log("UIA selection unavailable or empty"); } catch { } }
+            else 
+            { 
+                RecordCaptureSuccess("UIA", false);
+                try { Logger.Log("UIA selection unavailable or empty"); } catch { } 
+            }
             // UIA hit-test near caret as a secondary attempt
             var uiaPt = TryGetSelectionViaUIAFromCaret();
             if (!string.IsNullOrWhiteSpace(uiaPt))
             {
+                RecordCaptureSuccess("UIA_FromPoint", true);
                 try { Logger.Log($"UIA(FromPoint) selection captured: len={uiaPt.Length}"); } catch { }
                 return uiaPt;
+            }
+            else
+            {
+                RecordCaptureSuccess("UIA_FromPoint", false);
             }
         }
         catch (Exception ex) { try { Logger.Log($"UIA selection error: {ex.GetType().Name}: {ex.Message}"); } catch { } }
@@ -187,29 +204,32 @@ public sealed class ClipboardService
         IntPtr targetHwnd = ResolveFocusHwnd(foregroundWindow);
         try { Logger.Log($"Target hwnd for copy: {DescribeWindow(targetHwnd)}"); } catch { }
 
-        // Attempt order: SendKeys Ctrl+C first (fastest for many custom editors), then others
-        int timeoutPrimary = 1200;
-        int timeoutAlt = 1200;
+        // Optimized capture strategy: faster timeouts, better order
+        int timeoutPrimary = 600;  // Reduced from 1200ms
+        int timeoutAlt = 300;      // Reduced from 1200ms
+        
+        // Try SendKeys first (fastest for most apps)
         if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.SendKeysCtrlC, out var copied, timeoutPrimary))
         { try { Logger.Log($"Captured via SendKeys Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
-        // Sublime-specific attempts
-        if (IsWindowClass(foregroundWindow, "PX_WINDOW_CLASS"))
+        
+        // Quick fallback to original clipboard if available
+        if (useClipboardFallback && (originalClipboard?.Length > 0))
+        { try { Logger.Log($"Falling back to original clipboard: len={originalClipboard.Length}"); } catch { } return originalClipboard!; }
+        
+        // Application-specific attempts with shorter timeouts
+        if (IsWindowClass(foregroundWindow, "PX_WINDOW_CLASS")) // Sublime Text
         {
             if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.DoubleCtrlC, out copied, timeoutAlt))
             { try { Logger.Log($"Captured via Double Ctrl+C (Sublime): len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
-            if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.MenuAltEC, out copied, timeoutAlt + 200))
-            { try { Logger.Log($"Captured via Alt+E,C menu (Sublime): len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
         }
-        if (useClipboardFallback && (originalClipboard?.Length > 0))
-        { try { Logger.Log($"Falling back to original clipboard: len={originalClipboard.Length}"); } catch { } return originalClipboard!; }
+        
+        // Try standard Ctrl+C with shorter timeout
         if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlC, out copied, timeoutAlt))
         { try { Logger.Log($"Captured via Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
-        if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.WmCopy, out copied, timeoutAlt))
-        { try { Logger.Log($"Captured via WM_COPY: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
-        if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlInsert, out copied, timeoutAlt))
+        
+        // Last resort methods with minimal timeout
+        if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlInsert, out copied, 200))
         { try { Logger.Log($"Captured via Ctrl+Insert: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
-        if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlShiftC, out copied, timeoutAlt))
-        { try { Logger.Log($"Captured via Ctrl+Shift+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"); } catch { } return copied; }
         
         try { Logger.Log("All copy attempts failed to update clipboard"); } catch { }
         if (useClipboardFallback && (originalClipboard?.Length > 0))
@@ -232,12 +252,82 @@ public sealed class ClipboardService
     { 
         try 
         { 
-            Thread.Sleep(100);
-            try { Logger.Log("Sending Shift+Insert for paste"); } catch { }
-            SendKeys.SendWait("+{INSERT}");
-            Thread.Sleep(50);
+            Thread.Sleep(150); // Increased delay for better focus restoration
+            PasteWithMultipleMethods();
         } 
-        catch (Exception ex) { try { Logger.Log($"Paste SendKeys failed: {ex.GetType().Name}: {ex.Message}"); } catch { } } 
+        catch (Exception ex) { try { Logger.Log($"Paste failed: {ex.GetType().Name}: {ex.Message}"); } catch { } } 
+    }
+
+    private void PasteWithMultipleMethods()
+    {
+        // Try multiple paste methods in order of reliability
+        string[] methods = { "Ctrl+V", "Shift+Insert", "SendInput Ctrl+V" };
+        
+        foreach (string method in methods)
+        {
+            try 
+            { 
+                Logger.Log($"Attempting paste with {method}");
+                
+                bool success = method switch
+                {
+                    "Ctrl+V" => TryPasteCtrlV(),
+                    "Shift+Insert" => TryPasteShiftInsert(),
+                    "SendInput Ctrl+V" => TryPasteSendInput(),
+                    _ => false
+                };
+                
+                if (success) 
+                {
+                    Logger.Log($"Paste successful with {method}");
+                    return;
+                }
+            }
+            catch (Exception ex) 
+            { 
+                try { Logger.Log($"{method} failed: {ex.GetType().Name}: {ex.Message}"); } catch { } 
+            }
+            
+            // Brief delay between methods
+            Thread.Sleep(50);
+        }
+        
+        Logger.Log("All paste methods failed");
+    }
+
+    private bool TryPasteCtrlV()
+    {
+        try
+        {
+            SendKeys.SendWait("^v");
+            Thread.Sleep(30);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private bool TryPasteShiftInsert()
+    {
+        try
+        {
+            SendKeys.SendWait("+{INSERT}");
+            Thread.Sleep(30);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private bool TryPasteSendInput()
+    {
+        try
+        {
+            // Use SendInput for more reliable paste
+            ushort[] modifiers = { 0x11 /*CTRL*/ };
+            SendChordScancode(modifiers, 0x56 /*'V'*/);
+            Thread.Sleep(30);
+            return true;
+        }
+        catch { return false; }
     }
 
     private static string? TryGetSelectionViaUIA()
@@ -583,7 +673,7 @@ public sealed class ClipboardService
             inputs.Add(new INPUT { type = INPUT_KEYBOARD, U = new INPUTUNION { ki = new KEYBDINPUT { wVk = 0, wScan = (ushort)sc, dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP } } });
         }
         try { SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>()); } catch { }
-        Thread.Sleep(80);
+        Thread.Sleep(30); // Reduced from 80ms for faster response
     }
 
     private static void NormalizeInputState()
@@ -604,7 +694,7 @@ public sealed class ClipboardService
             if (inputs.Count > 0)
             {
                 try { SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>()); } catch { }
-                Thread.Sleep(40);
+                Thread.Sleep(20); // Reduced from 40ms
             }
         }
         catch { }
@@ -614,6 +704,50 @@ public sealed class ClipboardService
     {
         return RunInSta(() => CaptureSelectionOrClipboard(useClipboardFallback));
     }
+
+    private static void ClearCacheIfNeeded()
+    {
+        // Clear cache every 5 minutes to prevent stale handles
+        if (DateTime.Now - _lastCacheClear > TimeSpan.FromMinutes(5))
+        {
+            _windowHandleCache.Clear();
+            _lastCacheClear = DateTime.Now;
+        }
+    }
+
+    private static void RecordCaptureSuccess(string method, bool success)
+    {
+        string key = success ? $"{method}_success" : $"{method}_fail";
+        _captureStats.TryGetValue(key, out int count);
+        _captureStats[key] = count + 1;
+        
+        // Log stats every 10 captures
+        if ((_captureStats.Values.Sum() % 10) == 0)
+        {
+            try { Logger.Log($"Capture stats: {string.Join(", ", _captureStats.Select(kvp => $"{kvp.Key}={kvp.Value}"))}"); } catch { }
+        }
+    }
+
+    private static IntPtr GetCachedWindowHandle(string windowClass)
+    {
+        if (_windowHandleCache.TryGetValue(windowClass, out IntPtr cachedHandle))
+        {
+            // Verify handle is still valid
+            if (IsWindow(cachedHandle)) return cachedHandle;
+            else _windowHandleCache.Remove(windowClass);
+        }
+        return IntPtr.Zero;
+    }
+
+    private static void CacheWindowHandle(string windowClass, IntPtr handle)
+    {
+        if (handle != IntPtr.Zero && IsWindow(handle))
+        {
+            _windowHandleCache[windowClass] = handle;
+        }
+    }
+
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
 
     private static System.Threading.Tasks.Task<T> RunInSta<T>(Func<T> func)
     {
