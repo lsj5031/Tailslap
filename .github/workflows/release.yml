@@ -25,8 +25,8 @@ jobs:
       working-directory: ./TailSlap
 
     - name: Publish Self-Contained
-       run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
-       working-directory: ./TailSlap
+      run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+      working-directory: ./TailSlap
 
     - name: Extract version from tag
       id: tag_name
@@ -62,11 +62,11 @@ jobs:
         prerelease: false
 
     - name: Upload TailSlap.exe
-       uses: actions/upload-release-asset@v1
-       env:
-         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-       with:
-         upload_url: ${{ steps.create_release.outputs.upload_url }}
-         asset_path: TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
-         asset_name: TailSlap.exe
-         asset_content_type: application/octet-stream
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
+        asset_name: TailSlap.exe
+        asset_content_type: application/octet-stream
