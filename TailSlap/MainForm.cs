@@ -45,17 +45,11 @@ public class MainForm : Form
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
         _menu.Items.Add("Transcribe Now", null, (_, __) => TriggerTranscribe());
-        var autoPasteItem = new ToolStripMenuItem("Auto Paste") { Checked = _currentConfig.AutoPaste };
-        autoPasteItem.Click += (_, __) => { _currentConfig.AutoPaste = !_currentConfig.AutoPaste; autoPasteItem.Checked = _currentConfig.AutoPaste; _config.Save(_currentConfig); };
-        _menu.Items.Add(autoPasteItem);
-        var transcriberAutoPasteItem = new ToolStripMenuItem("Transcriber Auto Paste") { Checked = _currentConfig.Transcriber.AutoPaste };
-        transcriberAutoPasteItem.Click += (_, __) => { _currentConfig.Transcriber.AutoPaste = !_currentConfig.Transcriber.AutoPaste; transcriberAutoPasteItem.Checked = _currentConfig.Transcriber.AutoPaste; _config.Save(_currentConfig); };
-        _menu.Items.Add(transcriberAutoPasteItem);
-        _menu.Items.Add("Change Hotkey", null, (_, __) => ChangeHotkey(_currentConfig));
-        _menu.Items.Add("Change Transcriber Hotkey", null, (_, __) => ChangeTranscriberHotkey(_currentConfig));
+        _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Settings...", null, (_, __) => ShowSettings(_currentConfig));
         _menu.Items.Add("Open Logs...", null, (_, __) => { try { Process.Start("notepad", System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData), "TailSlap", "app.log")); } catch { NotificationService.ShowError("Failed to open logs."); } });
-        _menu.Items.Add("History...", null, (_, __) => { try { using var hf = new HistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open history."); } });
+        _menu.Items.Add("Refinement History...", null, (_, __) => { try { using var hf = new HistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open history."); } });
+        _menu.Items.Add("Transcription History...", null, (_, __) => { try { using var hf = new TranscriptionHistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open transcription history."); } });
         var autoStartItem = new ToolStripMenuItem("Start with Windows") { Checked = AutoStartService.IsEnabled("TailSlap") };
         autoStartItem.Click += (_, __) => { AutoStartService.Toggle("TailSlap"); autoStartItem.Checked = AutoStartService.IsEnabled("TailSlap"); };
         _menu.Items.Add(autoStartItem);
@@ -317,6 +311,11 @@ public class MainForm : Form
 
     private void TriggerRefine()
     {
+        if (!_currentConfig.Llm.Enabled)
+        {
+            try { NotificationService.ShowWarning("LLM processing is disabled. Enable it in settings first."); } catch { }
+            return;
+        }
         if (_isRefining)
         {
             try { NotificationService.ShowWarning("Refinement already in progress. Please wait."); } catch { }
@@ -517,9 +516,12 @@ public class MainForm : Form
                 return;
             }
             
-            if (string.IsNullOrWhiteSpace(transcriptionText)) 
+            if (string.IsNullOrWhiteSpace(transcriptionText) || 
+                transcriptionText.Equals("[Empty transcription]", StringComparison.OrdinalIgnoreCase) ||
+                transcriptionText.Equals("(empty)", StringComparison.OrdinalIgnoreCase) ||
+                transcriptionText.Equals("[silence]", StringComparison.OrdinalIgnoreCase)) 
             { 
-                try { NotificationService.ShowWarning("No speech detected or transcription returned empty result."); } catch { }
+                try { NotificationService.ShowWarning("No speech detected."); } catch { }
                 return; 
             }
             
@@ -552,7 +554,7 @@ public class MainForm : Form
             // Log transcription to history (separate from LLM refinement history)
             try 
             { 
-                HistoryService.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0, recordingStats?.SilenceDetected ?? false);
+                HistoryService.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0);
                 Logger.Log($"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms");
             } 
             catch (Exception ex)
@@ -670,47 +672,20 @@ public class MainForm : Form
         if (!ok) NotificationService.ShowError("Failed to register hotkey.");
     }
 
-    private void ChangeHotkey(AppConfig cfg)
-    {
-        using var cap = new HotkeyCaptureForm();
-        if (cap.ShowDialog() != DialogResult.OK) return;
-        cfg.Hotkey.Modifiers = cap.Modifiers;
-        cfg.Hotkey.Key = cap.Key;
-        _config.Save(cfg);
-        _currentMods = cfg.Hotkey.Modifiers;
-        _currentVk = cfg.Hotkey.Key;
-        RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
-        NotificationService.ShowSuccess($"Hotkey updated to {cap.Display}");
-    }
-
-    private void ChangeTranscriberHotkey(AppConfig cfg)
-    {
-        using var cap = new HotkeyCaptureForm();
-        if (cap.ShowDialog() != DialogResult.OK) return;
-        cfg.TranscriberHotkey.Modifiers = cap.Modifiers;
-        cfg.TranscriberHotkey.Key = cap.Key;
-        _config.Save(cfg);
-        _transcriberMods = cfg.TranscriberHotkey.Modifiers;
-        _transcriberVk = cfg.TranscriberHotkey.Key;
-        
-        // Update hotkey registration
-        try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
-        if (_currentConfig.Transcriber.Enabled)
-        {
-            RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-        }
-        
-        NotificationService.ShowSuccess($"Transcriber hotkey updated to {cap.Display}");
-    }
-
     private void ShowSettings(AppConfig cfg)
     {
         using var dlg = new SettingsForm(cfg);
         if (dlg.ShowDialog() == DialogResult.OK)
         {
+            Logger.Log($"Settings OK clicked. LLM hotkey before save: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}");
+            Logger.Log($"Transcriber hotkey before save: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}");
+            
             _config.Save(_currentConfig);
             // Reload config from disk to ensure all validation/normalization is applied
             _currentConfig = _config.LoadOrDefault();
+            
+            Logger.Log($"LLM hotkey after reload: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}");
+            Logger.Log($"Transcriber hotkey after reload: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}");
 
             // Re-register refinement hotkey
             try { UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID); } catch { }

@@ -8,15 +8,15 @@ public sealed class AppConfig
 {
     public bool AutoPaste { get; set; } = true;
     public bool UseClipboardFallback { get; set; } = true;
-    public HotkeyConfig Hotkey { get; set; } = new();
-    public HotkeyConfig TranscriberHotkey { get; set; } = new();
+    public HotkeyConfig Hotkey { get; set; } = new(); // Ctrl+Alt+R for LLM
+    public HotkeyConfig TranscriberHotkey { get; set; } = new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber
     public LlmConfig Llm { get; set; } = new();
     public TranscriberConfig Transcriber { get; set; } = new();
 }
 
 public sealed class HotkeyConfig 
 { 
-    public uint Modifiers { get; set; } = 0x0003;
+    public uint Modifiers { get; set; } = 0x0003; // ALT + CTRL
     public uint Key { get; set; } = (uint)Keys.R;
 }
 

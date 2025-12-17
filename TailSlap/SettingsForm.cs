@@ -16,19 +16,20 @@ public sealed class SettingsForm : Form
     private TextBox _apiKey;
     private TextBox _referer;
     private TextBox _xTitle;
+    private TextBox _llmHotkey;
     private Button _resetButton;
     private Button _testConnectionButton;
+    private Button _captureLlmHotkeyButton;
     private Label _validationLabel;
 
     // Transcriber controls
     private CheckBox? _transcriberEnabled;
+    private CheckBox? _transcriberAutoPaste;
     private TextBox? _transcriberBaseUrl;
     private TextBox? _transcriberModel;
     private TextBox? _transcriberTimeout;
     private TextBox? _transcriberApiKey;
     private TextBox? _transcriberHotkey;
-    private CheckBox? _enableVAD;
-    private TextBox? _silenceThreshold;
     private ComboBox? _microphoneDropdown;
     private Button? _captureTranscriberHotkeyButton;
     private Button? _testTranscriberConnectionButton;
@@ -64,10 +65,10 @@ public sealed class SettingsForm : Form
         general.Controls.Add(_clipboardFallback, 1, 1);
 
         // LLM tab
-        var llm = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 8, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        var llm = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 11, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         llm.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
         llm.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 8; i++) llm.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (int i = 0; i < 11; i++) llm.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _enabled = new CheckBox { Text = "Enable LLM Processing", Checked = _cfg.Llm.Enabled, AutoSize = true, Dock = DockStyle.Fill };
         llm.Controls.Add(new Label { Text = "Enabled", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
         llm.Controls.Add(_enabled, 1, 0);
@@ -92,13 +93,20 @@ public sealed class SettingsForm : Form
         _xTitle = new TextBox { Text = _cfg.Llm.XTitle ?? string.Empty, Dock = DockStyle.Fill };
         llm.Controls.Add(new Label { Text = "X-Title", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 7);
         llm.Controls.Add(_xTitle, 1, 7);
+        _llmHotkey = new TextBox { ReadOnly = true, Text = GetHotkeyDisplay(_cfg.Hotkey), Dock = DockStyle.Fill };
+        llm.Controls.Add(new Label { Text = "Hotkey", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 8);
+        llm.Controls.Add(_llmHotkey, 1, 8);
+        _captureLlmHotkeyButton = new Button { Text = "Change Hotkey", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        _captureLlmHotkeyButton.Click += CaptureLlmHotkey;
+        llm.Controls.Add(_captureLlmHotkeyButton, 1, 9);
+        _testConnectionButton = new Button { Text = "Test LLM Connection", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        _testConnectionButton.Click += TestConnection;
+        llm.Controls.Add(new Label { Text = "Test Connection", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 10);
+        llm.Controls.Add(_testConnectionButton, 1, 10);
 
         // Add validation label and buttons
         _validationLabel = new Label { Text = "", ForeColor = Color.Red, AutoSize = true, Dock = DockStyle.Bottom, Padding = new Padding(10) };
-        _testConnectionButton = new Button { Text = "Test Connection", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _resetButton = new Button { Text = "Reset to Defaults", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        
-        _testConnectionButton.Click += TestConnection;
         _resetButton.Click += ResetToDefaults;
 
         var generalPage = new TabPage("General") { AutoScroll = true };
@@ -118,7 +126,6 @@ public sealed class SettingsForm : Form
         
         buttons.Controls.Add(ok);
         buttons.Controls.Add(cancel);
-        buttons.Controls.Add(_testConnectionButton);
         buttons.Controls.Add(_resetButton);
 
         Controls.Add(tabs);
@@ -137,15 +144,14 @@ public sealed class SettingsForm : Form
         _transcriberBaseUrl!.TextChanged += ValidateTranscriberInput;
         _transcriberModel!.TextChanged += ValidateTranscriberInput;
         _transcriberTimeout!.TextChanged += ValidateTranscriberInput;
-        _silenceThreshold!.TextChanged += ValidateTranscriberInput;
     }
 
     private TableLayoutPanel CreateTranscriberTab()
     {
-        var transcriber = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 12, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        var transcriber = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(16), RowCount = 11, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 12; i++) transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (int i = 0; i < 11; i++) transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox { Text = "Enable Remote Transcription", Checked = _cfg.Transcriber.Enabled, AutoSize = true, Dock = DockStyle.Fill };
         transcriber.Controls.Add(new Label { Text = "Enabled", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
@@ -167,13 +173,9 @@ public sealed class SettingsForm : Form
         transcriber.Controls.Add(new Label { Text = "API Key", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 4);
         transcriber.Controls.Add(_transcriberApiKey, 1, 4);
 
-        _enableVAD = new CheckBox { Text = "Enable Voice Activity Detection (VAD)", Checked = _cfg.Transcriber.EnableVAD, AutoSize = true, Dock = DockStyle.Fill };
-        transcriber.Controls.Add(new Label { Text = "Voice Activity Detection", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 5);
-        transcriber.Controls.Add(_enableVAD, 1, 5);
-
-        _silenceThreshold = new TextBox { Text = _cfg.Transcriber.SilenceThresholdMs.ToString(), Dock = DockStyle.Fill, Enabled = _cfg.Transcriber.EnableVAD };
-        transcriber.Controls.Add(new Label { Text = "Silence Threshold (ms)", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 6);
-        transcriber.Controls.Add(_silenceThreshold, 1, 6);
+        _transcriberAutoPaste = new CheckBox { Text = "Auto Paste after transcription", Checked = _cfg.Transcriber.AutoPaste, AutoSize = true, Dock = DockStyle.Fill };
+        transcriber.Controls.Add(new Label { Text = "Auto Paste", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 5);
+        transcriber.Controls.Add(_transcriberAutoPaste, 1, 5);
 
         _microphoneDropdown = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
         RefreshMicrophoneList();
@@ -181,30 +183,25 @@ public sealed class SettingsForm : Form
             _microphoneDropdown.SelectedIndex = _cfg.Transcriber.PreferredMicrophoneIndex;
         else if (_microphoneDropdown.Items.Count > 0)
             _microphoneDropdown.SelectedIndex = 0;
-        transcriber.Controls.Add(new Label { Text = "Microphone", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 7);
-        transcriber.Controls.Add(_microphoneDropdown, 1, 7);
+        transcriber.Controls.Add(new Label { Text = "Microphone", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 6);
+        transcriber.Controls.Add(_microphoneDropdown, 1, 6);
 
         _detectMicrophonesButton = new Button { Text = "Detect Microphones", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _detectMicrophonesButton!.Click += DetectMicrophones;
-        transcriber.Controls.Add(_detectMicrophonesButton, 1, 8);
+        transcriber.Controls.Add(_detectMicrophonesButton, 1, 7);
 
         _transcriberHotkey = new TextBox { ReadOnly = true, Text = GetHotkeyDisplay(_cfg.TranscriberHotkey), Dock = DockStyle.Fill };
-        transcriber.Controls.Add(new Label { Text = "Hotkey", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 9);
-        transcriber.Controls.Add(_transcriberHotkey, 1, 9);
+        transcriber.Controls.Add(new Label { Text = "Hotkey", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 8);
+        transcriber.Controls.Add(_transcriberHotkey, 1, 8);
 
-        var hotkeyButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _captureTranscriberHotkeyButton = new Button { Text = "Change Hotkey", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _captureTranscriberHotkeyButton!.Click += CaptureTranscriberHotkey;
-        hotkeyButtons.Controls.Add(_captureTranscriberHotkeyButton);
-        transcriber.Controls.Add(hotkeyButtons, 1, 10);
+        transcriber.Controls.Add(_captureTranscriberHotkeyButton, 1, 9);
 
         _testTranscriberConnectionButton = new Button { Text = "Test Transcription API", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _testTranscriberConnectionButton!.Click += TestTranscriberConnection;
-        transcriber.Controls.Add(new Label { Text = "Test Connection", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 11);
-        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 11);
-
-        // Enable/disable VAD controls based on checkbox
-        _enableVAD!.CheckedChanged += (_, __) => _silenceThreshold!.Enabled = _enableVAD.Checked;
+        transcriber.Controls.Add(new Label { Text = "Test Connection", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 10);
+        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 10);
 
         return transcriber;
     }
@@ -261,10 +258,7 @@ public sealed class SettingsForm : Form
         // Allow clearing transcriber API key if blank
         var transcriberKey = _transcriberApiKey!.Text.Trim();
         _cfg.Transcriber.ApiKey = string.IsNullOrWhiteSpace(transcriberKey) ? null : transcriberKey;
-        
-        // Apply new transcriber settings
-        _cfg.Transcriber.EnableVAD = _enableVAD!.Checked;
-        if (int.TryParse(_silenceThreshold!.Text.Trim(), out var silence)) _cfg.Transcriber.SilenceThresholdMs = silence;
+        _cfg.Transcriber.AutoPaste = _transcriberAutoPaste!.Checked;
         _cfg.Transcriber.PreferredMicrophoneIndex = _microphoneDropdown!.SelectedIndex >= 0 ? _microphoneDropdown.SelectedIndex : -1;
     }
 
@@ -337,15 +331,6 @@ public sealed class SettingsForm : Form
         if (string.IsNullOrWhiteSpace(_transcriberModel!.Text))
         {
             errors.Add("Model name is required for transcriber");
-        }
-
-        // Validate silence threshold
-        if (!string.IsNullOrWhiteSpace(_silenceThreshold!.Text))
-        {
-            if (!int.TryParse(_silenceThreshold.Text, out var silence) || silence < 100 || silence > 5000)
-            {
-                errors.Add("Silence threshold must be between 100 and 5000 ms");
-            }
         }
         
         _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
@@ -438,6 +423,17 @@ public sealed class SettingsForm : Form
         _cfg.TranscriberHotkey.Modifiers = cap.Modifiers;
         _cfg.TranscriberHotkey.Key = cap.Key;
         _transcriberHotkey!.Text = GetHotkeyDisplay(_cfg.TranscriberHotkey);
+        Logger.Log($"Transcriber hotkey captured: mods={cap.Modifiers}, key={cap.Key}, display={cap.Display}");
+    }
+
+    private void CaptureLlmHotkey(object? sender, EventArgs e)
+    {
+        using var cap = new HotkeyCaptureForm();
+        if (cap.ShowDialog() != DialogResult.OK) return;
+        _cfg.Hotkey.Modifiers = cap.Modifiers;
+        _cfg.Hotkey.Key = cap.Key;
+        _llmHotkey.Text = GetHotkeyDisplay(_cfg.Hotkey);
+        Logger.Log($"LLM hotkey captured: mods={cap.Modifiers}, key={cap.Key}, display={cap.Display}");
     }
 
     private static string GetHotkeyDisplay(HotkeyConfig hotkey)
@@ -496,19 +492,17 @@ public sealed class SettingsForm : Form
             _transcriberModel!.Text = defaultCfg.Transcriber.Model;
             _transcriberTimeout!.Text = defaultCfg.Transcriber.TimeoutSeconds.ToString();
             _transcriberApiKey!.Text = "";
-            _enableVAD!.Checked = defaultCfg.Transcriber.EnableVAD;
-            _silenceThreshold!.Text = defaultCfg.Transcriber.SilenceThresholdMs.ToString();
-            _silenceThreshold.Enabled = defaultCfg.Transcriber.EnableVAD;
+            _transcriberAutoPaste!.Checked = defaultCfg.Transcriber.AutoPaste;
             if (defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0 && defaultCfg.Transcriber.PreferredMicrophoneIndex < _microphoneDropdown!.Items.Count)
                 _microphoneDropdown.SelectedIndex = defaultCfg.Transcriber.PreferredMicrophoneIndex;
             
             // Reset Hotkeys in the config object as well, since they aren't read back/saved in ApplyChanges like other fields
             _cfg.Hotkey.Modifiers = defaultCfg.Hotkey.Modifiers;
             _cfg.Hotkey.Key = defaultCfg.Hotkey.Key;
+            _llmHotkey.Text = GetHotkeyDisplay(defaultCfg.Hotkey);
             
             _cfg.TranscriberHotkey.Modifiers = defaultCfg.TranscriberHotkey.Modifiers;
             _cfg.TranscriberHotkey.Key = defaultCfg.TranscriberHotkey.Key;
-            
             _transcriberHotkey!.Text = GetHotkeyDisplay(defaultCfg.TranscriberHotkey);
             
             NotificationService.ShowInfo("Settings reset to defaults.");

@@ -23,10 +23,8 @@ public static class HistoryService
     public sealed class TranscriptionEntry
     {
         public DateTime Timestamp { get; set; }
-        public string TextSha256 { get; set; } = "";
-        public int LengthChars { get; set; }
+        public string Text { get; set; } = "";
         public int RecordingDurationMs { get; set; }
-        public bool SilenceDetected { get; set; }
     }
 
     public static void Append(string original, string refined, string model)
@@ -87,19 +85,16 @@ public static class HistoryService
         }
     }
 
-    public static void AppendTranscription(string text, int recordingDurationMs, bool silenceDetected)
+    public static void AppendTranscription(string text, int recordingDurationMs)
     {
         try
         {
             Directory.CreateDirectory(Dir);
-            var sha256Hex = ComputeSha256(text);
             var entry = new TranscriptionEntry 
             { 
                 Timestamp = DateTime.Now, 
-                TextSha256 = sha256Hex,
-                LengthChars = text.Length,
-                RecordingDurationMs = recordingDurationMs,
-                SilenceDetected = silenceDetected
+                Text = text,
+                RecordingDurationMs = recordingDurationMs
             };
             File.AppendAllText(TranscriptionFilePath, JsonSerializer.Serialize(entry) + Environment.NewLine);
             TrimTranscriptions();
@@ -153,15 +148,4 @@ public static class HistoryService
         }
     }
 
-    private static string ComputeSha256(string text)
-    {
-        try
-        {
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
-            var hash = sha.ComputeHash(bytes);
-            return Convert.ToHexString(hash);
-        }
-        catch { return ""; }
-    }
 }
