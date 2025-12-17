@@ -11,9 +11,10 @@
 ## Features
 
 - **Text Refinement**: Process and enhance selected text with a hotkey
+- **Audio Transcription**: Record and transcribe audio from your microphone
 - **Clipboard Integration**: Automatically paste refined text back into your applications
-- **Customizable Hotkeys**: Set your preferred keyboard shortcut for text refinement
-- **History**: View and manage your refinement history
+- **Customizable Hotkeys**: Set your preferred keyboard shortcut for text refinement and transcription
+- **History**: View and manage your refinement and transcription history
 - **System Tray Integration**: Runs quietly in the background
 - **Auto-start Option**: Launch on Windows startup
 
@@ -30,19 +31,26 @@
 
 ## Usage
 
+### Text Refinement
 1. Select text in any application
 2. Press the configured hotkey (default: `Ctrl+Alt+R`)
 3. The text will be processed and automatically pasted back (if enabled)
+
+### Audio Transcription
+1. Press the transcription hotkey (configurable in Settings)
+2. Record audio from your microphone
+3. The audio will be transcribed and available in your history
 
 ### System Tray Menu
 
 Right-click the TailSlap icon in the system tray to access:
 - **Refine Now**: Process the currently selected text immediately
+- **Transcribe Audio**: Start audio recording for transcription
 - **Auto Paste**: Toggle automatic pasting of refined text to your clipboard
 - **Change Hotkey**: Set a custom keyboard shortcut (interactive capture)
-- **Settings...**: Configure LLM endpoint, model, temperature, and other preferences
+- **Settings...**: Configure LLM endpoint, model, temperature, transcription settings, and other preferences
 - **Open Logs...**: View application logs for debugging
-- **History...**: View and clear your refinement history
+- **History...**: View and clear your refinement and transcription history
 - **Start with Windows**: Toggle automatic startup with Windows
 - **Quit**: Exit the application
 

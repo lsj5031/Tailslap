@@ -25,6 +25,7 @@ This document contains internal development information for TailSlap contributor
    - `HotkeyCaptureForm`: Interactive dialog for capturing new hotkey combinations
    - `SettingsForm`: UI for configuring LLM endpoint, model, temperature, max tokens
    - `HistoryForm`: UI for viewing and clearing refinement history
+   - `TranscriptionHistoryForm`: UI for viewing and clearing transcription history
    - `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio)
    - `AudioRecorder`: Windows Multimedia API (WinMM) via P/Invoke for microphone recording (16-bit mono, 16kHz WAV output)
 - **Single-instance mutex** prevents multiple app instances
