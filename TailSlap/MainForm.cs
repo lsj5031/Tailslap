@@ -202,7 +202,9 @@ public class MainForm : Form
 
         if (list.Count > 0)
         {
-            Logger.Log($"Loaded {list.Count} animation frames (PNG) from files at {preferredSize}px");
+            Logger.Log(
+                $"Loaded {list.Count} animation frames (PNG) from files at {preferredSize}px"
+            );
             return list.ToArray();
         }
 

@@ -17,7 +17,7 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Visible>true</Visible>
     </Content>
-    
+
     <!-- Embedded resources as fallback -->
     <EmbeddedResource Include="Icons\1.png" />
     <EmbeddedResource Include="Icons\2.png" />
