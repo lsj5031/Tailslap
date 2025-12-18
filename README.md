@@ -68,17 +68,15 @@ Application logs are stored at:
 
 ## Animation
 
-TailSlap uses a cute animated icon that cycles through different "chewing" frames while processing text:
+TailSlap uses a smooth 8-frame animated icon during text processing:
 
-| Idle | Processing 1 | Processing 2 | Processing 3 | Processing 4 |
-|------|--------------|--------------|--------------|--------------|
-| ![Idle](TailSlap/Icons/1.png) | ![Frame2](TailSlap/Icons/2.png) | ![Frame3](TailSlap/Icons/3.png) | ![Frame4](TailSlap/Icons/4.png) | ![Frame5](TailSlap/Icons/5.png) |
+| Idle | Frame 1 | Frame 2 | Frame 3 | Frame 4 | Frame 5 | Frame 6 | Frame 7 | Frame 8 |
+|------|---------|---------|---------|---------|---------|---------|---------|---------|
+| ![Idle](TailSlap/Icons/1.png) | ![Frame2](TailSlap/Icons/2.png) | ![Frame3](TailSlap/Icons/3.png) | ![Frame4](TailSlap/Icons/4.png) | ![Frame5](TailSlap/Icons/5.png) | ![Frame6](TailSlap/Icons/6.png) | ![Frame7](TailSlap/Icons/7.png) | ![Frame8](TailSlap/Icons/8.png) |
 
-The animation plays with pulsing text ("TailSlap - Processing...") during LLM requests to give you visual feedback.
+The animation cycles through all 8 frames with pulsing tray text ("TailSlap - Processing...") during LLM requests to give you smooth visual feedback.
 
 ## Building from Source
-
-1. Clone the repository: `git clone https://github.com/tailslap/TailSlap.git`
 2. Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
 3. Publish: `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
 
