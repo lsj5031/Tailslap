@@ -625,7 +625,7 @@ public sealed class ClipboardService
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync()
     {
         // Try multiple paste methods in order of reliability
-        string[] methods = { "Ctrl+V", "Shift+Insert", "SendInput Ctrl+V" };
+        string[] methods = { "Shift+Insert", "Ctrl+V", "SendInput Ctrl+V" };
         
         foreach (string method in methods)
         {
