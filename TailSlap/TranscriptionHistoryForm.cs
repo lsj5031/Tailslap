@@ -1,115 +1,66 @@
 using System;
 using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Windows.Forms;
 
 public sealed class TranscriptionHistoryForm : Form
 {
     private ListBox _list;
     private TextBox _textBox;
-    private System.Windows.Forms.Timer? _refreshTimer;
-    private FileSystemWatcher? _fileWatcher;
-    private DateTime _lastRefresh;
-    private int _lastCount;
+    private Label _statusLabel;
     private Button _refreshButton;
-    private Button _clearButton;
-    private Button _copyButton;
+    private System.Windows.Forms.Timer? _refreshTimer;
+    private DateTime _lastRefresh;
 
     public TranscriptionHistoryForm()
     {
-        Text = "Transcription History";
+        Text = "Encrypted Transcription History";
         StartPosition = FormStartPosition.CenterScreen;
-        Width = 800; Height = 500;
+        Width = 900; Height = 550;
         AutoScaleMode = AutoScaleMode.Dpi;
         Icon = MainForm.LoadMainIcon();
 
-        InitializeRefreshTimer();
-        InitializeFileWatcher();
+        _list = new ListBox { Dock = DockStyle.Top, HorizontalScrollbar = true, Height = 200 };
+        _textBox = new TextBox { Multiline = true, Dock = DockStyle.Fill, ReadOnly = true, BackColor = SystemColors.Window, ScrollBars = ScrollBars.Both };
 
-        var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 280 };
+        _statusLabel = new Label { Dock = DockStyle.Bottom, Height = 20, Text = "Status: Ready", ForeColor = Color.DarkGray, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
         
-        _list = new ListBox { Dock = DockStyle.Fill, HorizontalScrollbar = true };
-        split.Panel1.Controls.Add(_list);
-
-        _textBox = new TextBox { Multiline = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Both, Font = new Font(FontFamily.GenericMonospace, 9), ReadOnly = true };
-        split.Panel2.Controls.Add(_textBox);
-
-        var buttons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            FlowDirection = FlowDirection.RightToLeft,
-            Padding = new Padding(10),
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            WrapContents = false
-        };
-        
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
+        var copy = new Button { Text = "Copy Text", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         _refreshButton = new Button { Text = "Refresh (F5)", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        _clearButton = new Button { Text = "Clear History", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        _copyButton = new Button { Text = "Copy Text", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
-        
-        _refreshButton.Click += (_, __) => RefreshHistory();
-        _clearButton.Click += ClearHistory;
-        _copyButton.Click += (_, __) => { try { if (!string.IsNullOrEmpty(_textBox.Text)) { Clipboard.SetText(_textBox.Text); NotificationService.ShowSuccess("Text copied."); } } catch { } };
-        
-        buttons.Controls.Add(_refreshButton);
-        buttons.Controls.Add(_copyButton);
-        buttons.Controls.Add(_clearButton);
+        var clear = new Button { Text = "Clear History", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
 
-        Controls.Add(split);
-        Controls.Add(buttons);
-
-        Load += (_, __) => { Populate(); _lastRefresh = DateTime.Now; _lastCount = _list.Items.Count; };
-        _list.SelectedIndexChanged += (_, __) => ShowSelected();
-
-        KeyPreview = true;
-        KeyDown += (s, e) => { if (e.KeyCode == Keys.F5) RefreshHistory(); };
-        Activated += (_, __) => { if (DateTime.Now - _lastRefresh > TimeSpan.FromSeconds(1)) RefreshHistory(); };
-    }
-
-    private void Populate()
-    {
-        var items = HistoryService.ReadAllTranscriptions();
-        _list.Items.Clear();
-        foreach (var e in items)
-        {
-            var durationStr = e.RecordingDurationMs > 0 ? $"{e.RecordingDurationMs / 1000.0:F1}s" : "-";
-            var preview = e.Text.Length > 50 ? e.Text.Substring(0, 50).Replace('\n', ' ') + "..." : e.Text.Replace('\n', ' ');
-            _list.Items.Add($"{e.Timestamp:MM-dd HH:mm} [{durationStr}] {preview}");
-        }
-        if (_list.Items.Count > 0) _list.SelectedIndex = _list.Items.Count - 1;
-    }
-
-    private void ShowSelected()
-    {
-        var idx = _list.SelectedIndex;
-        var all = HistoryService.ReadAllTranscriptions();
-        if (idx < 0 || idx >= all.Count) return;
-        _textBox.Text = all[idx].Text;
-    }
-
-    private void ClearHistory(object? sender, EventArgs e)
-    {
-        var result = MessageBox.Show(
-            "Are you sure you want to clear all transcription history?",
-            "Clear Transcription History",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Warning);
-
-        if (result == DialogResult.Yes)
+        copy.Click += (_, __) => { try { Clipboard.SetText(_textBox.Text); NotificationService.ShowSuccess("Transcription copied to clipboard."); } catch { NotificationService.ShowError("Failed to copy text."); } };
+        _refreshButton.Click += (_, __) => RefreshHistory(true);
+        clear.Click += (_, __) =>
         {
             try
             {
-                var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap", "transcription-history.jsonl");
-                if (File.Exists(path)) File.Delete(path);
-                Populate();
-                NotificationService.ShowSuccess("Transcription history cleared.");
+                if (MessageBox.Show("Are you sure you want to delete all encrypted transcription history? This action is irreversible.", "Confirm Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                {
+                    HistoryService.ClearAll();
+                    SafePopulate();
+                    NotificationService.ShowSuccess("Encrypted transcription history cleared.");
+                }
             }
             catch (Exception ex)
             {
-                NotificationService.ShowError($"Failed to clear history: {ex.Message}");
+                try { Logger.Log($"Clear encrypted history failed: {ex.Message}"); } catch { }
+                NotificationService.ShowError("Failed to clear encrypted history.");
             }
-        }
+        };
+
+        buttons.Controls.AddRange(new Control[] { copy, _refreshButton, clear });
+        
+        Controls.AddRange(new Control[] { _statusLabel, buttons, _textBox, _list });
+
+        Load += (_, __) => { SafePopulate(); _lastRefresh = DateTime.Now; InitializeRefreshTimer(); };
+        _list.SelectedIndexChanged += (_, __) => SafeShowSelected();
+
+        Activated += (_, __) => { if (DateTime.Now - _lastRefresh > TimeSpan.FromSeconds(2)) SafePopulate(); };
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (e.KeyCode == Keys.F5) RefreshHistory(true); };
     }
 
     private void InitializeRefreshTimer()
@@ -119,28 +70,104 @@ public sealed class TranscriptionHistoryForm : Form
         _refreshTimer.Start();
     }
 
-    private void InitializeFileWatcher()
+    private void SafePopulate()
     {
         try
         {
-            string historyDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap");
-            if (Directory.Exists(historyDir))
+            Populate();
+        }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"Encrypted transcription populate failed: {ex.Message}"); } catch { }
+            _statusLabel.Text = "Status: Error populating list";
+            _statusLabel.ForeColor = Color.Red;
+        }
+    }
+
+    private void Populate()
+    {
+        var items = HistoryService.ReadAllTranscriptions();
+        _list.BeginUpdate();
+        _list.Items.Clear();
+        
+        int corruptedCount = 0;
+        foreach (var (timestamp, text, duration) in items)
+        {
+            string preview = Preview(text);
+            
+            // Detect corrupted/encrypted entries
+            if (string.IsNullOrEmpty(text))
             {
-                _fileWatcher = new FileSystemWatcher(historyDir, "transcription-history.jsonl")
-                {
-                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size
-                };
-                _fileWatcher.Changed += (_, __) =>
-                {
-                    if (InvokeRequired) Invoke(new Action(CheckForNewEntries));
-                    else CheckForNewEntries();
-                };
-                _fileWatcher.EnableRaisingEvents = true;
+                corruptedCount++;
+                _list.Items.Add($"{timestamp:yyyy-MM-dd HH:mm} ⚠️ CORRUPTED ({duration}ms)");
+            }
+            else
+            {
+                _list.Items.Add($"{timestamp:yyyy-MM-dd HH:mm} {preview} ({duration}ms)");
+            }
+        }
+        _list.EndUpdate();
+
+        if (corruptedCount > 0)
+        {
+            _statusLabel.Text = $"Status: {items.Count} total entries - {corruptedCount} corrupted (encrypted) entries detected";
+            _statusLabel.ForeColor = Color.Orange;
+        }
+        else
+        {
+            _statusLabel.Text = $"Status: {items.Count} total entries";
+            _statusLabel.ForeColor = Color.DarkGray;
+        }
+
+        if (_list.Items.Count > 0) _list.SelectedIndex = _list.Items.Count - 1;
+    }
+
+    private string Preview(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "(empty)";
+        s = s.Replace('\n', ' ').Replace('\r', ' ');
+        s = s.Replace("  ", " ");
+        s = s.Trim();
+        return s.Length > 80 ? s.Substring(0, 80) + "…" : s;
+    }
+
+    private void SafeShowSelected()
+    {
+        try
+        {
+            var items = HistoryService.ReadAllTranscriptions();
+            int idx = _list.SelectedIndex;
+            if (idx < 0 || idx >= items.Count) return;
+            
+            var (timestamp, text, duration) = items[idx];
+            
+            // Replace NBSP with regular spaces for readability
+            var cleanText = (text ?? "").Replace('\u00A0', ' ');
+            var sb = new StringBuilder();
+            sb.AppendLine($"Date: {timestamp:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"Duration: {duration}ms");
+            sb.AppendLine(new string('-', 50));
+            sb.AppendLine();
+            sb.AppendLine(cleanText);
+            
+            _textBox.Text = sb.ToString();
+            
+            if (string.IsNullOrEmpty(text))
+            {
+                _statusLabel.Text = "Status: Corrupted entry - decryption may have failed";
+                _statusLabel.ForeColor = Color.Orange;
+            }
+            else
+            {
+                _statusLabel.Text = "Status: Decrypted successfully";
+                _statusLabel.ForeColor = Color.DarkGreen;
             }
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"TranscriptionHistory FileWatcher init failed: {ex.Message}"); } catch { }
+            try { Logger.Log($"Show encrypted transcription selected failed: {ex.Message}"); } catch { }
+            _statusLabel.Text = $"Status: Error showing entry - {ex.Message}";
+            _statusLabel.ForeColor = Color.Red;
         }
     }
 
@@ -148,24 +175,39 @@ public sealed class TranscriptionHistoryForm : Form
     {
         try
         {
-            var currentItems = HistoryService.ReadAllTranscriptions();
-            if (currentItems.Count != _lastCount) RefreshHistory();
+            int currentCount = HistoryService.ReadAllTranscriptions().Count;
+            if (currentCount != _list.Items.Count)
+            {
+                SafePopulate();
+            }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            try { Logger.Log($"Encrypted transcription check for new failed: {ex.Message}"); } catch { }
+            _statusLabel.Text = $"Status: Error checking updates - {ex.Message}";
+            _statusLabel.ForeColor = Color.Red;
+        }
     }
 
-    private void RefreshHistory()
+    private void RefreshHistory(bool userInitiated = false)
     {
         try
         {
-            Populate();
+            if (userInitiated) 
+            { 
+                SafePopulate(); 
+                _statusLabel.Text = $"Status: Refreshed at {DateTime.Now:HH:mm:ss}";
+                _statusLabel.ForeColor = Color.DarkGray;
+            }
             _lastRefresh = DateTime.Now;
-            _lastCount = _list.Items.Count;
             _refreshButton.Text = $"Refresh (F5) - {_lastRefresh:HH:mm:ss}";
         }
         catch (Exception ex)
         {
-            NotificationService.ShowError($"Failed to refresh: {ex.Message}");
+            _statusLabel.Text = $"Status: Error refreshing - {ex.Message}";
+            _statusLabel.ForeColor = Color.Red;
+            try { Logger.Log($"Encrypted transcription refresh failed: {ex.Message}"); } catch { }
+            NotificationService.ShowError("Failed to refresh encrypted transcription history.");
         }
     }
 
@@ -173,9 +215,11 @@ public sealed class TranscriptionHistoryForm : Form
     {
         try
         {
-            _refreshTimer?.Stop();
-            _refreshTimer?.Dispose();
-            _fileWatcher?.Dispose();
+            if (_refreshTimer != null)
+            {
+                _refreshTimer.Stop();
+                _refreshTimer.Dispose();
+            }
         }
         catch { }
         base.OnFormClosed(e);

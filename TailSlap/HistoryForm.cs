@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -12,21 +11,20 @@ public sealed class HistoryForm : Form
     private RichTextBox _diff;
     private TabControl _tabControl;
     private System.Windows.Forms.Timer? _refreshTimer;
-    private FileSystemWatcher? _fileWatcher;
     private DateTime _lastRefresh;
     private int _lastCount;
     private Button _refreshButton;
+    private Label _statusLabel;
 
     public HistoryForm()
     {
-        Text = "Refinement History";
+        Text = "Encrypted Refinement History";
         StartPosition = FormStartPosition.CenterScreen;
-        Width = 950; Height = 620;
+        Width = 950; Height = 650;
         AutoScaleMode = AutoScaleMode.Dpi;
         Icon = MainForm.LoadMainIcon();
         
         InitializeRefreshTimer();
-        InitializeFileWatcher();
 
         var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Vertical, SplitterDistance = 300 };
         _list = new ListBox { Dock = DockStyle.Fill, HorizontalScrollbar = true };
@@ -41,6 +39,10 @@ public sealed class HistoryForm : Form
         _tabControl.TabPages.Add(new TabPage("Diff") { Controls = { _diff } });
         split.Panel2.Controls.Add(_tabControl);
 
+        // Add status label
+        _statusLabel = new Label { Dock = DockStyle.Bottom, Height = 20, Text = "Status: Ready", ForeColor = Color.DarkGray, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(5, 0, 0, 0) };
+        Controls.Add(_statusLabel);
+        
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10), AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false };
         var copyR = new Button { Text = "Copy Refined", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
         var copyO = new Button { Text = "Copy Original", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
@@ -70,13 +72,48 @@ public sealed class HistoryForm : Form
 
     private void Populate()
     {
-        var items = HistoryService.ReadAll();
-        _list.Items.Clear();
-        foreach (var e in items)
+        try
         {
-            _list.Items.Add($"{e.Timestamp:MM-dd HH:mm} [{e.Model}] {Preview(e.Original)} -> {Preview(e.Refined)}");
+            var items = HistoryService.ReadAll();
+            _list.Items.Clear();
+            
+            int corruptedCount = 0;
+            foreach (var (timestamp, model, original, refined) in items)
+            {
+                string previewOriginal = Preview(original);
+                string previewRefined = Preview(refined);
+                
+                // Detect if decryption failed (empty strings are either truly empty or failed decryption)
+                if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(refined))
+                {
+                    corruptedCount++;
+                    _list.Items.Add($"{timestamp:MM-dd HH:mm} [{model}] ⚠️ CORRUPTED ENTRY");
+                }
+                else
+                {
+                    _list.Items.Add($"{timestamp:MM-dd HH:mm} [{model}] {previewOriginal} -> {previewRefined}");
+                }
+            }
+            
+            if (corruptedCount > 0)
+            {
+                _statusLabel.Text = $"Status: Ready - {corruptedCount} corrupted (encrypted) entries detected";
+                _statusLabel.ForeColor = Color.Orange;
+            }
+            else
+            {
+                _statusLabel.Text = "Status: Ready";
+                _statusLabel.ForeColor = Color.DarkGray;
+            }
+            
+            if (_list.Items.Count > 0) _list.SelectedIndex = _list.Items.Count - 1;
         }
-        if (_list.Items.Count > 0) _list.SelectedIndex = _list.Items.Count - 1;
+        catch (Exception ex)
+        {
+            _statusLabel.Text = $"Status: Error - {ex.Message}";
+            _statusLabel.ForeColor = Color.Red;
+            try { Logger.Log($"Encrypted history populate failed: {ex.Message}"); } catch { }
+        }
     }
 
     private string Preview(string s)
@@ -88,13 +125,37 @@ public sealed class HistoryForm : Form
 
     private void ShowSelected()
     {
-        var idx = _list.SelectedIndex;
-        var all = HistoryService.ReadAll();
-        if (idx < 0 || idx >= all.Count) return;
-        var e = all[idx];
-        _orig.Text = e.Original;
-        _ref.Text = e.Refined;
-        RenderColoredDiff(e.Original, e.Refined);
+        try
+        {
+            var idx = _list.SelectedIndex;
+            var all = HistoryService.ReadAll();
+            if (idx < 0 || idx >= all.Count) return;
+            
+            var (timestamp, model, original, refined) = all[idx];
+            
+            _orig.Text = original;
+            _ref.Text = refined;
+            
+            // Show decryption status
+            if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(refined))
+            {
+                _statusLabel.Text = "Status: Encrypted entry - decryption may have failed";
+                _statusLabel.ForeColor = Color.Orange;
+            }
+            else
+            {
+                _statusLabel.Text = "Status: Decrypted successfully";
+                _statusLabel.ForeColor = Color.DarkGreen;
+            }
+            
+            RenderColoredDiff(original, refined);
+        }
+        catch (Exception ex)
+        {
+            _statusLabel.Text = $"Status: Error showing entry - {ex.Message}";
+            _statusLabel.ForeColor = Color.Red;
+            try { Logger.Log($"Show selected encrypted history failed: {ex.Message}"); } catch { }
+        }
     }
 
     private void RenderColoredDiff(string a, string b)
@@ -191,40 +252,6 @@ public sealed class HistoryForm : Form
         _refreshTimer.Start();
     }
 
-    private void InitializeFileWatcher()
-    {
-        try
-        {
-            string historyPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TailSlap", "history.jsonl");
-            string? historyDir = Path.GetDirectoryName(historyPath);
-            
-            if (Directory.Exists(historyDir))
-            {
-                _fileWatcher = new FileSystemWatcher(historyDir, "history.jsonl")
-                {
-                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size
-                };
-                _fileWatcher.Changed += (_, __) => 
-                {
-                    // Debounce file system events
-                    if (InvokeRequired)
-                    {
-                        Invoke(new Action(CheckForNewEntries));
-                    }
-                    else
-                    {
-                        CheckForNewEntries();
-                    }
-                };
-                _fileWatcher.EnableRaisingEvents = true;
-            }
-        }
-        catch (Exception ex)
-        {
-            try { Logger.Log($"FileWatcher initialization failed: {ex.Message}"); } catch { }
-        }
-    }
-
     private void CheckForNewEntries()
     {
         try
@@ -237,7 +264,9 @@ public sealed class HistoryForm : Form
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"CheckForNewEntries failed: {ex.Message}"); } catch { }
+            _statusLabel.Text = $"Status: Error checking updates - {ex.Message}";
+            _statusLabel.ForeColor = Color.Red;
+            try { Logger.Log($"Encrypted checkForNewEntries failed: {ex.Message}"); } catch { }
         }
     }
 
@@ -272,8 +301,10 @@ public sealed class HistoryForm : Form
         }
         catch (Exception ex)
         {
-            try { Logger.Log($"RefreshHistory failed: {ex.Message}"); } catch { }
-            NotificationService.ShowError("Failed to refresh history.");
+            _statusLabel.Text = $"Status: Error refreshing - {ex.Message}";
+            _statusLabel.ForeColor = Color.Red;
+            try { Logger.Log($"Encrypted refresh history failed: {ex.Message}"); } catch { }
+            NotificationService.ShowError("Failed to refresh encrypted history.");
         }
     }
 
@@ -285,11 +316,6 @@ public sealed class HistoryForm : Form
             {
                 _refreshTimer.Stop();
                 _refreshTimer.Dispose();
-            }
-            if (_fileWatcher != null)
-            {
-                _fileWatcher.EnableRaisingEvents = false;
-                _fileWatcher.Dispose();
             }
         }
         catch { }

@@ -19,19 +19,32 @@ This document contains internal development information for TailSlap contributor
    - `ConfigService`: JSON config in `%APPDATA%\TailSlap\config.json` with validation methods
    - `Dpapi`: Windows DPAPI encryption for API keys (user-scoped)
    - `AutoStartService`: Registry-based Windows startup via HKEY_CURRENT_USER\Run
-   - `Logger`: File logging to `%APPDATA%\TailSlap\app.log` (no sensitive data logged)
-   - `HistoryService`: JSONL history file in `%APPDATA%\TailSlap\history.jsonl` (max 50 entries)
+   - `Logger`: File logging to `%APPDATA%\TailSlap\app.log` (no sensitive data logged - SHA256 fingerprints only)
+   - `HistoryService`: **Encrypted** JSONL history file in `%APPDATA%\TailSlap\history.jsonl.encrypted` (max 50 entries) with Windows DPAPI protection
    - `NotificationService`: Balloon tips for user feedback (success/warning/error)
    - `HotkeyCaptureForm`: Interactive dialog for capturing new hotkey combinations
    - `SettingsForm`: UI for configuring LLM endpoint, model, temperature, max tokens
-   - `HistoryForm`: UI for viewing and clearing refinement history
-   - `TranscriptionHistoryForm`: UI for viewing and clearing transcription history
+   - `HistoryForm`: UI for viewing encrypted refinement history with decryption status and diff view
+   - `TranscriptionHistoryForm`: UI for viewing encrypted transcription history with decryption status
    - `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio)
    - `AudioRecorder`: Windows Multimedia API (WinMM) via P/Invoke for microphone recording (16-bit mono, 16kHz WAV output)
 - **Single-instance mutex** prevents multiple app instances
 - **Global hotkey registration** (default Ctrl+Alt+R, user-customizable)
 - **Animated tray icon** (4-frame animation with pulsing text) during refinement
 - **DPI-aware icon loading** (scales icons based on display DPI)
+
+## Security & Encryption
+
+- **API Keys**: Encrypted using Windows DPAPI `DataProtectionScope.CurrentUser` (Dpapi service)
+- **History Files**: All refinement and transcription history encrypted with Windows DPAPI
+  - Refinement: `%APPDATA%\TailSlap\history.jsonl.encrypted`
+  - Transcription: `%APPDATA%\TailSlap\transcription-history.jsonl.encrypted`
+  - Encryption is transparent to users; history forms show decryption status
+  - Plaintext history (if present from older versions) remains unencrypted in separate files
+  - Only the current Windows user can decrypt (not even administrators)
+- **Log Files**: Never log sensitive text directly; use SHA256 fingerprints for debugging
+- **System Integration**: Leverages Windows DPAPI, no custom encryption keys or passwords
+- **Error Recovery**: Graceful degradation if encryption/decryption fails
 
 ## Code Style & Conventions
 

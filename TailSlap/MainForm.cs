@@ -48,8 +48,8 @@ public class MainForm : Form
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Settings...", null, (_, __) => ShowSettings(_currentConfig));
         _menu.Items.Add("Open Logs...", null, (_, __) => { try { Process.Start("notepad", System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData), "TailSlap", "app.log")); } catch { NotificationService.ShowError("Failed to open logs."); } });
-        _menu.Items.Add("Refinement History...", null, (_, __) => { try { using var hf = new HistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open history."); } });
-        _menu.Items.Add("Transcription History...", null, (_, __) => { try { using var hf = new TranscriptionHistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open transcription history."); } });
+        _menu.Items.Add("Encrypted Refinement History...", null, (_, __) => { try { using var hf = new HistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open history."); } });
+        _menu.Items.Add("Encrypted Transcription History...", null, (_, __) => { try { using var hf = new TranscriptionHistoryForm(); hf.ShowDialog(); } catch { NotificationService.ShowError("Failed to open transcription history."); } });
         var autoStartItem = new ToolStripMenuItem("Start with Windows") { Checked = AutoStartService.IsEnabled("TailSlap") };
         autoStartItem.Click += (_, __) => { AutoStartService.Toggle("TailSlap"); autoStartItem.Checked = AutoStartService.IsEnabled("TailSlap"); };
         _menu.Items.Add(autoStartItem);
