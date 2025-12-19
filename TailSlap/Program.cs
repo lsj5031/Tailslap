@@ -1,6 +1,9 @@
 using System;
+using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Extensions.DependencyInjection;
 
 internal static class Program
 {
@@ -12,6 +15,7 @@ internal static class Program
             Logger.Log("App starting");
         }
         catch { }
+
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (s, e) =>
         {
@@ -30,7 +34,6 @@ internal static class Program
             catch { }
         };
 
-        // Ensure per-monitor DPI scaling for all dialogs
         try
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
@@ -42,14 +45,54 @@ internal static class Program
             return;
 
         ApplicationConfiguration.Initialize();
+
+        var services = new ServiceCollection();
+        ConfigureServices(services);
+
+        using var serviceProvider = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateOnBuild = true }
+        );
+
         try
         {
-            Application.Run(new MainForm());
+            var mainForm = serviceProvider.GetRequiredService<MainForm>();
+            Application.Run(mainForm);
         }
         finally
         {
-            // Flush any remaining queued log entries on shutdown
             Logger.Shutdown();
         }
+    }
+
+    private static void ConfigureServices(IServiceCollection services)
+    {
+        services.AddSingleton<IConfigService, ConfigService>();
+        services.AddSingleton<IClipboardService, ClipboardService>();
+        services.AddSingleton<ITextRefinerFactory, TextRefinerFactory>();
+        services.AddSingleton<IRemoteTranscriberFactory, RemoteTranscriberFactory>();
+
+        services.AddTransient<MainForm>();
+
+        services
+            .AddHttpClient(
+                HttpClientNames.Default,
+                client =>
+                {
+                    client.Timeout = Timeout.InfiniteTimeSpan;
+                }
+            )
+            .ConfigurePrimaryHttpMessageHandler(
+                () =>
+                    new SocketsHttpHandler
+                    {
+                        AutomaticDecompression = DecompressionMethods.GZip
+                            | DecompressionMethods.Deflate,
+                        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+                        MaxConnectionsPerServer = 10,
+                        ConnectTimeout = TimeSpan.FromSeconds(10),
+                    }
+            )
+            .SetHandlerLifetime(TimeSpan.FromMinutes(5));
     }
 }

@@ -6,6 +6,9 @@ using System.Windows.Forms;
 public sealed class SettingsForm : Form
 {
     private readonly AppConfig _cfg;
+    private readonly ITextRefinerFactory _textRefinerFactory;
+    private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
+
     private CheckBox _enabled;
     private CheckBox _autoPaste;
     private CheckBox _clipboardFallback;
@@ -35,9 +38,18 @@ public sealed class SettingsForm : Form
     private Button? _testTranscriberConnectionButton;
     private Button? _detectMicrophonesButton;
 
-    public SettingsForm(AppConfig cfg)
+    public SettingsForm(
+        AppConfig cfg,
+        ITextRefinerFactory textRefinerFactory,
+        IRemoteTranscriberFactory remoteTranscriberFactory
+    )
     {
         _cfg = cfg;
+        _textRefinerFactory = textRefinerFactory
+            ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _remoteTranscriberFactory = remoteTranscriberFactory
+            ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
+
         Text = "TailSlap Settings";
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -759,11 +771,8 @@ public sealed class SettingsForm : Form
                 XTitle = string.IsNullOrWhiteSpace(_xTitle.Text) ? null : _xTitle.Text.Trim(),
             };
 
-            var testRefiner = new TextRefiner(testConfig);
-            await testRefiner.RefineAsync(
-                "Test connection",
-                System.Threading.CancellationToken.None
-            );
+            var testRefiner = _textRefinerFactory.Create(testConfig);
+            await testRefiner.RefineAsync("Test connection", System.Threading.CancellationToken.None);
 
             NotificationService.ShowSuccess("Connection test successful!");
         }
@@ -802,7 +811,7 @@ public sealed class SettingsForm : Form
                     : _transcriberApiKey!.Text.Trim(),
             };
 
-            using var testTranscriber = new RemoteTranscriber(testConfig);
+            var testTranscriber = _remoteTranscriberFactory.Create(testConfig);
             await testTranscriber.TestConnectionAsync();
 
             NotificationService.ShowSuccess("Transcription API connection test successful!");

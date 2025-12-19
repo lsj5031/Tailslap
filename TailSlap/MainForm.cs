@@ -26,8 +26,11 @@ public class MainForm : Form
     private const int REFINEMENT_HOTKEY_ID = 1;
     private const int TRANSCRIBER_HOTKEY_ID = 2;
 
-    private readonly ConfigService _config;
-    private readonly ClipboardService _clip;
+    private readonly IConfigService _config;
+    private readonly IClipboardService _clip;
+    private readonly ITextRefinerFactory _textRefinerFactory;
+    private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
+
     private uint _currentMods;
     private uint _currentVk;
     private uint _transcriberMods;
@@ -37,8 +40,20 @@ public class MainForm : Form
     private bool _isTranscribing;
     private CancellationTokenSource? _transcriberCts;
 
-    public MainForm()
+    public MainForm(
+        IConfigService config,
+        IClipboardService clip,
+        ITextRefinerFactory textRefinerFactory,
+        IRemoteTranscriberFactory remoteTranscriberFactory
+    )
     {
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+        _clip = clip ?? throw new ArgumentNullException(nameof(clip));
+        _textRefinerFactory = textRefinerFactory
+            ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _remoteTranscriberFactory = remoteTranscriberFactory
+            ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
+
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         DoubleBuffered = true;
         UpdateStyles();
@@ -47,9 +62,7 @@ public class MainForm : Form
         WindowState = FormWindowState.Minimized;
         Visible = false;
 
-        _config = new ConfigService();
         _currentConfig = _config.LoadOrDefault();
-        _clip = new ClipboardService();
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
@@ -789,7 +802,7 @@ public class MainForm : Form
                 catch { }
                 return;
             }
-            var refiner = new TextRefiner(_currentConfig.Llm);
+            var refiner = _textRefinerFactory.Create(_currentConfig.Llm);
             var refined = await refiner.RefineAsync(text);
             Logger.Log(
                 $"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}"
@@ -951,7 +964,7 @@ public class MainForm : Form
             Logger.Log(
                 $"Creating RemoteTranscriber with BaseUrl: {_currentConfig.Transcriber.BaseUrl}"
             );
-            using var transcriber = new RemoteTranscriber(_currentConfig.Transcriber);
+            var transcriber = _remoteTranscriberFactory.Create(_currentConfig.Transcriber);
             string transcriptionText;
 
             try
@@ -1234,7 +1247,7 @@ public class MainForm : Form
 
     private void ShowSettings(AppConfig cfg)
     {
-        using var dlg = new SettingsForm(cfg);
+        using var dlg = new SettingsForm(cfg, _textRefinerFactory, _remoteTranscriberFactory);
         if (dlg.ShowDialog() == DialogResult.OK)
         {
             Logger.Log(

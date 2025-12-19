@@ -6,7 +6,7 @@ using System.Threading;
 using System.Windows.Automation;
 using System.Windows.Forms;
 
-public sealed class ClipboardService
+public sealed class ClipboardService : IClipboardService
 {
     // Performance metrics
     private static readonly System.Collections.Generic.Dictionary<string, int> _captureStats =

@@ -8,18 +8,22 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
-public sealed class TextRefiner
+public sealed class TextRefiner : ITextRefiner
 {
+    private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(30);
+
     private readonly LlmConfig _cfg;
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private readonly IHttpClientFactory _httpClientFactory;
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    public TextRefiner(LlmConfig cfg)
+    public TextRefiner(LlmConfig cfg, IHttpClientFactory httpClientFactory)
     {
         _cfg = cfg;
+        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
 
         var hasApiKey = !string.IsNullOrWhiteSpace(_cfg.ApiKey);
         var hasReferer = !string.IsNullOrWhiteSpace(_cfg.HttpReferer);
@@ -85,6 +89,8 @@ public sealed class TextRefiner
             },
         };
 
+        using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
+
         int attempts = 2;
         while (attempts-- > 0)
         {
@@ -97,7 +103,7 @@ public sealed class TextRefiner
                 }
                 catch { }
 
-                var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
                 {
                     Content = new StringContent(json, Encoding.UTF8, "application/json"),
                 };
@@ -109,10 +115,13 @@ public sealed class TextRefiner
                 if (!string.IsNullOrWhiteSpace(_cfg.XTitle))
                     request.Headers.TryAddWithoutValidation("X-Title", _cfg.XTitle);
 
-                using var resp = await Http.SendAsync(
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(DefaultRequestTimeout);
+
+                using var resp = await http.SendAsync(
                         request,
                         HttpCompletionOption.ResponseHeadersRead,
-                        ct
+                        timeoutCts.Token
                     )
                     .ConfigureAwait(false);
                 try
@@ -141,13 +150,17 @@ public sealed class TextRefiner
                             continue;
                         }
                     }
-                    var errorBody = await resp.Content.ReadAsStringAsync(ct);
+                    var errorBody = await resp.Content
+                        .ReadAsStringAsync(timeoutCts.Token)
+                        .ConfigureAwait(false);
                     var userFriendlyError = GetUserFriendlyError(resp.StatusCode, errorBody);
                     NotificationService.ShowError($"LLM request failed: {userFriendlyError}");
                     throw new Exception($"LLM error {resp.StatusCode}: {errorBody}");
                 }
 
-                var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                var body = await resp.Content
+                    .ReadAsStringAsync(timeoutCts.Token)
+                    .ConfigureAwait(false);
                 var parsed =
                     JsonSerializer.Deserialize<ChatResponse>(body, JsonOpts)
                     ?? throw new Exception("Invalid response JSON");

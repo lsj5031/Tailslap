@@ -10,6 +10,11 @@
     <ApplicationIcon>Icons\favicon.ico</ApplicationIcon>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- Physical copy of icons for external loading (faster, allows hot-swapping) -->
     <Content Include="Icons\**\*">

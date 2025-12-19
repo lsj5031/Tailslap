@@ -3,8 +3,8 @@ using System.IO;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 public enum TranscriberErrorType
 {
@@ -43,38 +43,35 @@ public class TranscriberException : Exception
     }
 }
 
-public sealed class RemoteTranscriber : IDisposable
+public sealed class RemoteTranscriber : IRemoteTranscriber
 {
     private readonly TranscriberConfig _config;
-    private readonly HttpClient _httpClient;
-    private bool _disposed;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public RemoteTranscriber(TranscriberConfig config)
+    public RemoteTranscriber(TranscriberConfig config, IHttpClientFactory httpClientFactory)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(_config.TimeoutSeconds) };
+        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
     }
 
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-        _httpClient?.Dispose();
-        _disposed = true;
-    }
-
-    public async Task<string> TestConnectionAsync()
+    public async Task<string> TestConnectionAsync(CancellationToken ct = default)
     {
         try
         {
             // Create a short silence WAV file for testing
             var silenceWav = CreateSilenceWavBytes(durationSeconds: 0.6f);
-            var audioContent = new ByteArrayContent(silenceWav);
+
+            using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
+
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+
+            using var audioContent = new ByteArrayContent(silenceWav);
             audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
                 "audio/wav"
             );
 
-            var formData = new MultipartFormDataContent();
+            using var formData = new MultipartFormDataContent();
             formData.Add(audioContent, "file", "connection_test.wav");
 
             if (!string.IsNullOrEmpty(_config.Model))
@@ -83,7 +80,7 @@ public sealed class RemoteTranscriber : IDisposable
             }
 
             // Create request and add Authorization header (must be on HttpRequestMessage, not content)
-            var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
+            using var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
             {
                 Content = formData,
             };
@@ -92,9 +89,16 @@ public sealed class RemoteTranscriber : IDisposable
                 request.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
             }
 
-            var response = await _httpClient.SendAsync(request);
+            using var response = await http.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeoutCts.Token
+                )
+                .ConfigureAwait(false);
 
-            var responseText = await response.Content.ReadAsStringAsync();
+            var responseText = await response.Content
+                .ReadAsStringAsync(timeoutCts.Token)
+                .ConfigureAwait(false);
 
             if (response.StatusCode != System.Net.HttpStatusCode.OK)
             {
@@ -128,6 +132,10 @@ public sealed class RemoteTranscriber : IDisposable
         {
             throw;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (TaskCanceledException e)
         {
             throw new TranscriberException(
@@ -155,7 +163,7 @@ public sealed class RemoteTranscriber : IDisposable
         }
     }
 
-    public async Task<string> TranscribeAudioAsync(string audioFilePath)
+    public async Task<string> TranscribeAudioAsync(string audioFilePath, CancellationToken ct = default)
     {
         if (!File.Exists(audioFilePath))
         {
@@ -174,14 +182,20 @@ public sealed class RemoteTranscriber : IDisposable
             Logger.Log($"Transcription attempt {attemptNumber}/2");
             try
             {
-                var audioBytes = await File.ReadAllBytesAsync(audioFilePath);
+                var audioBytes = await File.ReadAllBytesAsync(audioFilePath, ct).ConfigureAwait(false);
                 Logger.Log($"Read {audioBytes.Length} bytes from audio file");
-                var audioContent = new ByteArrayContent(audioBytes);
+
+                using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
+
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+
+                using var audioContent = new ByteArrayContent(audioBytes);
                 audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
                     "audio/wav"
                 );
 
-                var formData = new MultipartFormDataContent();
+                using var formData = new MultipartFormDataContent();
                 formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
 
                 if (!string.IsNullOrEmpty(_config.Model))
@@ -193,7 +207,7 @@ public sealed class RemoteTranscriber : IDisposable
                 Logger.Log($"Posting to {_config.BaseUrl}");
 
                 // Create request and add Authorization header (must be on HttpRequestMessage, not content)
-                var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
+                using var request = new HttpRequestMessage(HttpMethod.Post, _config.BaseUrl)
                 {
                     Content = formData,
                 };
@@ -203,12 +217,19 @@ public sealed class RemoteTranscriber : IDisposable
                     Logger.Log("Added Authorization header");
                 }
 
-                var response = await _httpClient.SendAsync(request);
+                using var response = await http.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeoutCts.Token
+                    )
+                    .ConfigureAwait(false);
 
                 Logger.Log(
                     $"Received response: HTTP {(int)response.StatusCode} {response.StatusCode}"
                 );
-                var responseText = await response.Content.ReadAsStringAsync();
+                var responseText = await response.Content
+                    .ReadAsStringAsync(timeoutCts.Token)
+                    .ConfigureAwait(false);
                 Logger.Log(
                     $"Response body length: {responseText.Length}, content: {responseText.Substring(0, Math.Min(500, responseText.Length))}"
                 );
@@ -261,9 +282,13 @@ public sealed class RemoteTranscriber : IDisposable
                         );
                     }
                     catch { }
-                    await Task.Delay(1000);
+                    await Task.Delay(1000, ct).ConfigureAwait(false);
                     continue;
                 }
+                throw;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
                 throw;
             }
             catch (TaskCanceledException e)
@@ -280,7 +305,7 @@ public sealed class RemoteTranscriber : IDisposable
                         Logger.Log($"Transcription timeout; retrying in 1s");
                     }
                     catch { }
-                    await Task.Delay(1000);
+                    await Task.Delay(1000, ct).ConfigureAwait(false);
                     continue;
                 }
                 throw ex;
@@ -299,7 +324,7 @@ public sealed class RemoteTranscriber : IDisposable
                         Logger.Log($"Transcription connection failed; retrying in 1s");
                     }
                     catch { }
-                    await Task.Delay(1000);
+                    await Task.Delay(1000, ct).ConfigureAwait(false);
                     continue;
                 }
                 throw ex;

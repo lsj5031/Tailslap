@@ -60,7 +60,7 @@ public sealed class TranscriberConfig
     }
 }
 
-public sealed class ConfigService
+public sealed class ConfigService : IConfigService
 {
     private static string Dir =>
         Path.Combine(
