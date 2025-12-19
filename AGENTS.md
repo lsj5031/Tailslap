@@ -13,24 +13,33 @@ This document contains internal development information for TailSlap contributor
 
 - **Single WinForms desktop app** (.NET 9, net9.0-windows)
 - **Tray-only UI**: Hidden main form, runs as system tray icon with context menu
-- **Core Services**:
-   - `TextRefiner`: OpenAI-compatible LLM HTTP client with retry logic (2 attempts, 1s backoff)
-   - `ClipboardService`: Clipboard operations via Win32 P/Invoke (text capture, paste, fallback to `Ctrl+C`)
-   - `ConfigService`: JSON config in `%APPDATA%\TailSlap\config.json` with validation methods
+- **Dependency Injection**: Microsoft.Extensions.DependencyInjection for service management and composition
+- **HttpClientFactory**: Centralized HTTP client with connection pooling, automatic decompression, configurable timeouts
+- **Core Services** (all interface-driven):
+   - `ITextRefiner` / `TextRefiner`: OpenAI-compatible LLM HTTP client with retry logic (2 attempts, 1s backoff)
+   - `ITextRefinerFactory`: Factory for creating TextRefiner instances
+   - `IRemoteTranscriber` / `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio)
+   - `IRemoteTranscriberFactory`: Factory for creating RemoteTranscriber instances
+   - `IClipboardService` / `ClipboardService`: Clipboard operations via Win32 P/Invoke (text capture, paste, fallback to `Ctrl+C`)
+   - `IConfigService` / `ConfigService`: JSON config in `%APPDATA%\TailSlap\config.json` with validation methods; FileSystemWatcher for hot reload
+   - `IHistoryService` / `HistoryService`: **Encrypted** JSONL history (stream-based I/O for large files, max 50 entries) with Windows DPAPI protection
    - `Dpapi`: Windows DPAPI encryption for API keys (user-scoped)
    - `AutoStartService`: Registry-based Windows startup via HKEY_CURRENT_USER\Run
-   - `Logger`: File logging to `%APPDATA%\TailSlap\app.log` (no sensitive data logged - SHA256 fingerprints only)
-   - `HistoryService`: **Encrypted** JSONL history file in `%APPDATA%\TailSlap\history.jsonl.encrypted` (max 50 entries) with Windows DPAPI protection
+   - `Logger`: File logging to `%APPDATA%\TailSlap\app.log` (no sensitive data logged - SHA256 fingerprints only); Span<T> optimized
    - `NotificationService`: Balloon tips for user feedback (success/warning/error)
+   - `DiagnosticsEventSource`: EventSource for ETW-based diagnostics and performance monitoring (14 events across 7 categories)
+- **UI Forms**:
+   - `MainForm`: Main application form (hidden), wired via DI
    - `HotkeyCaptureForm`: Interactive dialog for capturing new hotkey combinations
    - `SettingsForm`: UI for configuring LLM endpoint, model, temperature, max tokens
    - `HistoryForm`: UI for viewing encrypted refinement history with decryption status and diff view
    - `TranscriptionHistoryForm`: UI for viewing encrypted transcription history with decryption status
-   - `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio)
-   - `AudioRecorder`: Windows Multimedia API (WinMM) via P/Invoke for microphone recording (16-bit mono, 16kHz WAV output)
+- **Resource Management**:
+   - `SafeWaveInHandle`: RAII wrapper for WinMM wave input handle safety
+- **Serialization**: `TailSlapJsonContext` (System.Text.Json source-generated context for AOT-friendly, reflection-free serialization)
 - **Single-instance mutex** prevents multiple app instances
 - **Global hotkey registration** (default Ctrl+Alt+R, user-customizable)
-- **Animated tray icon** (4-frame animation with pulsing text) during refinement
+- **Animated tray icon** (8-frame PNG animation with pulsing text) during refinement
 - **DPI-aware icon loading** (scales icons based on display DPI)
 
 ## Security & Encryption
@@ -60,4 +69,4 @@ This document contains internal development information for TailSlap contributor
 - **Logging**: Wrap all logging in try-catch to prevent crashes if log write fails; log fingerprints (SHA256) of text, not the text itself
 - **Notifications**: Use NotificationService for all user-facing messages (balloon tips)
 - **UI Forms**: Always use `using` statements for form disposal; dialog-based for modality
-- **No external NuGet dependencies**: Only built-in .NET libraries (System.*, Microsoft.*)
+- **Dependencies**: Minimal external NuGet—only Microsoft.Extensions.DependencyInjection (included via Microsoft.AspNetCore.App framework reference)
