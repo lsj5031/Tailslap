@@ -51,9 +51,10 @@ public class MainForm : Form
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _clip = clip ?? throw new ArgumentNullException(nameof(clip));
-        _textRefinerFactory = textRefinerFactory
-            ?? throw new ArgumentNullException(nameof(textRefinerFactory));
-        _remoteTranscriberFactory = remoteTranscriberFactory
+        _textRefinerFactory =
+            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _remoteTranscriberFactory =
+            remoteTranscriberFactory
             ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
         _history = history ?? throw new ArgumentNullException(nameof(history));
 
@@ -1123,10 +1124,7 @@ public class MainForm : Form
             // Log transcription to history (separate from LLM refinement history)
             try
             {
-                _history.AppendTranscription(
-                    transcriptionText,
-                    recordingStats?.DurationMs ?? 0
-                );
+                _history.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0);
                 Logger.Log(
                     $"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms"
                 );

@@ -53,7 +53,11 @@ public sealed class AudioRecorder : IDisposable
     private static extern int waveInPrepareHeader(SafeWaveInHandle hwi, ref WAVEHDR pwh, int cbwh);
 
     [DllImport("winmm.dll")]
-    private static extern int waveInUnprepareHeader(SafeWaveInHandle hwi, ref WAVEHDR pwh, int cbwh);
+    private static extern int waveInUnprepareHeader(
+        SafeWaveInHandle hwi,
+        ref WAVEHDR pwh,
+        int cbwh
+    );
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct WAVEFORMATEX
@@ -173,7 +177,9 @@ public sealed class AudioRecorder : IDisposable
                     $"Failed to open waveIn device (deviceId={deviceId}, numDevices={numDevices}): error {result}"
                 );
             }
-            Logger.Log($"AudioRecorder: waveInOpen succeeded, handle=0x{_hWaveIn.DangerousGetHandle():X}");
+            Logger.Log(
+                $"AudioRecorder: waveInOpen succeeded, handle=0x{_hWaveIn.DangerousGetHandle():X}"
+            );
 
             // Allocate and prepare buffers
             for (int i = 0; i < BUFFER_COUNT; i++)
@@ -371,7 +377,12 @@ public sealed class AudioRecorder : IDisposable
                         }
 
                         // Re-add buffer for more recording if not final drain
-                        if (!isFinalDrain && _isRecording && _hWaveIn != null && !_hWaveIn.IsInvalid)
+                        if (
+                            !isFinalDrain
+                            && _isRecording
+                            && _hWaveIn != null
+                            && !_hWaveIn.IsInvalid
+                        )
                         {
                             _waveHeaders[i].dwBytesRecorded = 0;
                             _waveHeaders[i].dwFlags = 0; // Reset flags

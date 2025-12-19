@@ -1,5 +1,5 @@
-using Xunit;
 using Moq;
+using Xunit;
 
 public class ConfigServiceTests
 {

@@ -72,7 +72,7 @@ public sealed class ConfigService : IConfigService
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
-        TypeInfoResolver = TailSlapJsonContext.Default
+        TypeInfoResolver = TailSlapJsonContext.Default,
     };
 
     private FileSystemWatcher? _watcher;
@@ -93,7 +93,8 @@ public sealed class ConfigService : IConfigService
 
             _watcher = new FileSystemWatcher(Dir, "config.json")
             {
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size
+                NotifyFilter =
+                    NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
             };
 
             _watcher.Changed += OnFileChanged;

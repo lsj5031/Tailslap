@@ -51,7 +51,8 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
     public RemoteTranscriber(TranscriberConfig config, IHttpClientFactory httpClientFactory)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _httpClientFactory =
+            httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
     }
 
     public async Task<string> TestConnectionAsync(CancellationToken ct = default)
@@ -96,8 +97,8 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 )
                 .ConfigureAwait(false);
 
-            var responseText = await response.Content
-                .ReadAsStringAsync(timeoutCts.Token)
+            var responseText = await response
+                .Content.ReadAsStringAsync(timeoutCts.Token)
                 .ConfigureAwait(false);
 
             if (response.StatusCode != System.Net.HttpStatusCode.OK)
@@ -163,7 +164,10 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         }
     }
 
-    public async Task<string> TranscribeAudioAsync(string audioFilePath, CancellationToken ct = default)
+    public async Task<string> TranscribeAudioAsync(
+        string audioFilePath,
+        CancellationToken ct = default
+    )
     {
         if (!File.Exists(audioFilePath))
         {
@@ -182,7 +186,8 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
             Logger.Log($"Transcription attempt {attemptNumber}/2");
             try
             {
-                var audioBytes = await File.ReadAllBytesAsync(audioFilePath, ct).ConfigureAwait(false);
+                var audioBytes = await File.ReadAllBytesAsync(audioFilePath, ct)
+                    .ConfigureAwait(false);
                 Logger.Log($"Read {audioBytes.Length} bytes from audio file");
 
                 using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
@@ -227,8 +232,8 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 Logger.Log(
                     $"Received response: HTTP {(int)response.StatusCode} {response.StatusCode}"
                 );
-                var responseText = await response.Content
-                    .ReadAsStringAsync(timeoutCts.Token)
+                var responseText = await response
+                    .Content.ReadAsStringAsync(timeoutCts.Token)
                     .ConfigureAwait(false);
                 Logger.Log(
                     $"Response body length: {responseText.Length}, content: {responseText.Substring(0, Math.Min(500, responseText.Length))}"

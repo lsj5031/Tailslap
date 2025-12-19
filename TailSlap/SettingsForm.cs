@@ -45,9 +45,10 @@ public sealed class SettingsForm : Form
     )
     {
         _cfg = cfg;
-        _textRefinerFactory = textRefinerFactory
-            ?? throw new ArgumentNullException(nameof(textRefinerFactory));
-        _remoteTranscriberFactory = remoteTranscriberFactory
+        _textRefinerFactory =
+            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _remoteTranscriberFactory =
+            remoteTranscriberFactory
             ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
 
         Text = "TailSlap Settings";
@@ -772,7 +773,10 @@ public sealed class SettingsForm : Form
             };
 
             var testRefiner = _textRefinerFactory.Create(testConfig);
-            await testRefiner.RefineAsync("Test connection", System.Threading.CancellationToken.None);
+            await testRefiner.RefineAsync(
+                "Test connection",
+                System.Threading.CancellationToken.None
+            );
 
             NotificationService.ShowSuccess("Connection test successful!");
         }

@@ -7,7 +7,8 @@ public sealed class TextRefinerFactory : ITextRefinerFactory
 
     public TextRefinerFactory(IHttpClientFactory httpClientFactory)
     {
-        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _httpClientFactory =
+            httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
     }
 
     public ITextRefiner Create(LlmConfig cfg)

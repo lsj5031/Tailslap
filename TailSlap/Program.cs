@@ -82,17 +82,16 @@ internal static class Program
                     client.Timeout = Timeout.InfiniteTimeSpan;
                 }
             )
-            .ConfigurePrimaryHttpMessageHandler(
-                () =>
-                    new SocketsHttpHandler
-                    {
-                        AutomaticDecompression = DecompressionMethods.GZip
-                            | DecompressionMethods.Deflate,
-                        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-                        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
-                        MaxConnectionsPerServer = 10,
-                        ConnectTimeout = TimeSpan.FromSeconds(10),
-                    }
+            .ConfigurePrimaryHttpMessageHandler(() =>
+                new SocketsHttpHandler
+                {
+                    AutomaticDecompression =
+                        DecompressionMethods.GZip | DecompressionMethods.Deflate,
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+                    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+                    MaxConnectionsPerServer = 10,
+                    ConnectTimeout = TimeSpan.FromSeconds(10),
+                }
             )
             .SetHandlerLifetime(TimeSpan.FromMinutes(5));
     }

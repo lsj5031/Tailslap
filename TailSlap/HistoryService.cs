@@ -16,7 +16,6 @@ public sealed class HistoryService : IHistoryService
         Path.Combine(Dir, "transcription-history.jsonl.encrypted");
     private const int MaxEntries = 50;
 
-
     private static string EncryptString(string plaintext)
     {
         if (string.IsNullOrEmpty(plaintext))
@@ -87,12 +86,7 @@ public sealed class HistoryService : IHistoryService
         }
     }
 
-    public List<(
-        DateTime Timestamp,
-        string Model,
-        string Original,
-        string Refined
-    )> ReadAll()
+    public List<(DateTime Timestamp, string Model, string Original, string Refined)> ReadAll()
     {
         var result = new List<(DateTime, string, string, string)>();
         try
@@ -230,11 +224,7 @@ public sealed class HistoryService : IHistoryService
         }
     }
 
-    public List<(
-        DateTime Timestamp,
-        string Text,
-        int RecordingDurationMs
-    )> ReadAllTranscriptions()
+    public List<(DateTime Timestamp, string Text, int RecordingDurationMs)> ReadAllTranscriptions()
     {
         var result = new List<(DateTime, string, int)>();
         try

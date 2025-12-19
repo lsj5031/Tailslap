@@ -7,7 +7,8 @@ public sealed class RemoteTranscriberFactory : IRemoteTranscriberFactory
 
     public RemoteTranscriberFactory(IHttpClientFactory httpClientFactory)
     {
-        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _httpClientFactory =
+            httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
     }
 
     public IRemoteTranscriber Create(TranscriberConfig config)

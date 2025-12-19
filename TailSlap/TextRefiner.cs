@@ -18,13 +18,14 @@ public sealed class TextRefiner : ITextRefiner
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        TypeInfoResolver = TailSlapJsonContext.Default
+        TypeInfoResolver = TailSlapJsonContext.Default,
     };
 
     public TextRefiner(LlmConfig cfg, IHttpClientFactory httpClientFactory)
     {
         _cfg = cfg;
-        _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _httpClientFactory =
+            httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
 
         var hasApiKey = !string.IsNullOrWhiteSpace(_cfg.ApiKey);
         var hasReferer = !string.IsNullOrWhiteSpace(_cfg.HttpReferer);
@@ -151,16 +152,16 @@ public sealed class TextRefiner : ITextRefiner
                             continue;
                         }
                     }
-                    var errorBody = await resp.Content
-                        .ReadAsStringAsync(timeoutCts.Token)
+                    var errorBody = await resp
+                        .Content.ReadAsStringAsync(timeoutCts.Token)
                         .ConfigureAwait(false);
                     var userFriendlyError = GetUserFriendlyError(resp.StatusCode, errorBody);
                     NotificationService.ShowError($"LLM request failed: {userFriendlyError}");
                     throw new Exception($"LLM error {resp.StatusCode}: {errorBody}");
                 }
 
-                var body = await resp.Content
-                    .ReadAsStringAsync(timeoutCts.Token)
+                var body = await resp
+                    .Content.ReadAsStringAsync(timeoutCts.Token)
                     .ConfigureAwait(false);
                 var parsed =
                     JsonSerializer.Deserialize(body, TailSlapJsonContext.Default.ChatResponse)
@@ -236,5 +237,4 @@ public sealed class TextRefiner : ITextRefiner
             return "";
         }
     }
-
 }
