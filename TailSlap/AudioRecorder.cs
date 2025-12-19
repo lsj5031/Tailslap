@@ -22,6 +22,7 @@ public sealed class AudioRecorder : IDisposable
     private const int MM_WIM_OPEN = 0x3BE;
     private const int MM_WIM_CLOSE = 0x3BF;
     private const int MM_WIM_DATA = 0x3C0;
+    private const uint WHDR_DONE = 0x00000001;      // Buffer is done
 
     // WinMM P/Invoke
     [DllImport("winmm.dll")]
@@ -302,6 +303,14 @@ public sealed class AudioRecorder : IDisposable
             );
 
             stats.BytesRecorded = (int)_recordedData.Length;
+            
+            // Log sanity check - expected bytes at 16kHz 16-bit mono
+            int expectedBytesPerSecond = 16000 * 2 * 1; // 32000 bytes/sec
+            int expectedBytes = expectedBytesPerSecond * stats.DurationMs / 1000;
+            int actualBytes = stats.BytesRecorded;
+            float ratio = actualBytes > 0 ? actualBytes / (float)expectedBytes : 0;
+            Logger.Log($"AudioRecorder: Sanity check - expected ~{expectedBytes} bytes for {stats.DurationMs}ms, got {actualBytes} bytes, ratio={ratio:F2}x");
+            
             await FinishRecordingAsync(outputPath, stats);
 
             return stats;
@@ -344,12 +353,12 @@ public sealed class AudioRecorder : IDisposable
             try
             {
                 // Check if buffer is done (WHDR_DONE = 0x00000001) or if we are force draining and it has bytes
-                if (
-                    (_waveHeaders[i].dwFlags & 0x00000001) != 0
-                    || (_waveHeaders[i].dwBytesRecorded > 0 && isFinalDrain)
-                )
+                bool bufferDone = (_waveHeaders[i].dwFlags & 0x00000001) != 0;
+                bool hasData = _waveHeaders[i].dwBytesRecorded > 0;
+                
+                if (bufferDone || (hasData && isFinalDrain))
                 {
-                    if (_waveHeaders[i].dwBytesRecorded > 0)
+                    if (hasData)
                     {
                         byte[] data = new byte[_waveHeaders[i].dwBytesRecorded];
                         Marshal.Copy(

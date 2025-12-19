@@ -60,7 +60,7 @@ public sealed class TranscriberConfig
     }
 }
 
-public sealed class ConfigService : IConfigService
+public sealed class ConfigService : IConfigService, IDisposable
 {
     private static string Dir =>
         Path.Combine(
@@ -69,15 +69,10 @@ public sealed class ConfigService : IConfigService
         );
     private static string FilePath => Path.Combine(Dir, "config.json");
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        TypeInfoResolver = TailSlapJsonContext.Default,
-    };
-
     private FileSystemWatcher? _watcher;
     public event Action? ConfigChanged;
     private DateTime _lastRead = DateTime.MinValue;
+    private bool _disposed;
 
     public ConfigService()
     {
@@ -99,6 +94,8 @@ public sealed class ConfigService : IConfigService
 
             _watcher.Changed += OnFileChanged;
             _watcher.Created += OnFileChanged;
+            _watcher.Renamed += OnFileRenamed;
+            _watcher.Deleted += OnFileChanged;
             _watcher.EnableRaisingEvents = true;
         }
         catch (Exception ex)
@@ -119,6 +116,11 @@ public sealed class ConfigService : IConfigService
 
         _lastRead = DateTime.Now;
         ConfigChanged?.Invoke();
+    }
+
+    private void OnFileRenamed(object sender, RenamedEventArgs e)
+    {
+        OnFileChanged(sender, e);
     }
 
     public AppConfig LoadOrDefault()
@@ -161,6 +163,7 @@ public sealed class ConfigService : IConfigService
         {
             if (!Directory.Exists(Dir))
                 Directory.CreateDirectory(Dir);
+            _lastRead = DateTime.Now;
             File.WriteAllText(
                 FilePath,
                 JsonSerializer.Serialize(cfg, TailSlapJsonContext.Default.AppConfig)
@@ -266,10 +269,48 @@ public sealed class ConfigService : IConfigService
         // Default transcriber hotkey to Ctrl+Alt+T
         if (cfg.TranscriberHotkey.Modifiers == 0 && cfg.TranscriberHotkey.Key == 0)
         {
-            cfg.TranscriberHotkey.Modifiers = 0x0006; // CTRL + SHIFT
-            cfg.TranscriberHotkey.Key = (uint)Keys.OemSemicolon;
+            cfg.TranscriberHotkey.Modifiers = 0x0003; // ALT + CTRL
+            cfg.TranscriberHotkey.Key = (uint)Keys.T;
         }
 
         return cfg;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        try
+        {
+            if (_watcher != null)
+            {
+                try
+                {
+                    _watcher.EnableRaisingEvents = false;
+                }
+                catch { }
+
+                try
+                {
+                    _watcher.Changed -= OnFileChanged;
+                    _watcher.Created -= OnFileChanged;
+                    _watcher.Renamed -= OnFileRenamed;
+                    _watcher.Deleted -= OnFileChanged;
+                }
+                catch { }
+
+                try
+                {
+                    _watcher.Dispose();
+                }
+                catch { }
+
+                _watcher = null;
+            }
+        }
+        catch { }
     }
 }

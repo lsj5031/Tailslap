@@ -66,7 +66,7 @@ public class MainForm : Form
         WindowState = FormWindowState.Minimized;
         Visible = false;
 
-        _currentConfig = _config.LoadOrDefault();
+        _currentConfig = _config.CreateValidatedCopy();
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
@@ -801,7 +801,7 @@ public class MainForm : Form
         try
         {
             Logger.Log("Detected config file change on disk. Reloading...");
-            var newConfig = _config.LoadOrDefault();
+            var newConfig = _config.CreateValidatedCopy();
 
             // Check if hotkeys changed
             bool refinementHotkeyChanged =
@@ -1320,7 +1320,7 @@ public class MainForm : Form
 
             _config.Save(_currentConfig);
             // Reload config from disk to ensure all validation/normalization is applied
-            _currentConfig = _config.LoadOrDefault();
+            _currentConfig = _config.CreateValidatedCopy();
 
             Logger.Log(
                 $"LLM hotkey after reload: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}"
