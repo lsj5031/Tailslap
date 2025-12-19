@@ -181,7 +181,7 @@ public sealed class HistoryService : IHistoryService
                     JsonSerializer.Serialize(entry, TailSlapJsonContext.Default.HistoryEntry)
                 );
             }
-            
+
             DiagnosticsEventSource.Log.HistoryTrim("refinement", beforeCount, afterCount);
         }
         catch (Exception ex)
@@ -323,7 +323,7 @@ public sealed class HistoryService : IHistoryService
                     )
                 );
             }
-            
+
             DiagnosticsEventSource.Log.HistoryTrim("transcription", beforeCount, afterCount);
         }
         catch (Exception ex)

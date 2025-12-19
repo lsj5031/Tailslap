@@ -1,6 +1,6 @@
-using Moq;
 using System;
 using System.Threading.Tasks;
+using Moq;
 using Xunit;
 
 public class ClipboardServiceTests
@@ -56,7 +56,7 @@ public class ClipboardServiceTests
 
         // Assert
         Assert.IsType<Task<string>>(task);
-        
+
         // Note: the operation requires actual window focus which we can't simulate in unit test
     }
 }

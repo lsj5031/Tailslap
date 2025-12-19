@@ -4,7 +4,7 @@ using System.Diagnostics.Tracing;
 /// <summary>
 /// Custom EventSource for TailSlap diagnostic tracing and performance monitoring.
 /// Enables real-time monitoring of refinement operations, transcription, and system health.
-/// 
+///
 /// Usage: Enable via Event Tracing for Windows (ETW) or dotnet-trace tools.
 /// </summary>
 [EventSource(Name = "TailSlap.Diagnostics")]

@@ -181,7 +181,11 @@ public sealed class TextRefiner : ITextRefiner
                 catch { }
 
                 var elapsedMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
-                DiagnosticsEventSource.Log.RefinementCompleted(elapsedMs, result.Length, _cfg.MaxTokens);
+                DiagnosticsEventSource.Log.RefinementCompleted(
+                    elapsedMs,
+                    result.Length,
+                    _cfg.MaxTokens
+                );
 
                 return result;
             }
@@ -192,7 +196,11 @@ public sealed class TextRefiner : ITextRefiner
                     Logger.Log("LLM exception: " + ex.Message + "; retrying in 1s");
                 }
                 catch { }
-                DiagnosticsEventSource.Log.RefinementRetry(2 - attempts, ex.Message ?? "Unknown error", 1000);
+                DiagnosticsEventSource.Log.RefinementRetry(
+                    2 - attempts,
+                    ex.Message ?? "Unknown error",
+                    1000
+                );
                 await Task.Delay(1000, ct);
             }
         }

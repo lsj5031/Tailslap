@@ -1,10 +1,10 @@
-using Moq;
 using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Moq;
 using Xunit;
 
 public class TextRefinerTests
@@ -23,7 +23,7 @@ public class TextRefinerTests
         };
 
         var mockFactory = new Mock<IHttpClientFactory>();
-        
+
         // Act
         var refiner = new TextRefiner(cfg, mockFactory.Object);
 
@@ -63,8 +63,8 @@ public class TextRefinerTests
         var refiner = new TextRefiner(cfg, mockFactory.Object);
 
         // Act & Assert
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => refiner.RefineAsync("text")
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            refiner.RefineAsync("text")
         );
         Assert.Contains("disabled", ex.Message.ToLower());
     }
@@ -85,9 +85,7 @@ public class TextRefinerTests
         var refiner = new TextRefiner(cfg, mockFactory.Object);
 
         // Act & Assert
-        var ex = await Assert.ThrowsAsync<ArgumentException>(
-            () => refiner.RefineAsync("")
-        );
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => refiner.RefineAsync(""));
         Assert.Contains("empty", ex.Message.ToLower());
     }
 
@@ -107,9 +105,7 @@ public class TextRefinerTests
         var refiner = new TextRefiner(cfg, mockFactory.Object);
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(
-            () => refiner.RefineAsync(null!)
-        );
+        await Assert.ThrowsAsync<ArgumentException>(() => refiner.RefineAsync(null!));
     }
 
     [Fact]
@@ -128,8 +124,6 @@ public class TextRefinerTests
         var refiner = new TextRefiner(cfg, mockFactory.Object);
 
         // Act & Assert
-        await Assert.ThrowsAsync<ArgumentException>(
-            () => refiner.RefineAsync("   ")
-        );
+        await Assert.ThrowsAsync<ArgumentException>(() => refiner.RefineAsync("   "));
     }
 }
