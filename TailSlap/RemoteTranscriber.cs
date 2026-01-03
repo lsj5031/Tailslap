@@ -193,7 +193,14 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
 
                 // Use FileStream for memory efficiency with large files
-                using var fileStream = new FileStream(audioFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true);
+                using var fileStream = new FileStream(
+                    audioFilePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    4096,
+                    true
+                );
                 using var audioContent = new StreamContent(fileStream);
                 audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
                     "audio/wav"
@@ -371,7 +378,14 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
 
         // Use FileStream for memory efficiency
-        using var fileStream = new FileStream(audioFilePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true);
+        using var fileStream = new FileStream(
+            audioFilePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            4096,
+            true
+        );
         using var audioContent = new StreamContent(fileStream);
         audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
             "audio/wav"

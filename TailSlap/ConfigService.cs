@@ -109,13 +109,15 @@ public sealed class TranscriberConfig
             }
 
             var builder = new UriBuilder(baseUri);
-            builder.Scheme = builder.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ? "wss" : "ws";
-            
+            builder.Scheme = builder.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
+                ? "wss"
+                : "ws";
+
             // Ensure path ends with /stream
             // If BaseUrl is .../transcriptions, this becomes .../transcriptions/stream
             var path = builder.Path.TrimEnd('/');
             builder.Path = path + "/stream";
-            
+
             return builder.ToString();
         }
     }

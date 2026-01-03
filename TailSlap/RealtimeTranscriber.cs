@@ -212,10 +212,14 @@ public sealed class RealtimeTranscriber : IDisposable
             var silence = new byte[32000]; // 1s silence
             if (_sendChannel != null)
             {
-                await _sendChannel.Writer.WriteAsync(new QueueItem(silence, false), ct).ConfigureAwait(false);
+                await _sendChannel
+                    .Writer.WriteAsync(new QueueItem(silence, false), ct)
+                    .ConfigureAwait(false);
 
                 // Send stop command via channel
-                await _sendChannel.Writer.WriteAsync(new QueueItem(null, true), ct).ConfigureAwait(false);
+                await _sendChannel
+                    .Writer.WriteAsync(new QueueItem(null, true), ct)
+                    .ConfigureAwait(false);
             }
         }
         catch (Exception ex)
