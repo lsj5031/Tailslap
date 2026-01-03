@@ -30,6 +30,7 @@
 
 - **Windows 10 or later**
 - **Internet connection** for LLM processing (local Ollama doesn't require internet)
+- **Real-time Backend**: [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker) is required for real-time streaming and SSE transcription
 
 ## Usage
 
@@ -44,7 +45,7 @@
 3. The audio will be transcribed and available in your history
 
 **Advanced Settings:**
-- Enable **Streaming Mode** in Settings to see text appear while you speak
+- Enable **Streaming Mode** in Settings to see text appear while you speak (Requires [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
 - Configure **Silence Detection** to automatically stop recording when you finish speaking
 
 ### System Tray Menu

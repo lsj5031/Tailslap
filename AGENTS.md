@@ -18,9 +18,9 @@ This document contains internal development information for TailSlap contributor
 - **Core Services** (all interface-driven):
    - `ITextRefiner` / `TextRefiner`: OpenAI-compatible LLM HTTP client with retry logic (2 attempts, 1s backoff)
    - `ITextRefinerFactory`: Factory for creating TextRefiner instances
-   - `IRemoteTranscriber` / `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio); supports SSE streaming
+   - `IRemoteTranscriber` / `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio); supports SSE streaming (Requires [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
    - `IRemoteTranscriberFactory`: Factory for creating RemoteTranscriber instances
-   - `RealtimeTranscriber`: WebSocket-based client for real-time bi-directional audio streaming and transcription
+   - `RealtimeTranscriber`: WebSocket-based client for real-time bi-directional audio streaming and transcription (Requires [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
    - `IClipboardService` / `ClipboardService`: Clipboard operations via Win32 P/Invoke (text capture, paste, fallback to `Ctrl+C`)
    - `IConfigService` / `ConfigService`: JSON config in `%APPDATA%\TailSlap\config.json` with validation methods; FileSystemWatcher for hot reload
    - `IHistoryService` / `HistoryService`: **Encrypted** JSONL history (stream-based I/O for large files, max 50 entries) with Windows DPAPI protection
