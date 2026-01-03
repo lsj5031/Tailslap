@@ -25,6 +25,7 @@ public class MainForm : Form
     private const int WM_HOTKEY = 0x0312;
     private const int REFINEMENT_HOTKEY_ID = 1;
     private const int TRANSCRIBER_HOTKEY_ID = 2;
+    private const int STREAMING_TRANSCRIBER_HOTKEY_ID = 3;
 
     private readonly IConfigService _config;
     private readonly IClipboardService _clip;
@@ -36,11 +37,21 @@ public class MainForm : Form
     private uint _currentVk;
     private uint _transcriberMods;
     private uint _transcriberVk;
+    private uint _streamingTranscriberMods;
+    private uint _streamingTranscriberVk;
     private AppConfig _currentConfig;
     private bool _isRefining;
     private bool _isTranscribing;
+    private bool _isRealtimeStreaming;
     private bool _isSettingsOpen;
     private CancellationTokenSource? _transcriberCts;
+    private RealtimeTranscriber? _realtimeTranscriber;
+    private AudioRecorder? _realtimeRecorder;
+    private string _realtimeTranscriptionText = "";
+    private int _lastTypedLength = 0;
+    private readonly SemaphoreSlim _transcriptionLock = new(1, 1);
+    private readonly System.Collections.Generic.List<byte> _streamingBuffer = new();
+    private const int SEND_BUFFER_SIZE = 16000; // 500ms aggregation for smoother feedback
 
     public MainForm(
         IConfigService config,
@@ -193,8 +204,10 @@ public class MainForm : Form
         _currentVk = _currentConfig.Hotkey.Key;
         _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
         _transcriberVk = _currentConfig.TranscriberHotkey.Key;
+        _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
+        _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
         Logger.Log(
-            $"MainForm initialized. Refinement hotkey mods={_currentMods}, key={_currentVk}. Transcriber hotkey mods={_transcriberMods}, key={_transcriberVk}"
+            $"MainForm initialized. Refinement hotkey mods={_currentMods}, key={_currentVk}. Transcriber hotkey mods={_transcriberMods}, key={_transcriberVk}. Streaming hotkey mods={_streamingTranscriberMods}, key={_streamingTranscriberVk}"
         );
 
         _config.ConfigChanged += () =>
@@ -660,6 +673,11 @@ public class MainForm : Form
         if (_currentConfig.Transcriber.Enabled)
         {
             RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+            RegisterHotkey(
+                _streamingTranscriberMods,
+                _streamingTranscriberVk,
+                STREAMING_TRANSCRIBER_HOTKEY_ID
+            );
         }
     }
 
@@ -673,6 +691,11 @@ public class MainForm : Form
         try
         {
             UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+        }
+        catch { }
+        try
+        {
+            UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
         }
         catch { }
         base.OnHandleDestroyed(e);
@@ -699,6 +722,10 @@ public class MainForm : Form
             else if (hotkeyId == TRANSCRIBER_HOTKEY_ID)
             {
                 TriggerTranscribe();
+            }
+            else if (hotkeyId == STREAMING_TRANSCRIBER_HOTKEY_ID)
+            {
+                TriggerStreamingTranscribe();
             }
         }
         base.WndProc(ref m);
@@ -785,7 +812,7 @@ public class MainForm : Form
 
         try
         {
-            await TranscribeSelectionAsync();
+            await TranscribeSelectionAsync(useStreaming: _currentConfig.Transcriber.StreamResults);
         }
         catch (Exception ex)
         {
@@ -796,6 +823,500 @@ public class MainForm : Form
             Logger.Log("Transcription task completed top-level finally");
             _isTranscribing = false;
         }
+    }
+
+    private async void TriggerStreamingTranscribe()
+    {
+        Logger.Log(
+            $"TriggerStreamingTranscribe called. Transcriber enabled: {_currentConfig.Transcriber.Enabled}, _isRealtimeStreaming: {_isRealtimeStreaming}"
+        );
+
+        if (!_currentConfig.Transcriber.Enabled)
+        {
+            Logger.Log("Transcriber is disabled");
+            try
+            {
+                NotificationService.ShowWarning(
+                    "Remote transcription is disabled. Enable it in settings first."
+                );
+            }
+            catch { }
+            return;
+        }
+
+        // If already streaming in real-time, stop it
+        if (_isRealtimeStreaming)
+        {
+            await StopRealtimeStreamingAsync();
+            return;
+        }
+
+        await StartRealtimeStreamingAsync();
+    }
+
+    private async Task StartRealtimeStreamingAsync()
+    {
+        Logger.Log("StartRealtimeStreamingAsync: Starting real-time WebSocket transcription");
+        _isRealtimeStreaming = true;
+        _realtimeTranscriptionText = "";
+        _lastTypedLength = 0;
+
+        try
+        {
+            StartAnim();
+            NotificationService.ShowInfo("Real-time transcription started. Speak now...");
+
+            _realtimeTranscriber = new RealtimeTranscriber(_currentConfig.Transcriber.WebSocketUrl);
+            _realtimeTranscriber.OnTranscription += OnRealtimeTranscription;
+            _realtimeTranscriber.OnError += OnRealtimeError;
+            _realtimeTranscriber.OnDisconnected += OnRealtimeDisconnected;
+
+            await _realtimeTranscriber.ConnectAsync();
+            Logger.Log("StartRealtimeStreamingAsync: WebSocket connected");
+
+            _realtimeRecorder = new AudioRecorder(
+                _currentConfig.Transcriber.PreferredMicrophoneIndex
+            );
+            _realtimeRecorder.OnAudioChunk += OnRealtimeAudioChunk;
+            _realtimeRecorder.OnSilenceDetected += OnRealtimeSilenceDetected;
+
+            _transcriberCts = new CancellationTokenSource();
+            // Enable client-side VAD for auto-stop after silence
+            // The server has its own VAD for triggering transcriptions, but doesn't auto-close
+            await _realtimeRecorder.StartStreamingAsync(
+                _transcriberCts.Token,
+                enableVAD: _currentConfig.Transcriber.EnableVAD,
+                silenceThresholdMs: _currentConfig.Transcriber.SilenceThresholdMs
+            );
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"StartRealtimeStreamingAsync: Error - {ex.Message}");
+            try
+            {
+                NotificationService.ShowError($"Real-time transcription failed: {ex.Message}");
+            }
+            catch { }
+            
+            // Only clean up here on error. 
+            // Normal stop flow is handled by StopRealtimeStreamingAsync to allow for final transcription wait.
+            await CleanupRealtimeStreamingAsync();
+        }
+        // finally block removed to prevent premature disposal during graceful stop
+    }
+
+    private void OnRealtimeAudioChunk(ArraySegment<byte> chunk)
+    {
+        if (_realtimeTranscriber?.IsConnected == true)
+        {
+            // Accumulate chunks to reduce server load (send every 500ms instead of 50ms)
+            // This prevents TCP buffer filling up when server is slow to process
+            lock (_streamingBuffer)
+            {
+                if (chunk.Array != null)
+                {
+                    for (int i = 0; i < chunk.Count; i++)
+                    {
+                        _streamingBuffer.Add(chunk.Array[chunk.Offset + i]);
+                    }
+                }
+
+                if (_streamingBuffer.Count >= SEND_BUFFER_SIZE)
+                {
+                    var dataToSend = _streamingBuffer.ToArray();
+                    _streamingBuffer.Clear();
+                    
+                    // Fire-and-forget sending the aggregated chunk
+                    _ = _realtimeTranscriber.SendAudioChunkAsync(new ArraySegment<byte>(dataToSend));
+                }
+            }
+        }
+    }
+
+    private void OnRealtimeTranscription(string text, bool isFinal)
+    {
+        Logger.Log($"OnRealtimeTranscription: text.Length={text.Length}, final={isFinal}");
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(new Action(() => HandleRealtimeTranscription(text, isFinal)));
+        }
+        else
+        {
+            HandleRealtimeTranscription(text, isFinal);
+        }
+    }
+
+    private async void HandleRealtimeTranscription(string text, bool isFinal)
+    {
+        // Ensure strictly sequential processing of updates to prevent overlapping pastes/typing
+        await _transcriptionLock.WaitAsync();
+        try
+        {
+            if (string.IsNullOrEmpty(text))
+                return;
+
+            // Server behavior: Each partial is the CUMULATIVE transcription of all audio so far.
+            // The server refines its transcription over time, so later partials may correct earlier ones.
+            // We track what we've typed and update accordingly.
+            
+            if (!isFinal)
+            {
+                // Calculate common prefix to determine what needs to change
+                int commonPrefixLen = 0;
+                int minLen = Math.Min(_realtimeTranscriptionText.Length, text.Length);
+                for (int i = 0; i < minLen; i++)
+                {
+                    if (_realtimeTranscriptionText[i] == text[i])
+                        commonPrefixLen++;
+                    else
+                        break;
+                }
+
+                // Check for "New Segment" (Server cleared buffer)
+                // If overlap is very low (< 5 chars) and we had substantial text before (> 10 chars),
+                // assume the server started a new sentence/segment.
+                if (commonPrefixLen < 5 && _lastTypedLength > 10)
+                {
+                    Logger.Log($"HandleRT: New segment detected (overlap {commonPrefixLen}). Committing previous.");
+                    _realtimeTranscriptionText = text;
+                    _lastTypedLength = 0;
+                    
+                    // Insert a space separator for the new segment
+                    TypeTextDirectly(" "); 
+                    
+                    // Proceed to type the new text as if it's fresh
+                    if (text.Length > 0)
+                    {
+                        Logger.Log($"HandleRT: Typing new segment: {text.Length} chars");
+                        if (text.Length > 5) 
+                        {
+                             bool pasteSuccess = await _clip.SetTextAndPasteAsync(text);
+                             if (!pasteSuccess) TypeTextDirectly(text);
+                        }
+                        else
+                        {
+                            TypeTextDirectly(text);
+                        }
+                        _lastTypedLength = text.Length;
+                    }
+                    return;
+                }
+
+                // If the change is too drastic (rewriting more than 20 chars), treat it as a correction
+                // and wait (to avoid massive backspacing/typing loops on unstable transcriptions)
+                // UNLESS we haven't typed much yet
+                int backspaceCount = _lastTypedLength - commonPrefixLen;
+                
+                // Only apply incremental updates if we don't have to backspace too much
+                // or if we are just appending
+                if (backspaceCount >= 0 && backspaceCount < 10) 
+                {
+                    if (backspaceCount > 0)
+                    {
+                        Logger.Log($"HandleRT: Backspacing {backspaceCount} chars for correction");
+                        SendBackspace(backspaceCount);
+                        _lastTypedLength = commonPrefixLen;
+                        // Small delay to ensure backspaces process
+                        await Task.Delay(5); 
+                    }
+
+                    if (text.Length > _lastTypedLength)
+                    {
+                        var newText = text.Substring(_lastTypedLength);
+                        Logger.Log($"HandleRT: Typing {newText.Length} chars");
+                        
+                        if (newText.Length > 5) 
+                        {
+                             bool pasteSuccess = await _clip.SetTextAndPasteAsync(newText);
+                             if (!pasteSuccess)
+                             {
+                                 TypeTextDirectly(newText);
+                             }
+                        }
+                        else
+                        {
+                            TypeTextDirectly(newText);
+                        }
+                        
+                        _lastTypedLength = text.Length;
+                    }
+                    _realtimeTranscriptionText = text;
+                }
+                else
+                {
+                    // Correction is too large/unstable, just update baseline but don't type
+                    // We'll catch up on the next stable update or final
+                    Logger.Log($"HandleRT: Large correction detected (backspace {backspaceCount}), updating baseline only");
+                    _realtimeTranscriptionText = text;
+                }
+            }
+            else
+            {
+                // For final: apply the complete corrected text
+                Logger.Log($"OnRealtimeTranscription: Final transcription received");
+                
+                // Calculate what needs to change
+                int commonPrefixLen = 0;
+                int minLen = Math.Min(_realtimeTranscriptionText.Length, text.Length);
+                for (int i = 0; i < minLen; i++)
+                {
+                    if (_realtimeTranscriptionText[i] == text[i])
+                        commonPrefixLen++;
+                    else
+                        break;
+                }
+
+                int backspaceCount = _lastTypedLength - commonPrefixLen;
+                if (backspaceCount > 0)
+                {
+                    SendBackspace(backspaceCount);
+                    _lastTypedLength = commonPrefixLen;
+                    await Task.Delay(5); 
+                }
+
+                if (text.Length > _lastTypedLength)
+                {
+                    var newText = text.Substring(_lastTypedLength);
+                    if (newText.Length > 5) 
+                    {
+                         bool pasteSuccess = await _clip.SetTextAndPasteAsync(newText);
+                         if (!pasteSuccess)
+                         {
+                             TypeTextDirectly(newText);
+                         }
+                    }
+                    else
+                    {
+                        TypeTextDirectly(newText);
+                    }
+                }
+                
+                // Reset for next utterance
+                _lastTypedLength = 0; 
+                _realtimeTranscriptionText = "";
+            }
+        }
+        finally
+        {
+            _transcriptionLock.Release();
+        }
+    }
+
+    private void SendBackspace(int count)
+    {
+        if (count <= 0) return;
+        
+        // Batch backspaces if there are many to avoid slow UI
+        // But SendKeys "{BS 5}" syntax is cleaner
+        try 
+        {
+             SendKeys.SendWait("{BS " + count + "}");
+             SendKeys.Flush();
+        }
+        catch (Exception ex)
+        {
+             Logger.Log($"SendBackspace failed: {ex.Message}");
+        }
+    }
+
+    private void OnRealtimeError(string error)
+    {
+        Logger.Log($"OnRealtimeError: {error}");
+        try
+        {
+            NotificationService.ShowError($"Real-time transcription error: {error}");
+        }
+        catch { }
+    }
+
+    private void OnRealtimeDisconnected()
+    {
+        Logger.Log("OnRealtimeDisconnected: WebSocket disconnected");
+        if (_isRealtimeStreaming)
+        {
+            // Don't type here - let CleanupRealtimeStreamingAsync handle the final text
+            // This prevents race conditions where both type the same text
+            _realtimeRecorder?.StopRecording();
+            _transcriberCts?.Cancel();
+        }
+    }
+
+    private async void OnRealtimeSilenceDetected()
+    {
+        Logger.Log("OnRealtimeSilenceDetected: Silence detected, stopping streaming");
+        try
+        {
+            // Removed notification spam
+            // NotificationService.ShowInfo("Silence detected, stopping transcription...");
+        }
+        catch { }
+        await StopRealtimeStreamingAsync();
+    }
+
+    private async Task StopRealtimeStreamingAsync()
+    {
+        Logger.Log("StopRealtimeStreamingAsync: Stopping real-time transcription");
+        try
+        {
+            NotificationService.ShowInfo("Stopping real-time transcription...");
+        }
+        catch { }
+
+        _realtimeRecorder?.StopRecording();
+
+        if (_realtimeTranscriber?.IsConnected == true)
+        {
+            try
+            {
+                // Create completion sources to wait for server completion
+                var serverClosedTcs = new TaskCompletionSource<bool>();
+                var finalMessageTcs = new TaskCompletionSource<bool>();
+                
+                void OnServerDisconnected() 
+                {
+                    serverClosedTcs.TrySetResult(true);
+                }
+
+                void OnTranscriptionReceived(string text, bool isFinal)
+                {
+                    if (isFinal) finalMessageTcs.TrySetResult(true);
+                }
+                
+                _realtimeTranscriber.OnDisconnected += OnServerDisconnected;
+                _realtimeTranscriber.OnTranscription += OnTranscriptionReceived;
+                
+                // Flush any remaining audio buffer before stopping
+                byte[]? remainingData = null;
+                lock (_streamingBuffer)
+                {
+                    if (_streamingBuffer.Count > 0)
+                    {
+                        remainingData = _streamingBuffer.ToArray();
+                        _streamingBuffer.Clear();
+                    }
+                }
+                
+                if (remainingData != null)
+                {
+                    await _realtimeTranscriber.SendAudioChunkAsync(new ArraySegment<byte>(remainingData));
+                }
+                
+                // Send stop signal and padding
+                await _realtimeTranscriber.StopAsync();
+                
+                Logger.Log("StopRealtimeStreamingAsync: Waiting for server to close connection or send final message...");
+                
+                // Wait for server to send final transcription OR close connection
+                // Give it up to 10 seconds (inference can be slow)
+                await Task.WhenAny(serverClosedTcs.Task, finalMessageTcs.Task, Task.Delay(10000));
+                
+                _realtimeTranscriber.OnDisconnected -= OnServerDisconnected;
+                _realtimeTranscriber.OnTranscription -= OnTranscriptionReceived;
+                
+                Logger.Log("StopRealtimeStreamingAsync: Wait complete or timed out");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"StopRealtimeStreamingAsync: Error sending stop - {ex.Message}");
+            }
+        }
+
+        _transcriberCts?.Cancel();
+        
+        // Explicitly cleanup now that we've waited for the final message
+        await CleanupRealtimeStreamingAsync();
+    }
+
+    private async Task CleanupRealtimeStreamingAsync()
+    {
+        Logger.Log("CleanupRealtimeStreamingAsync: Cleaning up");
+
+        // Wait for any pending transcription processing to finish (e.g. final message)
+        // This prevents race condition where cleanup runs before HandleRealtimeTranscription updates text
+        await _transcriptionLock.WaitAsync();
+        _transcriptionLock.Release();
+
+        if (_realtimeTranscriber != null)
+        {
+            _realtimeTranscriber.OnTranscription -= OnRealtimeTranscription;
+            _realtimeTranscriber.OnError -= OnRealtimeError;
+            _realtimeTranscriber.OnDisconnected -= OnRealtimeDisconnected;
+
+            try
+            {
+                await _realtimeTranscriber.DisconnectAsync();
+            }
+            catch { }
+
+            _realtimeTranscriber.Dispose();
+            _realtimeTranscriber = null;
+        }
+
+        if (_realtimeRecorder != null)
+        {
+            _realtimeRecorder.OnAudioChunk -= OnRealtimeAudioChunk;
+            _realtimeRecorder.Dispose();
+            _realtimeRecorder = null;
+        }
+
+        _transcriberCts?.Dispose();
+        _transcriberCts = null;
+
+        _isRealtimeStreaming = false;
+        StopAnim();
+
+        // Type any remaining text that wasn't typed due to corrections
+        // Run this logic on the UI thread to ensure it processes AFTER any pending HandleRealtimeTranscription
+        // and to access updated text variables safely
+        if (InvokeRequired)
+        {
+            Invoke(new Action(async () =>
+            {
+                if (_realtimeTranscriptionText.Length > _lastTypedLength)
+                {
+                    var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
+                    Logger.Log($"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars");
+                    
+                    if (remainingText.Length > 5)
+                    {
+                        await _clip.SetTextAndPasteAsync(remainingText);
+                    }
+                    else
+                    {
+                        TypeTextDirectly(remainingText);
+                    }
+                }
+            }));
+        }
+        else
+        {
+            if (_realtimeTranscriptionText.Length > _lastTypedLength)
+            {
+                var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
+                Logger.Log($"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars");
+                
+                if (remainingText.Length > 5)
+                {
+                    await _clip.SetTextAndPasteAsync(remainingText);
+                }
+                else
+                {
+                    TypeTextDirectly(remainingText);
+                }
+            }
+        }
+
+        if (!string.IsNullOrEmpty(_realtimeTranscriptionText))
+        {
+            try
+            {
+                NotificationService.ShowSuccess("Real-time transcription complete.");
+            }
+            catch { }
+        }
+
+        Logger.Log("CleanupRealtimeStreamingAsync: Done");
     }
 
     private void ReloadConfigFromDisk()
@@ -819,6 +1340,9 @@ public class MainForm : Form
             bool transcriberHotkeyChanged =
                 newConfig.TranscriberHotkey.Modifiers != _transcriberMods
                 || newConfig.TranscriberHotkey.Key != _transcriberVk;
+            bool streamingTranscriberHotkeyChanged =
+                newConfig.StreamingTranscriberHotkey.Modifiers != _streamingTranscriberMods
+                || newConfig.StreamingTranscriberHotkey.Key != _streamingTranscriberVk;
             bool transcriberStatusChanged =
                 newConfig.Transcriber.Enabled != _currentConfig.Transcriber.Enabled;
 
@@ -840,6 +1364,21 @@ public class MainForm : Form
                     _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
                     _transcriberVk = _currentConfig.TranscriberHotkey.Key;
                     RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+                }
+            }
+
+            if (streamingTranscriberHotkeyChanged || transcriberStatusChanged)
+            {
+                UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
+                if (_currentConfig.Transcriber.Enabled)
+                {
+                    _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
+                    _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
+                    RegisterHotkey(
+                        _streamingTranscriberMods,
+                        _streamingTranscriberVk,
+                        STREAMING_TRANSCRIBER_HOTKEY_ID
+                    );
                 }
             }
 
@@ -943,7 +1482,7 @@ public class MainForm : Form
         }
     }
 
-    private async Task TranscribeSelectionAsync()
+    private async Task TranscribeSelectionAsync(bool useStreaming = false)
     {
         string audioFilePath = "";
         RecordingStats? recordingStats = null;
@@ -1037,106 +1576,185 @@ public class MainForm : Form
                 $"Creating RemoteTranscriber with BaseUrl: {_currentConfig.Transcriber.BaseUrl}"
             );
             var transcriber = _remoteTranscriberFactory.Create(_currentConfig.Transcriber);
-            string transcriptionText;
+            string transcriptionText = "";
 
-            try
+            // Use streaming if requested for faster feedback
+            if (useStreaming)
             {
-                Logger.Log($"Starting remote transcription of {audioFilePath}");
-                transcriptionText = await transcriber.TranscribeAudioAsync(audioFilePath);
-                Logger.Log(
-                    $"Transcription completed: {transcriptionText?.Length ?? 0} characters, text={transcriptionText?.Substring(0, Math.Min(100, transcriptionText?.Length ?? 0))}"
-                );
-            }
-            catch (TranscriberException ex)
-            {
-                Logger.Log(
-                    $"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
-                );
+                Logger.Log("Using streaming transcription for faster feedback");
+                var fullText = new System.Text.StringBuilder();
+
                 try
                 {
-                    NotificationService.ShowError($"Transcription failed: {ex.Message}");
-                }
-                catch { }
-                Logger.Log($"Transcription error: {ex.Message}");
-                return;
-            }
-            catch (Exception ex)
-            {
-                Logger.Log(
-                    $"Unexpected exception: {ex.GetType().Name}: {ex.Message}, StackTrace: {ex.StackTrace}"
-                );
-                try
-                {
-                    NotificationService.ShowError($"Transcription failed: {ex.Message}");
-                }
-                catch { }
-                Logger.Log("Error: " + ex.Message);
-                return;
-            }
+                    await foreach (var chunk in transcriber.TranscribeStreamingAsync(audioFilePath))
+                    {
+                        if (string.IsNullOrEmpty(chunk))
+                            continue;
 
-            if (
-                string.IsNullOrWhiteSpace(transcriptionText)
-                || transcriptionText.Equals(
-                    "[Empty transcription]",
-                    StringComparison.OrdinalIgnoreCase
-                )
-                || transcriptionText.Equals("(empty)", StringComparison.OrdinalIgnoreCase)
-                || transcriptionText.Equals("[silence]", StringComparison.OrdinalIgnoreCase)
-            )
-            {
-                try
-                {
-                    NotificationService.ShowWarning("No speech detected.");
-                }
-                catch { }
-                return;
-            }
+                        fullText.Append(chunk);
 
-            // Set transcription result to clipboard
-            bool setTextSuccess = _clip.SetText(transcriptionText);
-            if (!setTextSuccess)
-            {
-                return; // Error already shown by SetText
-            }
-
-            await Task.Delay(100);
-            if (_currentConfig.Transcriber.AutoPaste)
-            {
-                Logger.Log("Transcriber auto-paste attempt");
-                // Run paste on UI thread to ensure SendKeys works correctly
-                this.Invoke(
-                    (MethodInvoker)
-                        async delegate
+                        // Type each chunk directly to the cursor position
+                        if (_currentConfig.Transcriber.AutoPaste)
                         {
-                            bool pasteSuccess = await _clip.PasteAsync();
-                            if (!pasteSuccess)
-                            {
-                                try
-                                {
-                                    NotificationService.ShowInfo(
-                                        "Transcription is ready. You can paste manually with Ctrl+V."
-                                    );
-                                }
-                                catch { }
-                            }
+                            this.Invoke(
+                                (MethodInvoker)
+                                    delegate
+                                    {
+                                        TypeTextDirectly(chunk);
+                                    }
+                            );
                         }
-                );
+                    }
+
+                    transcriptionText = fullText.ToString();
+                    Logger.Log(
+                        $"Streaming transcription completed: {transcriptionText.Length} characters"
+                    );
+
+                    if (IsEmptyTranscription(transcriptionText))
+                    {
+                        try
+                        {
+                            NotificationService.ShowWarning("No speech detected.");
+                        }
+                        catch { }
+                        return;
+                    }
+
+                    // Copy final result to clipboard for convenience
+                    _clip.SetText(transcriptionText);
+
+                    if (!_currentConfig.Transcriber.AutoPaste)
+                    {
+                        try
+                        {
+                            NotificationService.ShowTextReadyNotification();
+                        }
+                        catch { }
+                    }
+                }
+                catch (TranscriberException ex)
+                {
+                    Logger.Log(
+                        $"Streaming TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
+                    );
+                    try
+                    {
+                        NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                    }
+                    catch { }
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log(
+                        $"Streaming unexpected exception: {ex.GetType().Name}: {ex.Message}"
+                    );
+                    try
+                    {
+                        NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                    }
+                    catch { }
+                    return;
+                }
             }
             else
             {
+                // Non-streaming path (original behavior)
                 try
                 {
-                    NotificationService.ShowTextReadyNotification();
+                    Logger.Log($"Starting remote transcription of {audioFilePath}");
+                    transcriptionText = await transcriber.TranscribeAudioAsync(audioFilePath);
+                    Logger.Log(
+                        $"Transcription completed: {transcriptionText?.Length ?? 0} characters, text={transcriptionText?.Substring(0, Math.Min(100, transcriptionText?.Length ?? 0))}"
+                    );
                 }
-                catch { }
+                catch (TranscriberException ex)
+                {
+                    Logger.Log(
+                        $"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
+                    );
+                    try
+                    {
+                        NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                    }
+                    catch { }
+                    Logger.Log($"Transcription error: {ex.Message}");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log(
+                        $"Unexpected exception: {ex.GetType().Name}: {ex.Message}, StackTrace: {ex.StackTrace}"
+                    );
+                    try
+                    {
+                        NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                    }
+                    catch { }
+                    Logger.Log("Error: " + ex.Message);
+                    return;
+                }
+
+                if (IsEmptyTranscription(transcriptionText))
+                {
+                    try
+                    {
+                        NotificationService.ShowWarning("No speech detected.");
+                    }
+                    catch { }
+                    return;
+                }
+
+                // Set transcription result to clipboard
+                bool setTextSuccess = _clip.SetText(transcriptionText ?? "");
+                if (!setTextSuccess)
+                {
+                    return; // Error already shown by SetText
+                }
+
+                await Task.Delay(100);
+                if (_currentConfig.Transcriber.AutoPaste)
+                {
+                    Logger.Log("Transcriber auto-paste attempt");
+                    // Run paste on UI thread to ensure SendKeys works correctly
+                    this.Invoke(
+                        (MethodInvoker)
+                            async delegate
+                            {
+                                bool pasteSuccess = await _clip.PasteAsync();
+                                if (!pasteSuccess)
+                                {
+                                    try
+                                    {
+                                        NotificationService.ShowInfo(
+                                            "Transcription is ready. You can paste manually with Ctrl+V."
+                                        );
+                                    }
+                                    catch { }
+                                }
+                            }
+                    );
+                }
+                else
+                {
+                    try
+                    {
+                        NotificationService.ShowTextReadyNotification();
+                    }
+                    catch { }
+                }
             }
 
             // Log transcription to history (separate from LLM refinement history)
             try
             {
-                _history.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0);
+                _history.AppendTranscription(
+                    transcriptionText ?? "",
+                    recordingStats?.DurationMs ?? 0
+                );
                 Logger.Log(
-                    $"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms"
+                    $"Transcription logged: {transcriptionText?.Length ?? 0} characters, duration={recordingStats?.DurationMs}ms"
                 );
             }
             catch (Exception ex)
@@ -1182,6 +1800,66 @@ public class MainForm : Form
                 }
             }
             catch { }
+        }
+    }
+
+    private static bool IsEmptyTranscription(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return true;
+
+        var trimmed = text.Trim();
+        return trimmed.Equals("[Empty transcription]", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("(empty)", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("[silence]", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void TypeTextDirectly(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        try
+        {
+            // Escape special SendKeys characters: +^%~(){}[]
+            var escaped = new System.Text.StringBuilder();
+            foreach (char c in text)
+            {
+                if (
+                    c == '+'
+                    || c == '^'
+                    || c == '%'
+                    || c == '~'
+                    || c == '('
+                    || c == ')'
+                    || c == '{'
+                    || c == '}'
+                    || c == '['
+                    || c == ']'
+                )
+                {
+                    escaped.Append('{').Append(c).Append('}');
+                }
+                else if (c == '\n')
+                {
+                    escaped.Append("{ENTER}");
+                }
+                else if (c == '\r')
+                {
+                    // Skip carriage returns
+                }
+                else
+                {
+                    escaped.Append(c);
+                }
+            }
+
+            SendKeys.SendWait(escaped.ToString());
+            SendKeys.Flush();
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"TypeTextDirectly failed: {ex.Message}");
         }
     }
 
@@ -1380,6 +2058,23 @@ public class MainForm : Form
                 if (_currentConfig.Transcriber.Enabled)
                 {
                     RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+                }
+
+                // Re-register streaming transcriber hotkey
+                try
+                {
+                    UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
+                }
+                catch { }
+                _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
+                _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
+                if (_currentConfig.Transcriber.Enabled)
+                {
+                    RegisterHotkey(
+                        _streamingTranscriberMods,
+                        _streamingTranscriberVk,
+                        STREAMING_TRANSCRIBER_HOTKEY_ID
+                    );
                 }
 
                 NotificationService.ShowSuccess("Settings saved.");
