@@ -20,7 +20,6 @@ jobs:
 
     - name: Restore dependencies
       run: dotnet restore
-      working-directory: ./TailSlap
 
     - name: Restore tools
       run: dotnet tool restore
@@ -30,14 +29,20 @@ jobs:
 
     - name: Build Release
       run: dotnet build -c Release --no-restore
-      working-directory: ./TailSlap
 
-    - name: Test (verify compilation)
-      run: dotnet build -c Release
-      working-directory: ./TailSlap
+    - name: Run Tests
+      run: dotnet test -c Release --no-build --verbosity normal --logger trx --results-directory TestResults
+
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: TestResults/*.trx
+        if-no-files-found: warn
 
     - name: Publish Framework-Dependent
-      run: dotnet publish -c Release
+      run: dotnet publish -c Release --no-build
       working-directory: ./TailSlap
 
     - name: Upload Framework-Dependent Build

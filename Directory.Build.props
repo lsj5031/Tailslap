@@ -1,0 +1,26 @@
+<Project>
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-minimum</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <!-- 
+      Suppress analyzers that conflict with existing codebase patterns.
+      These can be gradually enabled and addressed in future PRs:
+      - CA1050: Types declared without namespace (file-scoped types pattern used)
+      - CA1806: Ignoring P/Invoke return values (WinMM/Win32 patterns)
+      - CA1822: Methods that could be static (design decision)
+      - CA1824: NeutralResourcesLanguage assembly attribute
+      - CA1836: Prefer IsEmpty over Count (minor optimization)
+      - CA1840: Environment.CurrentManagedThreadId
+      - CA1845: span-based string.Concat
+      - CA1861: readonly array fields
+      - CA1865/CA1866: char overloads for StartsWith/EndsWith
+      - CA1068: CancellationToken parameter order
+      - CA1513: ObjectDisposedException.ThrowIf
+      - CA1869: JsonSerializerOptions caching
+      - CA2263: Generic Marshal.SizeOf
+    -->
+    <NoWarn>$(NoWarn);CA1050;CA1806;CA1822;CA1824;CA1836;CA1840;CA1845;CA1861;CA1865;CA1866;CA1068;CA1513;CA1869;CA2263</NoWarn>
+  </PropertyGroup>
+</Project>

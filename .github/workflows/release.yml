@@ -36,37 +36,24 @@ jobs:
       shell: powershell
 
     - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{ github.ref }}
-        release_name: TailSlap ${{ steps.tag_name.outputs.version }}
+        name: TailSlap ${{ steps.tag_name.outputs.version }}
         body: |
-           ## Release ${{ steps.tag_name.outputs.version }}
-           
-           See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
-           
-           ### Installation
-           
-           1. Download TailSlap.exe
-           2. Run it directly (no installation needed)
-           
-           ### Requirements
-           
-           - Windows 10 or later
-           
-           See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for setup instructions.
+          ## Release ${{ steps.tag_name.outputs.version }}
+          
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          
+          ### Installation
+          
+          1. Download TailSlap.exe
+          2. Run it directly (no installation needed)
+          
+          ### Requirements
+          
+          - Windows 10 or later
+          
+          See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for setup instructions.
+        files: TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
         draft: false
         prerelease: false
-
-    - name: Upload TailSlap.exe
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
-        asset_name: TailSlap.exe
-        asset_content_type: application/octet-stream
