@@ -773,12 +773,18 @@ public sealed class AudioRecorder : IDisposable
     private int _vadActivationThreshold = 900; // Used for streaming (start) - needs clear speech above ambient
     private int _vadSustainThreshold = 550; // Used for streaming (continue) - lowered to 550 (very close to noise floor)
 
-    public void SetVadThresholds(int silenceThreshold, int activationThreshold, int sustainThreshold)
+    public void SetVadThresholds(
+        int silenceThreshold,
+        int activationThreshold,
+        int sustainThreshold
+    )
     {
         _vadSilenceThreshold = silenceThreshold > 0 ? silenceThreshold : 120;
         _vadActivationThreshold = activationThreshold > 0 ? activationThreshold : 900;
         _vadSustainThreshold = sustainThreshold > 0 ? sustainThreshold : 550;
-        Logger.Log($"AudioRecorder: VAD thresholds set - silence={_vadSilenceThreshold}, activation={_vadActivationThreshold}, sustain={_vadSustainThreshold}");
+        Logger.Log(
+            $"AudioRecorder: VAD thresholds set - silence={_vadSilenceThreshold}, activation={_vadActivationThreshold}, sustain={_vadSustainThreshold}"
+        );
     }
 
     // Debug: track buffer processing stats
@@ -801,8 +807,9 @@ public sealed class AudioRecorder : IDisposable
         // Wall-clock silence detection: if speech was detected (locally OR via server transcription)
         // and no recent speech, use actual elapsed time instead of buffer-based counting
         bool anySpeechDetected = hasDetectedSpeech || _externalSpeechDetected;
-        DateTime lastSpeech = _lastSpeechTime > _lastExternalSpeechTime ? _lastSpeechTime : _lastExternalSpeechTime;
-        
+        DateTime lastSpeech =
+            _lastSpeechTime > _lastExternalSpeechTime ? _lastSpeechTime : _lastExternalSpeechTime;
+
         if (enableVAD && anySpeechDetected && lastSpeech != DateTime.MinValue)
         {
             int wallClockSilenceMs = (int)(now - lastSpeech).TotalMilliseconds;

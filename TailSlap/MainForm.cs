@@ -14,7 +14,7 @@ public enum StreamingState
     Idle,
     Starting,
     Streaming,
-    Stopping
+    Stopping,
 }
 
 public class MainForm : Form
@@ -869,9 +869,14 @@ public class MainForm : Form
         // State machine: only act on Idle or Streaming states, ignore transitions in progress
         lock (_streamingStateLock)
         {
-            if (_streamingState == StreamingState.Starting || _streamingState == StreamingState.Stopping)
+            if (
+                _streamingState == StreamingState.Starting
+                || _streamingState == StreamingState.Stopping
+            )
             {
-                Logger.Log($"TriggerStreamingTranscribe: Ignoring hotkey, transition in progress (state={_streamingState})");
+                Logger.Log(
+                    $"TriggerStreamingTranscribe: Ignoring hotkey, transition in progress (state={_streamingState})"
+                );
                 return;
             }
 
@@ -929,7 +934,9 @@ public class MainForm : Form
             // Capture the foreground window to detect if user switches apps during dictation
             _streamingTargetWindow = GetForegroundWindow();
             _streamingStartTime = DateTime.UtcNow;
-            Logger.Log($"StartRealtimeStreamingAsync: Target window captured: 0x{_streamingTargetWindow:X}");
+            Logger.Log(
+                $"StartRealtimeStreamingAsync: Target window captured: 0x{_streamingTargetWindow:X}"
+            );
 
             // Transition to Streaming state now that setup is complete
             lock (_streamingStateLock)
@@ -970,11 +977,15 @@ public class MainForm : Form
             return;
 
         // Check for no-speech timeout (user never spoke above activation threshold)
-        if (_streamingStartTime != DateTime.MinValue &&
-            _realtimeTranscriptionText.Length == 0 &&
-            (DateTime.UtcNow - _streamingStartTime).TotalSeconds >= NO_SPEECH_TIMEOUT_SECONDS)
+        if (
+            _streamingStartTime != DateTime.MinValue
+            && _realtimeTranscriptionText.Length == 0
+            && (DateTime.UtcNow - _streamingStartTime).TotalSeconds >= NO_SPEECH_TIMEOUT_SECONDS
+        )
         {
-            Logger.Log($"OnRealtimeAudioChunk: No speech detected after {NO_SPEECH_TIMEOUT_SECONDS}s, triggering auto-stop");
+            Logger.Log(
+                $"OnRealtimeAudioChunk: No speech detected after {NO_SPEECH_TIMEOUT_SECONDS}s, triggering auto-stop"
+            );
             // Fire silence detected to initiate stop (on a separate task to avoid blocking audio processing)
             _ = Task.Run(() => OnRealtimeSilenceDetected());
             return;
@@ -1220,7 +1231,9 @@ public class MainForm : Form
         var current = GetForegroundWindow();
         if (current != _streamingTargetWindow)
         {
-            Logger.Log($"IsForegroundWindowSafe: Window changed from 0x{_streamingTargetWindow:X} to 0x{current:X}, skipping destructive operation");
+            Logger.Log(
+                $"IsForegroundWindowSafe: Window changed from 0x{_streamingTargetWindow:X} to 0x{current:X}, skipping destructive operation"
+            );
             return false;
         }
         return true;
@@ -1492,7 +1505,9 @@ public class MainForm : Form
                     {
                         if (_realtimeTranscriptionText.Length > _lastTypedLength)
                         {
-                            var remainingText = _realtimeTranscriptionText.Substring(_lastTypedLength);
+                            var remainingText = _realtimeTranscriptionText.Substring(
+                                _lastTypedLength
+                            );
                             Logger.Log(
                                 $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
                             );
