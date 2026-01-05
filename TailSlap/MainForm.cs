@@ -2,12 +2,14 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Net.Http;
+using System.Net.WebSockets;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using TailSlap;
 
 public enum StreamingState
 {
@@ -40,6 +42,10 @@ public class MainForm : Form
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
     private readonly IHistoryService _history;
+    private readonly IRefinementController _refinementController;
+    private readonly ITranscriptionController _transcriptionController;
+    private readonly IRealtimeTranscriptionController _realtimeTranscriptionController;
+    private readonly IAutoStartService _autoStartService;
 
     private uint _currentMods;
     private uint _currentVk;
@@ -48,44 +54,32 @@ public class MainForm : Form
     private uint _streamingTranscriberMods;
     private uint _streamingTranscriberVk;
     private AppConfig _currentConfig;
-    private bool _isRefining;
-    private bool _isTranscribing;
-    private StreamingState _streamingState = StreamingState.Idle;
-    private readonly object _streamingStateLock = new();
     private bool _isSettingsOpen;
-    private CancellationTokenSource? _transcriberCts;
-    private RealtimeTranscriber? _realtimeTranscriber;
-    private AudioRecorder? _realtimeRecorder;
-    private string _realtimeTranscriptionText = ""; // Last text received from server
-    private string _typedText = ""; // What's actually been typed on screen (committed text)
-    private int _lastTypedLength = 0; // Length of current segment that's on screen
-    private readonly SemaphoreSlim _transcriptionLock = new(1, 1);
-    private readonly System.Collections.Generic.List<byte> _streamingBuffer = new();
-    private const int SEND_BUFFER_SIZE = 16000; // 500ms aggregation for smoother feedback
-    private IntPtr _streamingTargetWindow = IntPtr.Zero; // Track foreground window when streaming started
-    private int _cleanupInProgress = 0; // Idempotency flag for cleanup
-    private DateTime _streamingStartTime = DateTime.MinValue; // Track when streaming started for no-speech timeout
-    private const int NO_SPEECH_TIMEOUT_SECONDS = 30; // Auto-stop if no speech detected after this duration
 
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
+    private ToolStripMenuItem? _llmToggleItem;
+    private ToolStripMenuItem? _transcriberToggleItem;
 
     public MainForm(
         IConfigService config,
         IClipboardService clip,
         ITextRefinerFactory textRefinerFactory,
         IRemoteTranscriberFactory remoteTranscriberFactory,
-        IHistoryService history
+        IHistoryService history,
+        IRefinementController refinementController,
+        ITranscriptionController transcriptionController,
+        IRealtimeTranscriptionController realtimeTranscriptionController,
+        IAutoStartService autoStartService
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _clip = clip ?? throw new ArgumentNullException(nameof(clip));
-        _textRefinerFactory =
-            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
-        _remoteTranscriberFactory =
-            remoteTranscriberFactory
-            ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
+        _textRefinerFactory = textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _remoteTranscriberFactory = remoteTranscriberFactory ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
         _history = history ?? throw new ArgumentNullException(nameof(history));
+        _refinementController = refinementController ?? throw new ArgumentNullException(nameof(refinementController));
+        _transcriptionController = transcriptionController ?? throw new ArgumentNullException(nameof(transcriptionController));
+        _realtimeTranscriptionController = realtimeTranscriptionController ?? throw new ArgumentNullException(nameof(realtimeTranscriptionController));
+        _autoStartService = autoStartService ?? throw new ArgumentNullException(nameof(autoStartService));
 
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         DoubleBuffered = true;
@@ -97,9 +91,60 @@ public class MainForm : Form
 
         _currentConfig = _config.CreateValidatedCopy();
 
+        // Wire up controller events for animation
+        _refinementController.OnStarted += StartAnim;
+        _refinementController.OnCompleted += StopAnim;
+        _transcriptionController.OnStarted += StartAnim;
+        _transcriptionController.OnCompleted += StopAnim;
+        _realtimeTranscriptionController.OnStarted += StartAnim;
+        _realtimeTranscriptionController.OnStopped += StopAnim;
+
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
         _menu.Items.Add("Transcribe Now", null, (_, __) => TriggerTranscribe());
+        _menu.Items.Add(new ToolStripSeparator());
+
+        // Quick toggles
+        _llmToggleItem = new ToolStripMenuItem("Enable LLM Refinement")
+        {
+            Checked = _currentConfig.Llm.Enabled,
+            CheckOnClick = true,
+        };
+        _llmToggleItem.Click += (_, __) =>
+        {
+            _currentConfig.Llm.Enabled = _llmToggleItem.Checked;
+            _config.Save(_currentConfig);
+            NotificationService.ShowInfo(_llmToggleItem.Checked ? "LLM refinement enabled." : "LLM refinement disabled.");
+        };
+        _menu.Items.Add(_llmToggleItem);
+
+        _transcriberToggleItem = new ToolStripMenuItem("Enable Transcription")
+        {
+            Checked = _currentConfig.Transcriber.Enabled,
+            CheckOnClick = true,
+        };
+        _transcriberToggleItem.Click += (_, __) =>
+        {
+            _currentConfig.Transcriber.Enabled = _transcriberToggleItem.Checked;
+            _config.Save(_currentConfig);
+
+            if (_transcriberToggleItem.Checked)
+            {
+                RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+                RegisterHotkey(_streamingTranscriberMods, _streamingTranscriberVk, STREAMING_TRANSCRIBER_HOTKEY_ID);
+            }
+            else
+            {
+                try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
+                try { UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID); } catch { }
+            }
+
+            NotificationService.ShowInfo(_transcriberToggleItem.Checked ? "Transcription enabled." : "Transcription disabled.");
+        };
+        _menu.Items.Add(_transcriberToggleItem);
+
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add("Run Diagnostics...", null, async (_, __) => await RunDiagnosticsAsync());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Settings...", null, (_, __) => ShowSettings(_currentConfig));
         _menu.Items.Add(
@@ -111,10 +156,8 @@ public class MainForm : Form
                 {
                     Process.Start(
                         "notepad",
-                        System.IO.Path.Combine(
-                            System.Environment.GetFolderPath(
-                                System.Environment.SpecialFolder.ApplicationData
-                            ),
+                        Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                             "TailSlap",
                             "app.log"
                         )
@@ -160,12 +203,12 @@ public class MainForm : Form
         );
         var autoStartItem = new ToolStripMenuItem("Start with Windows")
         {
-            Checked = AutoStartService.IsEnabled("TailSlap"),
+            Checked = _autoStartService.IsEnabled("TailSlap"),
         };
         autoStartItem.Click += (_, __) =>
         {
-            AutoStartService.Toggle("TailSlap");
-            autoStartItem.Checked = AutoStartService.IsEnabled("TailSlap");
+            _autoStartService.Toggle("TailSlap");
+            autoStartItem.Checked = _autoStartService.IsEnabled("TailSlap");
         };
         _menu.Items.Add(autoStartItem);
         _menu.Items.Add(
@@ -178,7 +221,7 @@ public class MainForm : Form
         );
 
         _idleIcon = LoadIdleIcon();
-        _frames = LoadAnimationFrames(); // Icons are preloaded here to avoid per-frame allocations during animation
+        _frames = LoadAnimationFrames();
 
         _tray = new NotifyIcon
         {
@@ -188,7 +231,6 @@ public class MainForm : Form
         };
         _tray.ContextMenuStrip = _menu;
 
-        // Initialize notification service
         NotificationService.Initialize(_tray);
 
         _animTimer = new System.Windows.Forms.Timer { Interval = AnimationIntervalMs };
@@ -214,9 +256,6 @@ public class MainForm : Form
             }
         };
 
-        // Animation is managed by RefineSelectionAsync (StartAnim on start, StopAnim in finally)
-        // so we don't need to subscribe to CaptureStarted/CaptureEnded events
-
         _currentMods = _currentConfig.Hotkey.Modifiers;
         _currentVk = _currentConfig.Hotkey.Key;
         _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
@@ -240,20 +279,113 @@ public class MainForm : Form
         };
     }
 
+    private async Task RunDiagnosticsAsync()
+    {
+        var results = new StringBuilder();
+        results.AppendLine("TailSlap Diagnostics");
+        results.AppendLine("====================");
+        results.AppendLine();
+
+        // Check LLM endpoint
+        results.AppendLine("LLM Endpoint:");
+        try
+        {
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var llmUrl = _currentConfig.Llm.BaseUrl.TrimEnd('/');
+            var response = await httpClient.GetAsync(llmUrl + "/models");
+            results.AppendLine($"  URL: {llmUrl}");
+            results.AppendLine($"  Status: {(response.IsSuccessStatusCode ? "✓ Reachable" : $"⚠ Response ({(int)response.StatusCode})")}");
+        }
+        catch (Exception ex)
+        {
+            results.AppendLine($"  URL: {_currentConfig.Llm.BaseUrl}");
+            results.AppendLine($"  Status: ✗ Unreachable ({ex.GetType().Name})");
+        }
+        results.AppendLine();
+
+        // Check Transcriber endpoint
+        results.AppendLine("Transcription Endpoint:");
+        try
+        {
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var transcriberUrl = _currentConfig.Transcriber.BaseUrl.TrimEnd('/');
+            var response = await httpClient.GetAsync(transcriberUrl);
+            results.AppendLine($"  URL: {transcriberUrl}");
+            results.AppendLine($"  Status: {(response.IsSuccessStatusCode ? "✓ Reachable" : $"⚠ Response ({(int)response.StatusCode})")}");
+        }
+        catch (Exception ex)
+        {
+            results.AppendLine($"  URL: {_currentConfig.Transcriber.BaseUrl}");
+            results.AppendLine($"  Status: ✗ Unreachable ({ex.GetType().Name})");
+        }
+        results.AppendLine();
+
+        // Check WebSocket endpoint
+        results.AppendLine("WebSocket Endpoint:");
+        results.AppendLine($"  URL: {_currentConfig.Transcriber.WebSocketUrl}");
+        try
+        {
+            using var ws = new ClientWebSocket();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await ws.ConnectAsync(new Uri(_currentConfig.Transcriber.WebSocketUrl), cts.Token);
+            results.AppendLine("  Status: ✓ Connectable");
+            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            results.AppendLine($"  Status: ✗ Cannot connect ({ex.GetType().Name})");
+        }
+        results.AppendLine();
+
+        // Check microphone
+        results.AppendLine("Microphone:");
+        try
+        {
+            int deviceCount = AudioRecorder.GetDeviceCount();
+            results.AppendLine($"  Devices found: {deviceCount}");
+            if (deviceCount > 0)
+            {
+                results.AppendLine("  Status: ✓ Available");
+                if (_currentConfig.Transcriber.PreferredMicrophoneIndex >= 0)
+                {
+                    results.AppendLine($"  Preferred device index: {_currentConfig.Transcriber.PreferredMicrophoneIndex}");
+                }
+            }
+            else
+            {
+                results.AppendLine("  Status: ✗ No microphones found");
+            }
+        }
+        catch (Exception ex)
+        {
+            results.AppendLine($"  Status: ✗ Error checking ({ex.GetType().Name})");
+        }
+        results.AppendLine();
+
+        // Configuration summary
+        results.AppendLine("Configuration:");
+        results.AppendLine($"  LLM Enabled: {(_currentConfig.Llm.Enabled ? "Yes" : "No")}");
+        results.AppendLine($"  LLM Model: {_currentConfig.Llm.Model}");
+        results.AppendLine($"  Transcription Enabled: {(_currentConfig.Transcriber.Enabled ? "Yes" : "No")}");
+        results.AppendLine($"  Transcription Model: {_currentConfig.Transcriber.Model}");
+        results.AppendLine($"  VAD Enabled: {(_currentConfig.Transcriber.EnableVAD ? "Yes" : "No")}");
+        results.AppendLine($"  Streaming Enabled: {(_currentConfig.Transcriber.StreamResults ? "Yes" : "No")}");
+
+        MessageBox.Show(results.ToString(), "TailSlap Diagnostics", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        Logger.Log("Diagnostics run:\n" + results.ToString());
+    }
+
     private Icon[] LoadAnimationFrames()
     {
         var list = new System.Collections.Generic.List<Icon>(8);
-        string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
+        string iconsDir = Path.Combine(Application.StartupPath, "Icons");
         int preferredSize = GetOptimalIconSize();
 
         try
         {
             for (int i = 1; i <= 8; i++)
             {
-                var icon = TryLoadPngAsIcon(
-                    System.IO.Path.Combine(iconsDir, $"{i}.png"),
-                    preferredSize
-                );
+                var icon = TryLoadPngAsIcon(Path.Combine(iconsDir, $"{i}.png"), preferredSize);
                 if (icon != null)
                     list.Add(icon);
             }
@@ -262,9 +394,7 @@ public class MainForm : Form
 
         if (list.Count > 0)
         {
-            Logger.Log(
-                $"Loaded {list.Count} animation frames (PNG) from files at {preferredSize}px"
-            );
+            Logger.Log($"Loaded {list.Count} animation frames (PNG) from files at {preferredSize}px");
             return list.ToArray();
         }
 
@@ -281,9 +411,7 @@ public class MainForm : Form
 
         if (list.Count > 0)
         {
-            Logger.Log(
-                $"Loaded {list.Count} animation frames (PNG) from embedded resources at {preferredSize}px"
-            );
+            Logger.Log($"Loaded {list.Count} animation frames (PNG) from embedded resources at {preferredSize}px");
             return list.ToArray();
         }
 
@@ -294,7 +422,7 @@ public class MainForm : Form
     {
         try
         {
-            if (!System.IO.File.Exists(filePath))
+            if (!File.Exists(filePath))
                 return null;
 
             try
@@ -316,10 +444,10 @@ public class MainForm : Form
     {
         try
         {
-            if (!System.IO.File.Exists(filePath))
+            if (!File.Exists(filePath))
                 return null;
 
-            var bytes = System.IO.File.ReadAllBytes(filePath);
+            var bytes = File.ReadAllBytes(filePath);
             using var ms = new MemoryStream(bytes);
             using var original = new Bitmap(ms);
             return CreateIconFromBitmap(original, preferredSize);
@@ -558,20 +686,17 @@ public class MainForm : Form
     {
         try
         {
-            string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
+            string iconsDir = Path.Combine(Application.StartupPath, "Icons");
             int preferredSize = GetOptimalIconSize();
 
-            var frame1 = TryLoadPngAsIcon(System.IO.Path.Combine(iconsDir, "1.png"), preferredSize);
+            var frame1 = TryLoadPngAsIcon(Path.Combine(iconsDir, "1.png"), preferredSize);
             if (frame1 != null)
             {
                 Logger.Log($"Loaded idle icon at {preferredSize}px from 1.png");
                 return frame1;
             }
 
-            var favicon = TryLoadIco(
-                System.IO.Path.Combine(iconsDir, "favicon.ico"),
-                preferredSize
-            );
+            var favicon = TryLoadIco(Path.Combine(iconsDir, "favicon.ico"), preferredSize);
             if (favicon != null)
             {
                 Logger.Log($"Loaded idle icon at {preferredSize}px from favicon.ico");
@@ -600,20 +725,17 @@ public class MainForm : Form
     {
         try
         {
-            string iconsDir = System.IO.Path.Combine(Application.StartupPath, "Icons");
+            string iconsDir = Path.Combine(Application.StartupPath, "Icons");
             int preferredSize = GetOptimalIconSize();
 
-            var frame1 = TryLoadPngAsIcon(System.IO.Path.Combine(iconsDir, "1.png"), preferredSize);
+            var frame1 = TryLoadPngAsIcon(Path.Combine(iconsDir, "1.png"), preferredSize);
             if (frame1 != null)
             {
                 Logger.Log($"Loaded main icon at {preferredSize}px from 1.png");
                 return frame1;
             }
 
-            var favicon = TryLoadIco(
-                System.IO.Path.Combine(iconsDir, "favicon.ico"),
-                preferredSize
-            );
+            var favicon = TryLoadIco(Path.Combine(iconsDir, "favicon.ico"), preferredSize);
             if (favicon != null)
             {
                 Logger.Log($"Loaded main icon at {preferredSize}px from favicon.ico");
@@ -658,7 +780,7 @@ public class MainForm : Form
         }
         catch
         {
-            return 16; // Fallback to standard size
+            return 16;
         }
     }
 
@@ -670,7 +792,18 @@ public class MainForm : Form
 
         _pulseDots = (_pulseDots + 1) % (TooltipPulseMaxDots + 1);
         string dots = _pulseDots == 0 ? "" : new string('.', _pulseDots);
-        TrySetTrayText($"TailSlap - Processing{dots}");
+
+        string stateText;
+        if (_refinementController.IsRefining)
+            stateText = "Refining";
+        else if (_transcriptionController.IsTranscribing)
+            stateText = "Transcribing";
+        else if (_realtimeTranscriptionController.IsStreaming)
+            stateText = "Streaming";
+        else
+            stateText = "Processing";
+
+        TrySetTrayText($"TailSlap - {stateText}{dots}");
         _lastPulseUpdateMs = nowMs;
     }
 
@@ -690,31 +823,15 @@ public class MainForm : Form
         if (_currentConfig.Transcriber.Enabled)
         {
             RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
-            RegisterHotkey(
-                _streamingTranscriberMods,
-                _streamingTranscriberVk,
-                STREAMING_TRANSCRIBER_HOTKEY_ID
-            );
+            RegisterHotkey(_streamingTranscriberMods, _streamingTranscriberVk, STREAMING_TRANSCRIBER_HOTKEY_ID);
         }
     }
 
     protected override void OnHandleDestroyed(EventArgs e)
     {
-        try
-        {
-            UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
-        }
-        catch { }
-        try
-        {
-            UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
-        }
-        catch { }
-        try
-        {
-            UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
-        }
-        catch { }
+        try { UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID); } catch { }
+        try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
+        try { UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID); } catch { }
         base.OnHandleDestroyed(e);
     }
 
@@ -750,755 +867,24 @@ public class MainForm : Form
 
     private void TriggerRefine()
     {
-        if (!_currentConfig.Llm.Enabled)
-        {
-            try
-            {
-                NotificationService.ShowWarning(
-                    "LLM processing is disabled. Enable it in settings first."
-                );
-            }
-            catch { }
-            return;
-        }
-        if (_isRefining)
-        {
-            try
-            {
-                NotificationService.ShowWarning("Refinement already in progress. Please wait.");
-            }
-            catch { }
-            return;
-        }
-        _isRefining = true;
-        _ = RefineSelectionAsync().ContinueWith(_ => _isRefining = false);
+        _ = _refinementController.TriggerRefineAsync();
     }
 
-    private async void TriggerTranscribe()
+    private void TriggerTranscribe()
     {
-        bool hasActiveCts = _transcriberCts != null && !_transcriberCts.IsCancellationRequested;
-        Logger.Log(
-            $"TriggerTranscribe called. Transcriber enabled: {_currentConfig.Transcriber.Enabled}, hasActiveCts: {hasActiveCts}, _isTranscribing: {_isTranscribing}"
-        );
-
-        if (!_currentConfig.Transcriber.Enabled)
-        {
-            Logger.Log("Transcriber is disabled");
-            try
-            {
-                NotificationService.ShowWarning(
-                    "Remote transcription is disabled. Enable it in settings first."
-                );
-            }
-            catch { }
-            return;
-        }
-
-        // If recording is in progress (CTS exists and is not cancelled), stop it
-        if (hasActiveCts)
-        {
-            Logger.Log("Stopping recording via cancellation token");
-            try
-            {
-                _transcriberCts?.Cancel();
-                NotificationService.ShowInfo("Stopping recording... Processing audio.");
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"Error cancelling transcription task: {ex.Message}");
-            }
-            return;
-        }
-
-        // If transcription is already in progress but recording is done, wait (don't allow new recording yet)
-        if (_isTranscribing)
-        {
-            Logger.Log("Transcription already in progress - waiting for completion");
-            try
-            {
-                NotificationService.ShowWarning(
-                    "Transcription in progress. Please wait for completion."
-                );
-            }
-            catch { }
-            return;
-        }
-
-        Logger.Log("Starting new transcription task");
-        _isTranscribing = true;
-
-        try
-        {
-            await TranscribeSelectionAsync(useStreaming: _currentConfig.Transcriber.StreamResults);
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"CRITICAL: Transcription task failed at top level: {ex.Message}");
-        }
-        finally
-        {
-            Logger.Log("Transcription task completed top-level finally");
-            _isTranscribing = false;
-        }
+        _ = _transcriptionController.TriggerTranscribeAsync();
     }
 
-    private async void TriggerStreamingTranscribe()
+    private void TriggerStreamingTranscribe()
     {
-        StreamingState currentState;
-        lock (_streamingStateLock)
-        {
-            currentState = _streamingState;
-        }
-
-        Logger.Log(
-            $"TriggerStreamingTranscribe called. Transcriber enabled: {_currentConfig.Transcriber.Enabled}, state: {currentState}"
-        );
-
-        if (!_currentConfig.Transcriber.Enabled)
-        {
-            Logger.Log("Transcriber is disabled");
-            try
-            {
-                NotificationService.ShowWarning(
-                    "Remote transcription is disabled. Enable it in settings first."
-                );
-            }
-            catch { }
-            return;
-        }
-
-        // State machine: only act on Idle or Streaming states, ignore transitions in progress
-        lock (_streamingStateLock)
-        {
-            if (
-                _streamingState == StreamingState.Starting
-                || _streamingState == StreamingState.Stopping
-            )
-            {
-                Logger.Log(
-                    $"TriggerStreamingTranscribe: Ignoring hotkey, transition in progress (state={_streamingState})"
-                );
-                return;
-            }
-
-            if (_streamingState == StreamingState.Streaming)
-            {
-                _streamingState = StreamingState.Stopping;
-            }
-            else
-            {
-                _streamingState = StreamingState.Starting;
-            }
-            currentState = _streamingState;
-        }
-
-        if (currentState == StreamingState.Stopping)
-        {
-            await StopRealtimeStreamingAsync();
-        }
-        else
-        {
-            await StartRealtimeStreamingAsync();
-        }
-    }
-
-    private async Task StartRealtimeStreamingAsync()
-    {
-        Logger.Log("StartRealtimeStreamingAsync: Starting real-time WebSocket transcription");
-        _realtimeTranscriptionText = "";
-        _typedText = "";
-        _lastTypedLength = 0;
-
-        try
-        {
-            StartAnim();
-            NotificationService.ShowInfo("Real-time transcription started. Speak now...");
-
-            _realtimeTranscriber = new RealtimeTranscriber(_currentConfig.Transcriber.WebSocketUrl);
-            _realtimeTranscriber.OnTranscription += OnRealtimeTranscription;
-            _realtimeTranscriber.OnError += OnRealtimeError;
-            _realtimeTranscriber.OnDisconnected += OnRealtimeDisconnected;
-
-            await _realtimeTranscriber.ConnectAsync();
-            Logger.Log("StartRealtimeStreamingAsync: WebSocket connected");
-
-            _realtimeRecorder = new AudioRecorder(
-                _currentConfig.Transcriber.PreferredMicrophoneIndex
-            );
-            _realtimeRecorder.SetVadThresholds(
-                _currentConfig.Transcriber.VadSilenceThreshold,
-                _currentConfig.Transcriber.VadActivationThreshold,
-                _currentConfig.Transcriber.VadSustainThreshold
-            );
-            _realtimeRecorder.OnAudioChunk += OnRealtimeAudioChunk;
-            _realtimeRecorder.OnSilenceDetected += OnRealtimeSilenceDetected;
-
-            // Capture the foreground window to detect if user switches apps during dictation
-            _streamingTargetWindow = GetForegroundWindow();
-            _streamingStartTime = DateTime.UtcNow;
-            Logger.Log(
-                $"StartRealtimeStreamingAsync: Target window captured: 0x{_streamingTargetWindow:X}"
-            );
-
-            // Transition to Streaming state now that setup is complete
-            lock (_streamingStateLock)
-            {
-                _streamingState = StreamingState.Streaming;
-            }
-
-            _transcriberCts = new CancellationTokenSource();
-            await _realtimeRecorder.StartStreamingAsync(
-                _transcriberCts.Token,
-                enableVAD: _currentConfig.Transcriber.EnableVAD,
-                silenceThresholdMs: _currentConfig.Transcriber.SilenceThresholdMs
-            );
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"StartRealtimeStreamingAsync: Error - {ex.Message}");
-            try
-            {
-                NotificationService.ShowError($"Real-time transcription failed: {ex.Message}");
-            }
-            catch { }
-
-            await CleanupRealtimeStreamingAsync();
-        }
-    }
-
-    private void OnRealtimeAudioChunk(ArraySegment<byte> chunk)
-    {
-        // Check state before processing audio
-        StreamingState state;
-        lock (_streamingStateLock)
-        {
-            state = _streamingState;
-        }
-
-        if (state != StreamingState.Streaming)
-            return;
-
-        // Check for no-speech timeout (user never spoke above activation threshold)
-        if (
-            _streamingStartTime != DateTime.MinValue
-            && _realtimeTranscriptionText.Length == 0
-            && _typedText.Length == 0
-            && (DateTime.UtcNow - _streamingStartTime).TotalSeconds >= NO_SPEECH_TIMEOUT_SECONDS
-        )
-        {
-            Logger.Log(
-                $"OnRealtimeAudioChunk: No speech detected after {NO_SPEECH_TIMEOUT_SECONDS}s, triggering auto-stop"
-            );
-            // Fire silence detected to initiate stop (on a separate task to avoid blocking audio processing)
-            _ = Task.Run(() => OnRealtimeSilenceDetected());
-            return;
-        }
-
-        if (_realtimeTranscriber?.IsConnected == true)
-        {
-            // Accumulate chunks to reduce server load (send every 500ms instead of 50ms)
-            // This prevents TCP buffer filling up when server is slow to process
-            lock (_streamingBuffer)
-            {
-                if (chunk.Array != null)
-                {
-                    for (int i = 0; i < chunk.Count; i++)
-                    {
-                        _streamingBuffer.Add(chunk.Array[chunk.Offset + i]);
-                    }
-                }
-
-                if (_streamingBuffer.Count >= SEND_BUFFER_SIZE)
-                {
-                    var dataToSend = _streamingBuffer.ToArray();
-                    _streamingBuffer.Clear();
-
-                    // Fire-and-forget sending the aggregated chunk
-                    _ = _realtimeTranscriber.SendAudioChunkAsync(
-                        new ArraySegment<byte>(dataToSend)
-                    );
-                }
-            }
-        }
-    }
-
-    private void OnRealtimeTranscription(string text, bool isFinal)
-    {
-        Logger.Log($"OnRealtimeTranscription: text.Length={text.Length}, final={isFinal}");
-
-        // Notify recorder that server detected speech (for auto-stop purposes)
-        if (!string.IsNullOrEmpty(text) && !isFinal)
-        {
-            _realtimeRecorder?.NotifySpeechDetected();
-        }
-
-        if (InvokeRequired)
-        {
-            BeginInvoke(new Action(() => HandleRealtimeTranscription(text, isFinal)));
-        }
-        else
-        {
-            HandleRealtimeTranscription(text, isFinal);
-        }
-    }
-
-    private async void HandleRealtimeTranscription(string text, bool isFinal)
-    {
-        // Ensure strictly sequential processing of updates to prevent overlapping pastes/typing
-        await _transcriptionLock.WaitAsync();
-        try
-        {
-            // Check state - ignore if we're idle (cleanup already happened)
-            StreamingState state;
-            lock (_streamingStateLock)
-            {
-                state = _streamingState;
-            }
-            if (state == StreamingState.Idle)
-            {
-                Logger.Log("HandleRealtimeTranscription: Ignoring, state=Idle");
-                return;
-            }
-
-            if (string.IsNullOrEmpty(text))
-                return;
-
-            // Check if foreground window changed - if so, reset baseline to prevent incorrect backspacing
-            if (!IsForegroundWindowSafe())
-            {
-                Logger.Log("HandleRealtimeTranscription: Window changed, resetting baseline");
-                // Commit what we have and start fresh in new window
-                if (_lastTypedLength > 0 && _lastTypedLength <= _realtimeTranscriptionText.Length)
-                {
-                    _typedText += _realtimeTranscriptionText.Substring(0, _lastTypedLength);
-                }
-                _realtimeTranscriptionText = text;
-                _lastTypedLength = 0;
-                // Update target window for subsequent typing
-                _streamingTargetWindow = GetForegroundWindow();
-                return;
-            }
-
-            // Simple incremental update logic:
-            // Server sends cumulative transcription of all audio so far.
-            // We compare with what's on screen and apply minimal edits.
-
-            // Calculate common prefix between what's on screen and new text
-            string onScreen =
-                _lastTypedLength > 0 && _lastTypedLength <= _realtimeTranscriptionText.Length
-                    ? _realtimeTranscriptionText.Substring(0, _lastTypedLength)
-                    : "";
-
-            int commonPrefixLen = 0;
-            int minLen = Math.Min(onScreen.Length, text.Length);
-            for (int i = 0; i < minLen; i++)
-            {
-                if (onScreen[i] == text[i])
-                    commonPrefixLen++;
-                else
-                    break;
-            }
-
-            // Calculate how many chars to backspace
-            int backspaceCount = _lastTypedLength - commonPrefixLen;
-            if (backspaceCount < 0)
-                backspaceCount = 0;
-
-            // Apply corrections
-            if (backspaceCount > 0)
-            {
-                Logger.Log($"HandleRT: Backspacing {backspaceCount} chars for correction");
-                SendBackspace(backspaceCount);
-                _lastTypedLength = commonPrefixLen;
-                await Task.Delay(20);
-            }
-
-            // Type any new characters
-            if (text.Length > _lastTypedLength)
-            {
-                var newText = text.Substring(_lastTypedLength);
-                Logger.Log($"HandleRT: Typing {newText.Length} chars");
-
-                if (newText.Length > 5)
-                {
-                    bool pasteSuccess = await _clip.SetTextAndPasteAsync(newText);
-                    if (!pasteSuccess)
-                    {
-                        TypeTextDirectly(newText);
-                    }
-                }
-                else
-                {
-                    TypeTextDirectly(newText);
-                }
-
-                _lastTypedLength = text.Length;
-            }
-
-            _realtimeTranscriptionText = text;
-
-            // On final, commit and reset
-            if (isFinal)
-            {
-                Logger.Log($"HandleRT: Final transcription received");
-                _typedText += text;
-                _lastTypedLength = 0;
-                _realtimeTranscriptionText = "";
-            }
-        }
-        finally
-        {
-            _transcriptionLock.Release();
-        }
-    }
-
-    private bool IsForegroundWindowSafe()
-    {
-        if (_streamingTargetWindow == IntPtr.Zero)
-            return true;
-
-        var current = GetForegroundWindow();
-        if (current != _streamingTargetWindow)
-        {
-            Logger.Log(
-                $"IsForegroundWindowSafe: Window changed from 0x{_streamingTargetWindow:X} to 0x{current:X}, skipping destructive operation"
-            );
-            return false;
-        }
-        return true;
-    }
-
-    private void SendBackspace(int count)
-    {
-        if (count <= 0)
-            return;
-
-        if (!IsForegroundWindowSafe())
-        {
-            Logger.Log($"SendBackspace: Skipping {count} backspaces, foreground window changed");
-            return;
-        }
-
-        try
-        {
-            SendKeys.SendWait("{BS " + count + "}");
-            SendKeys.Flush();
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"SendBackspace failed: {ex.Message}");
-        }
-    }
-
-    private async void OnRealtimeError(string error)
-    {
-        try
-        {
-            Logger.Log($"OnRealtimeError: {error}");
-            try
-            {
-                NotificationService.ShowError($"Real-time transcription error: {error}");
-            }
-            catch { }
-
-            // Initiate stop on error if we're streaming
-            lock (_streamingStateLock)
-            {
-                if (_streamingState != StreamingState.Streaming)
-                {
-                    Logger.Log($"OnRealtimeError: Ignoring stop, state={_streamingState}");
-                    return;
-                }
-                _streamingState = StreamingState.Stopping;
-            }
-
-            await StopRealtimeStreamingAsync();
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"OnRealtimeError: ERROR during handling - {ex.Message}");
-        }
-    }
-
-    private async void OnRealtimeDisconnected()
-    {
-        try
-        {
-            Logger.Log("OnRealtimeDisconnected: WebSocket disconnected");
-            bool shouldInitiateStop = false;
-            lock (_streamingStateLock)
-            {
-                // If we're streaming, transition to stopping
-                if (_streamingState == StreamingState.Streaming)
-                {
-                    _streamingState = StreamingState.Stopping;
-                    shouldInitiateStop = true;
-                }
-                // If already stopping, just help with cleanup
-                else if (_streamingState == StreamingState.Stopping)
-                {
-                    _realtimeRecorder?.StopRecording();
-                    _transcriberCts?.Cancel();
-                    return;
-                }
-            }
-
-            if (shouldInitiateStop)
-            {
-                await StopRealtimeStreamingAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"OnRealtimeDisconnected: ERROR - {ex.Message}");
-        }
-    }
-
-    private async void OnRealtimeSilenceDetected()
-    {
-        try
-        {
-            Logger.Log("OnRealtimeSilenceDetected: Silence detected, stopping streaming");
-
-            // Only initiate stop if we're actively streaming
-            lock (_streamingStateLock)
-            {
-                if (_streamingState != StreamingState.Streaming)
-                {
-                    Logger.Log($"OnRealtimeSilenceDetected: Ignoring, state={_streamingState}");
-                    return;
-                }
-                _streamingState = StreamingState.Stopping;
-            }
-
-            await StopRealtimeStreamingAsync();
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"OnRealtimeSilenceDetected: ERROR - {ex.Message}");
-        }
-    }
-
-    private async Task StopRealtimeStreamingAsync()
-    {
-        Logger.Log("StopRealtimeStreamingAsync: Stopping real-time transcription");
-        try
-        {
-            NotificationService.ShowInfo("Stopping real-time transcription...");
-        }
-        catch { }
-
-        _realtimeRecorder?.StopRecording();
-
-        if (_realtimeTranscriber?.IsConnected == true)
-        {
-            try
-            {
-                // Create completion sources to wait for server completion
-                var serverClosedTcs = new TaskCompletionSource<bool>();
-                var finalMessageTcs = new TaskCompletionSource<bool>();
-
-                void OnServerDisconnected()
-                {
-                    serverClosedTcs.TrySetResult(true);
-                }
-
-                void OnTranscriptionReceived(string text, bool isFinal)
-                {
-                    if (isFinal)
-                        finalMessageTcs.TrySetResult(true);
-                }
-
-                _realtimeTranscriber.OnDisconnected += OnServerDisconnected;
-                _realtimeTranscriber.OnTranscription += OnTranscriptionReceived;
-
-                // Flush any remaining audio buffer before stopping
-                byte[]? remainingData = null;
-                lock (_streamingBuffer)
-                {
-                    if (_streamingBuffer.Count > 0)
-                    {
-                        remainingData = _streamingBuffer.ToArray();
-                        _streamingBuffer.Clear();
-                    }
-                }
-
-                if (remainingData != null)
-                {
-                    await _realtimeTranscriber.SendAudioChunkAsync(
-                        new ArraySegment<byte>(remainingData)
-                    );
-                }
-
-                // Send stop signal and padding
-                await _realtimeTranscriber.StopAsync();
-
-                Logger.Log(
-                    "StopRealtimeStreamingAsync: Waiting for server to close connection or send final message..."
-                );
-
-                // Wait for server to send final transcription OR close connection
-                // Give it up to 10 seconds (inference can be slow)
-                await Task.WhenAny(serverClosedTcs.Task, finalMessageTcs.Task, Task.Delay(10000));
-
-                _realtimeTranscriber.OnDisconnected -= OnServerDisconnected;
-                _realtimeTranscriber.OnTranscription -= OnTranscriptionReceived;
-
-                Logger.Log("StopRealtimeStreamingAsync: Wait complete or timed out");
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"StopRealtimeStreamingAsync: Error sending stop - {ex.Message}");
-            }
-        }
-
-        _transcriberCts?.Cancel();
-
-        // Explicitly cleanup now that we've waited for the final message
-        await CleanupRealtimeStreamingAsync();
-    }
-
-    private async Task CleanupRealtimeStreamingAsync()
-    {
-        // Idempotency: ensure only one cleanup runs at a time
-        if (Interlocked.Exchange(ref _cleanupInProgress, 1) == 1)
-        {
-            Logger.Log("CleanupRealtimeStreamingAsync: Already in progress, returning");
-            return;
-        }
-
-        try
-        {
-            Logger.Log("CleanupRealtimeStreamingAsync: Cleaning up");
-
-            // Wait for any pending transcription processing to finish (e.g. final message)
-            // This prevents race condition where cleanup runs before HandleRealtimeTranscription updates text
-            await _transcriptionLock.WaitAsync();
-
-            // Capture text state WHILE holding the lock to prevent race with HandleRealtimeTranscription
-            string finalTranscriptionText = _realtimeTranscriptionText;
-            int finalLastTypedLength = _lastTypedLength;
-            string finalTypedText = _typedText;
-
-            // Reset state while holding lock
-            _typedText = "";
-            _realtimeTranscriptionText = "";
-            _lastTypedLength = 0;
-
-            // Set state to Idle BEFORE releasing lock so any pending HandleRealtimeTranscription
-            // calls will see Idle state and exit early when they acquire the lock
-            lock (_streamingStateLock)
-            {
-                _streamingState = StreamingState.Idle;
-            }
-
-            _transcriptionLock.Release();
-
-            // Take local snapshots, then null out fields to prevent other handlers from using them
-            var transcriber = _realtimeTranscriber;
-            var recorder = _realtimeRecorder;
-            var cts = _transcriberCts;
-
-            _realtimeTranscriber = null;
-            _realtimeRecorder = null;
-            _transcriberCts = null;
-
-            // Unsubscribe and dispose transcriber
-            if (transcriber != null)
-            {
-                transcriber.OnTranscription -= OnRealtimeTranscription;
-                transcriber.OnError -= OnRealtimeError;
-                transcriber.OnDisconnected -= OnRealtimeDisconnected;
-
-                try
-                {
-                    await transcriber.DisconnectAsync();
-                }
-                catch { }
-
-                transcriber.Dispose();
-            }
-
-            // Dispose recorder
-            if (recorder != null)
-            {
-                recorder.OnAudioChunk -= OnRealtimeAudioChunk;
-                recorder.OnSilenceDetected -= OnRealtimeSilenceDetected;
-                recorder.Dispose();
-            }
-
-            cts?.Dispose();
-
-            lock (_streamingBuffer)
-            {
-                _streamingBuffer.Clear();
-            }
-            _streamingTargetWindow = IntPtr.Zero;
-            _streamingStartTime = DateTime.MinValue;
-            StopAnim();
-
-            // Type any remaining text that wasn't typed due to corrections
-            // Use the captured values to avoid race conditions
-            if (finalTranscriptionText.Length > finalLastTypedLength)
-            {
-                var remainingText = finalTranscriptionText.Substring(finalLastTypedLength);
-                Logger.Log(
-                    $"CleanupRealtimeStreamingAsync: Typing remaining {remainingText.Length} chars"
-                );
-
-                if (remainingText.Length > 5)
-                {
-                    if (InvokeRequired)
-                    {
-                        await (Task)Invoke(
-                            new Func<Task>(() => _clip.SetTextAndPasteAsync(remainingText))
-                        );
-                    }
-                    else
-                    {
-                        await _clip.SetTextAndPasteAsync(remainingText);
-                    }
-                }
-                else
-                {
-                    if (InvokeRequired)
-                    {
-                        Invoke(new Action(() => TypeTextDirectly(remainingText)));
-                    }
-                    else
-                    {
-                        TypeTextDirectly(remainingText);
-                    }
-                }
-            }
-
-            if (
-                !string.IsNullOrEmpty(finalTranscriptionText)
-                || !string.IsNullOrEmpty(finalTypedText)
-            )
-            {
-                try
-                {
-                    NotificationService.ShowSuccess("Real-time transcription complete.");
-                }
-                catch { }
-            }
-
-            Logger.Log("CleanupRealtimeStreamingAsync: Done");
-        }
-        finally
-        {
-            Interlocked.Exchange(ref _cleanupInProgress, 0);
-        }
+        _ = _realtimeTranscriptionController.TriggerStreamingAsync();
     }
 
     private void ReloadConfigFromDisk()
     {
         if (_isSettingsOpen)
         {
-            Logger.Log(
-                "Configuration change detected while Settings is open. Deferring hot-reload."
-            );
+            Logger.Log("Configuration change detected while Settings is open. Deferring hot-reload.");
             return;
         }
 
@@ -1507,7 +893,6 @@ public class MainForm : Form
             Logger.Log("Detected config file change on disk. Reloading...");
             var newConfig = _config.CreateValidatedCopy();
 
-            // Check if hotkeys changed
             bool refinementHotkeyChanged =
                 newConfig.Hotkey.Modifiers != _currentMods || newConfig.Hotkey.Key != _currentVk;
             bool transcriberHotkeyChanged =
@@ -1520,6 +905,12 @@ public class MainForm : Form
                 newConfig.Transcriber.Enabled != _currentConfig.Transcriber.Enabled;
 
             _currentConfig = newConfig;
+
+            // Update toggle states
+            if (_llmToggleItem != null)
+                _llmToggleItem.Checked = _currentConfig.Llm.Enabled;
+            if (_transcriberToggleItem != null)
+                _transcriberToggleItem.Checked = _currentConfig.Transcriber.Enabled;
 
             if (refinementHotkeyChanged)
             {
@@ -1547,11 +938,7 @@ public class MainForm : Form
                 {
                     _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
                     _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
-                    RegisterHotkey(
-                        _streamingTranscriberMods,
-                        _streamingTranscriberVk,
-                        STREAMING_TRANSCRIBER_HOTKEY_ID
-                    );
+                    RegisterHotkey(_streamingTranscriberMods, _streamingTranscriberVk, STREAMING_TRANSCRIBER_HOTKEY_ID);
                 }
             }
 
@@ -1561,551 +948,6 @@ public class MainForm : Form
         catch (Exception ex)
         {
             Logger.Log($"Error during config hot-reload: {ex.Message}");
-        }
-    }
-
-    private async Task RefineSelectionAsync()
-    {
-        try
-        {
-            Logger.Log("RefineSelectionAsync started");
-            StartAnim();
-            Logger.Log("Starting capture from selection/clipboard");
-            var text = await _clip.CaptureSelectionOrClipboardAsync(
-                _currentConfig.UseClipboardFallback
-            );
-            Logger.Log(
-                $"Captured length: {text?.Length ?? 0}, sha256={Sha256Hex(text ?? string.Empty)}"
-            );
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                try
-                {
-                    NotificationService.ShowWarning("No text selected or in clipboard.");
-                }
-                catch { }
-                return;
-            }
-            var refiner = _textRefinerFactory.Create(_currentConfig.Llm);
-            var refined = await refiner.RefineAsync(text);
-            Logger.Log(
-                $"Refined length: {refined?.Length ?? 0}, sha256={Sha256Hex(refined ?? string.Empty)}"
-            );
-            if (string.IsNullOrWhiteSpace(refined))
-            {
-                try
-                {
-                    NotificationService.ShowError("Provider returned empty result.");
-                }
-                catch { }
-                return;
-            }
-
-            bool setTextSuccess = _clip.SetText(refined);
-            if (!setTextSuccess)
-            {
-                return; // Error already shown by SetText
-            }
-
-            await Task.Delay(100);
-            if (_currentConfig.AutoPaste)
-            {
-                Logger.Log("Auto-paste attempt");
-                bool pasteSuccess = await _clip.PasteAsync().ConfigureAwait(true);
-                if (!pasteSuccess)
-                {
-                    // Error already shown by Paste method, but we can continue
-                    try
-                    {
-                        NotificationService.ShowInfo(
-                            "Text is ready. You can paste manually with Ctrl+V."
-                        );
-                    }
-                    catch { }
-                }
-            }
-            else
-            {
-                try
-                {
-                    NotificationService.ShowTextReadyNotification();
-                }
-                catch { }
-            }
-
-            try
-            {
-                _history.Append(text, refined, _currentConfig.Llm.Model);
-            }
-            catch { }
-            Logger.Log("Refinement completed successfully.");
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                NotificationService.ShowError("Refinement failed: " + ex.Message);
-            }
-            catch { }
-            Logger.Log("Error: " + ex.Message);
-        }
-        finally
-        {
-            StopAnim();
-        }
-    }
-
-    private async Task TranscribeSelectionAsync(bool useStreaming = false)
-    {
-        string audioFilePath = "";
-        RecordingStats? recordingStats = null;
-        try
-        {
-            Logger.Log("TranscribeSelectionAsync started");
-            Logger.Log(
-                $"Transcriber config: BaseUrl={_currentConfig.Transcriber.BaseUrl}, Model={_currentConfig.Transcriber.Model}, Timeout={_currentConfig.Transcriber.TimeoutSeconds}s"
-            );
-            _transcriberCts = new CancellationTokenSource();
-            Logger.Log($"Created new CancellationTokenSource: {_transcriberCts?.GetHashCode()}");
-
-            // Start animation and show recording notification
-            StartAnim();
-            try
-            {
-                NotificationService.ShowInfo("🎤 Recording... Press hotkey again to stop.");
-            }
-            catch { }
-
-            // Record audio from microphone
-            audioFilePath = Path.Combine(
-                Path.GetTempPath(),
-                $"tailslap_recording_{Guid.NewGuid():N}.wav"
-            );
-            Logger.Log($"Audio file path: {audioFilePath}");
-            try
-            {
-                Logger.Log("Starting audio recording from microphone");
-                recordingStats = await RecordAudioAsync(audioFilePath);
-
-                if (recordingStats.SilenceDetected)
-                {
-                    Logger.Log(
-                        $"Audio recording stopped early due to silence detection at {recordingStats.DurationMs}ms"
-                    );
-                }
-                Logger.Log(
-                    $"Audio recorded to: {audioFilePath}, duration={recordingStats.DurationMs}ms"
-                );
-
-                if (recordingStats.DurationMs < 500)
-                {
-                    Logger.Log("Recording too short (< 500ms), skipping transcription.");
-                    try
-                    {
-                        NotificationService.ShowWarning(
-                            "Recording too short. Please speak longer."
-                        );
-                    }
-                    catch { }
-                    return;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                Logger.Log("Audio recording was stopped by user");
-                // If user stopped it very quickly, we should also check duration here
-                if (recordingStats != null && recordingStats.DurationMs < 500)
-                {
-                    try
-                    {
-                        NotificationService.ShowWarning("Recording cancelled (too short).");
-                    }
-                    catch { }
-                    return;
-                }
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    NotificationService.ShowError(
-                        "Failed to record audio from microphone. Please check your microphone permissions."
-                    );
-                }
-                catch { }
-                Logger.Log($"Audio recording failed: {ex.GetType().Name}: {ex.Message}");
-                return;
-            }
-
-            // Show transcribing animation
-            try
-            {
-                NotificationService.ShowInfo("Sending to transcriber...");
-            }
-            catch { }
-
-            // Transcribe audio using remote API
-            Logger.Log(
-                $"Creating RemoteTranscriber with BaseUrl: {_currentConfig.Transcriber.BaseUrl}"
-            );
-            var transcriber = _remoteTranscriberFactory.Create(_currentConfig.Transcriber);
-            string transcriptionText = "";
-
-            // Use streaming if requested for faster feedback
-            if (useStreaming)
-            {
-                Logger.Log("Using streaming transcription for faster feedback");
-                var fullText = new System.Text.StringBuilder();
-
-                try
-                {
-                    await foreach (var chunk in transcriber.TranscribeStreamingAsync(audioFilePath))
-                    {
-                        if (string.IsNullOrEmpty(chunk))
-                            continue;
-
-                        fullText.Append(chunk);
-
-                        // Type each chunk directly to the cursor position
-                        if (_currentConfig.Transcriber.AutoPaste)
-                        {
-                            this.Invoke(
-                                (MethodInvoker)
-                                    delegate
-                                    {
-                                        TypeTextDirectly(chunk);
-                                    }
-                            );
-                        }
-                    }
-
-                    transcriptionText = fullText.ToString();
-                    Logger.Log(
-                        $"Streaming transcription completed: {transcriptionText.Length} characters"
-                    );
-
-                    if (IsEmptyTranscription(transcriptionText))
-                    {
-                        try
-                        {
-                            NotificationService.ShowWarning("No speech detected.");
-                        }
-                        catch { }
-                        return;
-                    }
-
-                    // Copy final result to clipboard for convenience
-                    _clip.SetText(transcriptionText);
-
-                    if (!_currentConfig.Transcriber.AutoPaste)
-                    {
-                        try
-                        {
-                            NotificationService.ShowTextReadyNotification();
-                        }
-                        catch { }
-                    }
-                }
-                catch (TranscriberException ex)
-                {
-                    Logger.Log(
-                        $"Streaming TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
-                    );
-                    try
-                    {
-                        NotificationService.ShowError($"Transcription failed: {ex.Message}");
-                    }
-                    catch { }
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log(
-                        $"Streaming unexpected exception: {ex.GetType().Name}: {ex.Message}"
-                    );
-                    try
-                    {
-                        NotificationService.ShowError($"Transcription failed: {ex.Message}");
-                    }
-                    catch { }
-                    return;
-                }
-            }
-            else
-            {
-                // Non-streaming path (original behavior)
-                try
-                {
-                    Logger.Log($"Starting remote transcription of {audioFilePath}");
-                    transcriptionText = await transcriber.TranscribeAudioAsync(audioFilePath);
-                    Logger.Log(
-                        $"Transcription completed: {transcriptionText?.Length ?? 0} characters, text={transcriptionText?.Substring(0, Math.Min(100, transcriptionText?.Length ?? 0))}"
-                    );
-                }
-                catch (TranscriberException ex)
-                {
-                    Logger.Log(
-                        $"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
-                    );
-                    try
-                    {
-                        NotificationService.ShowError($"Transcription failed: {ex.Message}");
-                    }
-                    catch { }
-                    Logger.Log($"Transcription error: {ex.Message}");
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log(
-                        $"Unexpected exception: {ex.GetType().Name}: {ex.Message}, StackTrace: {ex.StackTrace}"
-                    );
-                    try
-                    {
-                        NotificationService.ShowError($"Transcription failed: {ex.Message}");
-                    }
-                    catch { }
-                    Logger.Log("Error: " + ex.Message);
-                    return;
-                }
-
-                if (IsEmptyTranscription(transcriptionText))
-                {
-                    try
-                    {
-                        NotificationService.ShowWarning("No speech detected.");
-                    }
-                    catch { }
-                    return;
-                }
-
-                // Set transcription result to clipboard
-                bool setTextSuccess = _clip.SetText(transcriptionText ?? "");
-                if (!setTextSuccess)
-                {
-                    return; // Error already shown by SetText
-                }
-
-                await Task.Delay(100);
-                if (_currentConfig.Transcriber.AutoPaste)
-                {
-                    Logger.Log("Transcriber auto-paste attempt");
-                    // Run paste on UI thread to ensure SendKeys works correctly
-                    this.Invoke(
-                        (MethodInvoker)
-                            async delegate
-                            {
-                                bool pasteSuccess = await _clip.PasteAsync();
-                                if (!pasteSuccess)
-                                {
-                                    try
-                                    {
-                                        NotificationService.ShowInfo(
-                                            "Transcription is ready. You can paste manually with Ctrl+V."
-                                        );
-                                    }
-                                    catch { }
-                                }
-                            }
-                    );
-                }
-                else
-                {
-                    try
-                    {
-                        NotificationService.ShowTextReadyNotification();
-                    }
-                    catch { }
-                }
-            }
-
-            // Log transcription to history (separate from LLM refinement history)
-            try
-            {
-                _history.AppendTranscription(
-                    transcriptionText ?? "",
-                    recordingStats?.DurationMs ?? 0
-                );
-                Logger.Log(
-                    $"Transcription logged: {transcriptionText?.Length ?? 0} characters, duration={recordingStats?.DurationMs}ms"
-                );
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    Logger.Log($"Failed to log transcription to history: {ex.Message}");
-                }
-                catch { }
-            }
-
-            Logger.Log("Transcription completed successfully.");
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                NotificationService.ShowError("Transcription failed: " + ex.Message);
-            }
-            catch { }
-            Logger.Log($"TranscribeSelectionAsync error: {ex.GetType().Name}: {ex.Message}");
-            if (ex.InnerException != null)
-            {
-                Logger.Log(
-                    $"Inner exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}"
-                );
-            }
-        }
-        finally
-        {
-            StopAnim();
-
-            // Clean up cancellation token
-            _transcriberCts?.Dispose();
-            _transcriberCts = null;
-
-            // Clean up temporary audio file
-            try
-            {
-                if (!string.IsNullOrEmpty(audioFilePath) && File.Exists(audioFilePath))
-                {
-                    File.Delete(audioFilePath);
-                }
-            }
-            catch { }
-        }
-    }
-
-    private static bool IsEmptyTranscription(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return true;
-
-        var trimmed = text.Trim();
-        return trimmed.Equals("[Empty transcription]", StringComparison.OrdinalIgnoreCase)
-            || trimmed.Equals("(empty)", StringComparison.OrdinalIgnoreCase)
-            || trimmed.Equals("[silence]", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static void TypeTextDirectly(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-            return;
-
-        try
-        {
-            // Escape special SendKeys characters: +^%~(){}[]
-            var escaped = new System.Text.StringBuilder();
-            foreach (char c in text)
-            {
-                if (
-                    c == '+'
-                    || c == '^'
-                    || c == '%'
-                    || c == '~'
-                    || c == '('
-                    || c == ')'
-                    || c == '{'
-                    || c == '}'
-                    || c == '['
-                    || c == ']'
-                )
-                {
-                    escaped.Append('{').Append(c).Append('}');
-                }
-                else if (c == '\n')
-                {
-                    escaped.Append("{ENTER}");
-                }
-                else if (c == '\r')
-                {
-                    // Skip carriage returns
-                }
-                else
-                {
-                    escaped.Append(c);
-                }
-            }
-
-            SendKeys.SendWait(escaped.ToString());
-            SendKeys.Flush();
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"TypeTextDirectly failed: {ex.Message}");
-        }
-    }
-
-    private async Task<RecordingStats> RecordAudioAsync(string audioFilePath)
-    {
-        Logger.Log(
-            $"RecordAudioAsync started. PreferredMic: {_currentConfig.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {_currentConfig.Transcriber.EnableVAD}, VADThreshold: {_currentConfig.Transcriber.SilenceThresholdMs}ms"
-        );
-        using var recorder = new AudioRecorder(_currentConfig.Transcriber.PreferredMicrophoneIndex);
-        recorder.SetVadThresholds(
-            _currentConfig.Transcriber.VadSilenceThreshold,
-            _currentConfig.Transcriber.VadActivationThreshold,
-            _currentConfig.Transcriber.VadSustainThreshold
-        );
-        try
-        {
-            // maxDurationMs = 0 means record until cancellation (hotkey-based toggle)
-            Logger.Log($"Starting recorder with CancellationToken");
-            var stats = await recorder.RecordAsync(
-                audioFilePath,
-                maxDurationMs: 0,
-                ct: _transcriberCts?.Token ?? CancellationToken.None,
-                enableVAD: _currentConfig.Transcriber.EnableVAD,
-                silenceThresholdMs: _currentConfig.Transcriber.SilenceThresholdMs
-            );
-
-            Logger.Log(
-                $"Recording completed: {stats.DurationMs}ms, {stats.BytesRecorded} bytes, silence_detected={stats.SilenceDetected}"
-            );
-            if (!File.Exists(audioFilePath))
-            {
-                Logger.Log($"ERROR: Audio file not created at {audioFilePath}");
-            }
-            else
-            {
-                var fileInfo = new FileInfo(audioFilePath);
-                Logger.Log($"Audio file created: {audioFilePath}, size: {fileInfo.Length} bytes");
-            }
-            return stats;
-        }
-        catch (OperationCanceledException ex)
-        {
-            Logger.Log($"Recording cancelled: {ex.Message}");
-            throw;
-        }
-        catch (InvalidOperationException ex)
-        {
-            Logger.Log($"AudioRecorder error: {ex.Message}");
-            throw;
-        }
-        catch (Exception ex)
-        {
-            Logger.Log(
-                $"RecordAudioAsync unexpected error: {ex.GetType().Name}: {ex.Message}, StackTrace: {ex.StackTrace}"
-            );
-            throw;
-        }
-    }
-
-    private static string Sha256Hex(string s)
-    {
-        if (string.IsNullOrEmpty(s))
-            return "";
-        try
-        {
-            byte[] inputBytes = Encoding.UTF8.GetBytes(s);
-            Span<byte> hash = stackalloc byte[32];
-            SHA256.HashData(inputBytes, hash);
-            return Convert.ToHexString(hash);
-        }
-        catch
-        {
-            return "";
         }
     }
 
@@ -2134,15 +976,6 @@ public class MainForm : Form
         _frame = 0;
         _tray.Icon = _idleIcon;
         TrySetTrayText("TailSlap");
-    }
-
-    // Legacy Notify method kept for compatibility but should use NotificationService instead
-    private void Notify(string msg, bool error = false)
-    {
-        if (error)
-            NotificationService.ShowError(msg);
-        else
-            NotificationService.ShowInfo(msg);
     }
 
     [DllImport("user32.dll")]
@@ -2192,7 +1025,6 @@ public class MainForm : Form
         _isSettingsOpen = true;
         try
         {
-            // Create a clone to edit so we don't modify the live config until OK is clicked
             var clone = cfg.Clone();
             using var dlg = new SettingsForm(clone, _textRefinerFactory, _remoteTranscriberFactory);
             if (dlg.ShowDialog() == DialogResult.OK)
@@ -2204,9 +1036,14 @@ public class MainForm : Form
                     $"Transcriber hotkey before save: mods={clone.TranscriberHotkey.Modifiers}, key={clone.TranscriberHotkey.Key}"
                 );
 
-                // Update the live config object with the values from the clone
                 _currentConfig = clone;
                 _config.Save(_currentConfig);
+
+                // Update toggle states
+                if (_llmToggleItem != null)
+                    _llmToggleItem.Checked = _currentConfig.Llm.Enabled;
+                if (_transcriberToggleItem != null)
+                    _transcriberToggleItem.Checked = _currentConfig.Transcriber.Enabled;
 
                 Logger.Log(
                     $"LLM hotkey after reload: mods={_currentConfig.Hotkey.Modifiers}, key={_currentConfig.Hotkey.Key}"
@@ -2215,22 +1052,12 @@ public class MainForm : Form
                     $"Transcriber hotkey after reload: mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}"
                 );
 
-                // Re-register refinement hotkey
-                try
-                {
-                    UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID);
-                }
-                catch { }
+                try { UnregisterHotKey(Handle, REFINEMENT_HOTKEY_ID); } catch { }
                 _currentMods = _currentConfig.Hotkey.Modifiers;
                 _currentVk = _currentConfig.Hotkey.Key;
                 RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
 
-                // Re-register transcriber hotkey if transcriber was enabled/disabled
-                try
-                {
-                    UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
-                }
-                catch { }
+                try { UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID); } catch { }
                 _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
                 _transcriberVk = _currentConfig.TranscriberHotkey.Key;
                 if (_currentConfig.Transcriber.Enabled)
@@ -2238,21 +1065,12 @@ public class MainForm : Form
                     RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
                 }
 
-                // Re-register streaming transcriber hotkey
-                try
-                {
-                    UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
-                }
-                catch { }
+                try { UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID); } catch { }
                 _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
                 _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
                 if (_currentConfig.Transcriber.Enabled)
                 {
-                    RegisterHotkey(
-                        _streamingTranscriberMods,
-                        _streamingTranscriberVk,
-                        STREAMING_TRANSCRIBER_HOTKEY_ID
-                    );
+                    RegisterHotkey(_streamingTranscriberMods, _streamingTranscriberVk, STREAMING_TRANSCRIBER_HOTKEY_ID);
                 }
 
                 NotificationService.ShowSuccess("Settings saved.");

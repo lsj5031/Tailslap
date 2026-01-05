@@ -253,3 +253,24 @@ public static class NotificationService
         catch { }
     }
 }
+
+public sealed class NotificationServiceAdapter : INotificationService
+{
+    public void ShowInfo(string message, string title = "TailSlap", int durationMs = 3000)
+        => NotificationService.ShowInfo(message, title, durationMs);
+
+    public void ShowSuccess(string message, string title = "TailSlap")
+        => NotificationService.ShowSuccess(message, title);
+
+    public void ShowWarning(string message, string title = "TailSlap")
+        => NotificationService.ShowWarning(message, title);
+
+    public void ShowError(string message, string title = "TailSlap")
+        => NotificationService.ShowError(message, title);
+
+    public void ShowTextReadyNotification()
+        => NotificationService.ShowTextReadyNotification();
+
+    public void ShowAutoPasteFailedNotification()
+        => NotificationService.ShowAutoPasteFailedNotification();
+}

@@ -102,3 +102,9 @@ public static class AutoStartService
         }
     }
 }
+
+public sealed class AutoStartServiceAdapter : IAutoStartService
+{
+    public bool IsEnabled(string appName) => AutoStartService.IsEnabled(appName);
+    public void Toggle(string appName) => AutoStartService.Toggle(appName);
+}

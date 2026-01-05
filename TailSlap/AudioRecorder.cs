@@ -85,6 +85,8 @@ public sealed class AudioRecorder : IDisposable
         public IntPtr reserved;
     }
 
+    public static int GetDeviceCount() => waveInGetNumDevs();
+
     private const int BUFFER_COUNT = 8;
     private const int BUFFER_SIZE = 6400; // 200ms buffers for smoother VAD averaging
     private const int VAD_BUFFER_MS = 100; // Check every 100ms

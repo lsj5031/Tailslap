@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Extensions.DependencyInjection;
+using TailSlap;
 
 internal static class Program
 {
@@ -70,7 +71,15 @@ internal static class Program
         services.AddSingleton<IClipboardService, ClipboardService>();
         services.AddSingleton<ITextRefinerFactory, TextRefinerFactory>();
         services.AddSingleton<IRemoteTranscriberFactory, RemoteTranscriberFactory>();
+        services.AddSingleton<IAudioRecorderFactory, AudioRecorderFactory>();
+        services.AddSingleton<IRealtimeTranscriberFactory, RealtimeTranscriberFactory>();
         services.AddSingleton<IHistoryService, HistoryService>();
+        services.AddSingleton<IRefinementController, RefinementController>();
+        services.AddSingleton<INotificationService, NotificationServiceAdapter>();
+        services.AddSingleton<ILoggerService, LoggerServiceAdapter>();
+        services.AddSingleton<IAutoStartService, AutoStartServiceAdapter>();
+        services.AddSingleton<ITranscriptionController, TranscriptionController>();
+        services.AddSingleton<IRealtimeTranscriptionController, RealtimeTranscriptionController>();
 
         services.AddTransient<MainForm>();
 
