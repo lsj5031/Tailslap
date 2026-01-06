@@ -71,7 +71,7 @@ public static class NotificationService
 
     public static void ShowAutoPasteFailedNotification()
     {
-        var result = MessageBox.Show(
+        var result = BrandedMessageBox.Show(
             "Auto-paste failed. Please paste manually (Ctrl+V).",
             "Paste Failed",
             MessageBoxButtons.OKCancel,
@@ -248,7 +248,7 @@ public static class NotificationService
                 _ => MessageBoxIcon.Information,
             };
 
-            MessageBox.Show(message, title, MessageBoxButtons.OK, icon);
+            BrandedMessageBox.Show(message, title, MessageBoxButtons.OK, icon);
         }
         catch { }
     }

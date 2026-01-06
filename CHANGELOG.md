@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-01-06
+
+### Fixed
+- **Clipboard Thread Safety**: Added UI thread marshaling for clipboard operations to prevent cross-thread exceptions
+- **Clipboard Service**: Enhanced SetText method with proper synchronization context handling and 5-second timeout
+- **Transcription History**: Added new TranscriptionHistoryForm.cs for viewing encrypted transcription history with decryption status
+
+### Added
+- **UI Thread Management**: ClipboardService.Initialize() method for proper UI synchronization context setup
+- **Enhanced Logging**: Added detailed thread context logging for clipboard operations debugging
+- **Transcription History UI**: Complete form implementation with real-time refresh, corruption detection, and clear functionality
+
 ## [2.0.1] - 2026-01-06
 
 ### Fixed

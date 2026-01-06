@@ -57,6 +57,11 @@ internal static class Program
         try
         {
             var mainForm = serviceProvider.GetRequiredService<MainForm>();
+
+            // Initialize clipboard service with UI context (must be after Form is created)
+            // The WindowsFormsSynchronizationContext is installed when the first Control is created
+            ClipboardService.Initialize();
+
             Application.Run(mainForm);
         }
         finally

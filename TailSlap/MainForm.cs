@@ -410,7 +410,7 @@ public class MainForm : Form
             $"  Streaming Enabled: {(_currentConfig.Transcriber.StreamResults ? "Yes" : "No")}"
         );
 
-        MessageBox.Show(
+        BrandedMessageBox.Show(
             results.ToString(),
             "TailSlap Diagnostics",
             MessageBoxButtons.OK,
@@ -766,6 +766,13 @@ public class MainForm : Form
             }
         }
         catch { }
+
+        try
+        {
+            return (Icon)Properties.Resources.IconIdle.Clone();
+        }
+        catch { }
+
         return SystemIcons.Application;
     }
 
@@ -805,6 +812,13 @@ public class MainForm : Form
             }
         }
         catch { }
+
+        try
+        {
+            return (Icon)Properties.Resources.IconIdle.Clone();
+        }
+        catch { }
+
         return SystemIcons.Application;
     }
 

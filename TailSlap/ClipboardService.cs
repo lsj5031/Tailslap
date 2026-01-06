@@ -17,9 +17,28 @@ public sealed class ClipboardService : IClipboardService
     > _windowHandleCache = new();
     private static DateTime _lastCacheClear = DateTime.Now;
 
+    // UI thread context for clipboard operations (clipboard requires STA thread)
+    private static SynchronizationContext? _uiContext;
+
     // Events for UI feedback
     public event Action? CaptureStarted;
     public event Action? CaptureEnded;
+
+    /// <summary>
+    /// Initialize the clipboard service with the UI synchronization context.
+    /// Must be called from the UI thread during application startup.
+    /// </summary>
+    public static void Initialize()
+    {
+        _uiContext = SynchronizationContext.Current;
+        try
+        {
+            Logger.Log(
+                $"ClipboardService.Initialize: uiContext={_uiContext?.GetType().Name ?? "null"}, ThreadId={Thread.CurrentThread.ManagedThreadId}"
+            );
+        }
+        catch { }
+    }
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
@@ -1085,6 +1104,66 @@ public sealed class ClipboardService : IClipboardService
     }
 
     public bool SetText(string text)
+    {
+        // If we're not on the UI thread and have a UI context, marshal the call
+        var currentContext = SynchronizationContext.Current;
+        bool hasUiContext = _uiContext != null;
+        bool needsMarshal = hasUiContext && currentContext != _uiContext;
+
+        try
+        {
+            Logger.Log(
+                $"SetText: hasUiContext={hasUiContext}, currentContext={currentContext?.GetType().Name ?? "null"}, needsMarshal={needsMarshal}, ThreadId={Thread.CurrentThread.ManagedThreadId}"
+            );
+        }
+        catch { }
+
+        if (needsMarshal)
+        {
+            try
+            {
+                Logger.Log("SetText: Marshaling to UI thread");
+            }
+            catch { }
+
+            bool result = false;
+            using var done = new ManualResetEventSlim(false);
+
+            _uiContext!.Post(
+                _ =>
+                {
+                    try
+                    {
+                        Logger.Log(
+                            $"SetText: Running on UI thread, ThreadId={Thread.CurrentThread.ManagedThreadId}"
+                        );
+                    }
+                    catch { }
+                    result = SetTextCore(text);
+                    done.Set();
+                },
+                null
+            );
+
+            // Wait for the UI thread to complete the operation (with timeout)
+            if (!done.Wait(5000))
+            {
+                try
+                {
+                    Logger.Log("SetText: Timed out waiting for UI thread");
+                }
+                catch { }
+                NotificationService.ShowError("Failed to set clipboard text. Please try again.");
+                return false;
+            }
+
+            return result;
+        }
+
+        return SetTextCore(text);
+    }
+
+    private static bool SetTextCore(string text)
     {
         int retries = 3;
         while (retries-- > 0)

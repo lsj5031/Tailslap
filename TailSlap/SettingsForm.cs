@@ -975,7 +975,7 @@ public sealed class SettingsForm : Form
 
     private void ResetToDefaults(object? sender, EventArgs e)
     {
-        var result = MessageBox.Show(
+        var result = BrandedMessageBox.Show(
             "This will reset all settings to their default values. Are you sure?",
             "Reset to Defaults",
             MessageBoxButtons.YesNo,

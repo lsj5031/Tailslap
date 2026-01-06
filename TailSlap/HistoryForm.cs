@@ -162,7 +162,7 @@ public sealed class HistoryForm : Form
             try
             {
                 if (
-                    MessageBox.Show(
+                    BrandedMessageBox.Show(
                         "Are you sure you want to delete all encrypted refinement history? This action is irreversible.",
                         "Confirm Delete",
                         MessageBoxButtons.YesNo,
