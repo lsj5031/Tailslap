@@ -40,6 +40,7 @@ public sealed class SettingsForm : Form
     private Button? _detectMicrophonesButton;
     private CheckBox? _transcriberEnableVAD;
     private TextBox? _transcriberSilenceThreshold;
+    private ComboBox? _transcriberVadSensitivity;
 
     public SettingsForm(
         AppConfig cfg,
@@ -390,13 +391,13 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 14,
+            RowCount = 15,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 14; i++)
+        for (int i = 0; i < 15; i++)
             transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox
@@ -566,6 +567,41 @@ public sealed class SettingsForm : Form
         );
         transcriber.Controls.Add(_transcriberSilenceThreshold, 1, 8);
 
+        _transcriberVadSensitivity = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Dock = DockStyle.Fill,
+        };
+        _transcriberVadSensitivity.Items.AddRange(
+            new object[]
+            {
+                "Low (Noisy Environment)",
+                "Medium (Default)",
+                "High (Quiet Environment)",
+            }
+        );
+        // Map current settings to index: Low=900/550 (hard to trigger), Medium=500/300, High=200/100 (easy to trigger)
+        // Detect current sensitivity based on activation threshold
+        if (_cfg.Transcriber.VadActivationThreshold >= 800)
+            _transcriberVadSensitivity.SelectedIndex = 0; // Low Sensitivity (Noisy)
+        else if (_cfg.Transcriber.VadActivationThreshold >= 400)
+            _transcriberVadSensitivity.SelectedIndex = 1; // Medium
+        else
+            _transcriberVadSensitivity.SelectedIndex = 2; // High Sensitivity (Quiet)
+
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "VAD Sensitivity",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            9
+        );
+        transcriber.Controls.Add(_transcriberVadSensitivity, 1, 9);
+
         _microphoneDropdown = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
@@ -588,9 +624,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            9
+            10
         );
-        transcriber.Controls.Add(_microphoneDropdown, 1, 9);
+        transcriber.Controls.Add(_microphoneDropdown, 1, 10);
 
         _detectMicrophonesButton = new Button
         {
@@ -599,7 +635,7 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _detectMicrophonesButton!.Click += DetectMicrophones;
-        transcriber.Controls.Add(_detectMicrophonesButton, 1, 10);
+        transcriber.Controls.Add(_detectMicrophonesButton, 1, 11);
 
         _transcriberHotkey = new TextBox
         {
@@ -616,9 +652,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            11
+            12
         );
-        transcriber.Controls.Add(_transcriberHotkey, 1, 11);
+        transcriber.Controls.Add(_transcriberHotkey, 1, 12);
 
         _captureTranscriberHotkeyButton = new Button
         {
@@ -627,7 +663,7 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _captureTranscriberHotkeyButton!.Click += CaptureTranscriberHotkey;
-        transcriber.Controls.Add(_captureTranscriberHotkeyButton, 1, 12);
+        transcriber.Controls.Add(_captureTranscriberHotkeyButton, 1, 13);
 
         _testTranscriberConnectionButton = new Button
         {
@@ -645,9 +681,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            13
+            14
         );
-        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 13);
+        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 14);
 
         return transcriber;
     }
@@ -721,6 +757,30 @@ public sealed class SettingsForm : Form
             && silenceMs <= 10000
         )
             _cfg.Transcriber.SilenceThresholdMs = silenceMs;
+
+        // Apply VAD Sensitivity
+        if (_transcriberVadSensitivity != null && _transcriberVadSensitivity.SelectedIndex >= 0)
+        {
+            switch (_transcriberVadSensitivity.SelectedIndex)
+            {
+                case 0: // Low Sensitivity (Noisy Environment) - Hard to trigger, wide hysteresis
+                    _cfg.Transcriber.VadActivationThreshold = 900;
+                    _cfg.Transcriber.VadSustainThreshold = 250; // Much lower sustain to not stop too early
+                    _cfg.Transcriber.VadSilenceThreshold = 120;
+                    break;
+                case 1: // Medium (Default) - Balanced
+                    _cfg.Transcriber.VadActivationThreshold = 600;
+                    _cfg.Transcriber.VadSustainThreshold = 180; // Lower sustain to catch softer speech
+                    _cfg.Transcriber.VadSilenceThreshold = 80;
+                    break;
+                case 2: // High Sensitivity (Quiet Environment) - Easy to trigger
+                    _cfg.Transcriber.VadActivationThreshold = 300;
+                    _cfg.Transcriber.VadSustainThreshold = 100;
+                    _cfg.Transcriber.VadSilenceThreshold = 40;
+                    break;
+            }
+        }
+
         _cfg.Transcriber.PreferredMicrophoneIndex =
             _microphoneDropdown!.SelectedIndex >= 0 ? _microphoneDropdown.SelectedIndex : -1;
     }

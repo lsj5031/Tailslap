@@ -234,7 +234,7 @@ public sealed class TranscriptionController : ITranscriptionController
     private async Task<RecordingStats> RecordAudioAsync(string audioFilePath, AppConfig cfg)
     {
         Logger.Log(
-            $"RecordAudioAsync started. PreferredMic: {cfg.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {cfg.Transcriber.EnableVAD}, VADThreshold: {cfg.Transcriber.SilenceThresholdMs}ms"
+            $"RecordAudioAsync started. PreferredMic: {cfg.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {cfg.Transcriber.EnableVAD}, VADThreshold: {cfg.Transcriber.SilenceThresholdMs}ms, VADSensitivity: Activ={cfg.Transcriber.VadActivationThreshold}, Sust={cfg.Transcriber.VadSustainThreshold}, Sil={cfg.Transcriber.VadSilenceThreshold}"
         );
 
         using var recorder = _audioRecorderFactory.Create(cfg.Transcriber.PreferredMicrophoneIndex);

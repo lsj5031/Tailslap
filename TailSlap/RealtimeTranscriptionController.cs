@@ -140,11 +140,17 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             _realtimeRecorder = _audioRecorderFactory.Create(
                 cfg.Transcriber.PreferredMicrophoneIndex
             );
+
+            Logger.Log(
+                $"StartAsync: VAD settings - Activ={cfg.Transcriber.VadActivationThreshold}, Sust={cfg.Transcriber.VadSustainThreshold}, Sil={cfg.Transcriber.VadSilenceThreshold}"
+            );
+
             _realtimeRecorder.SetVadThresholds(
                 cfg.Transcriber.VadSilenceThreshold,
                 cfg.Transcriber.VadActivationThreshold,
                 cfg.Transcriber.VadSustainThreshold
             );
+
             _realtimeRecorder.OnAudioChunk += HandleRealtimeAudioChunk;
             _realtimeRecorder.OnSilenceDetected += HandleRealtimeSilenceDetected;
 
