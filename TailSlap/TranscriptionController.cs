@@ -297,7 +297,20 @@ public sealed class TranscriptionController : ITranscriptionController
 
             _clip.SetText(transcriptionText);
 
-            if (!cfg.Transcriber.AutoPaste)
+            await Task.Delay(100);
+
+            if (cfg.Transcriber.AutoPaste)
+            {
+                Logger.Log("Streaming transcriber auto-paste attempt");
+                bool pasteSuccess = await _clip.PasteAsync();
+                if (!pasteSuccess)
+                {
+                    NotificationService.ShowInfo(
+                        "Transcription is ready. You can paste manually with Ctrl+V."
+                    );
+                }
+            }
+            else
             {
                 NotificationService.ShowTextReadyNotification();
             }
