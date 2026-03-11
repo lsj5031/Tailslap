@@ -46,6 +46,7 @@ public class MainForm : Form
     private readonly ITranscriptionController _transcriptionController;
     private readonly IRealtimeTranscriptionController _realtimeTranscriptionController;
     private readonly IAutoStartService _autoStartService;
+    private readonly IHttpClientFactory _httpClientFactory;
 
     private uint _currentMods;
     private uint _currentVk;
@@ -69,7 +70,8 @@ public class MainForm : Form
         IRefinementController refinementController,
         ITranscriptionController transcriptionController,
         IRealtimeTranscriptionController realtimeTranscriptionController,
-        IAutoStartService autoStartService
+        IAutoStartService autoStartService,
+        IHttpClientFactory httpClientFactory
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -90,6 +92,8 @@ public class MainForm : Form
             ?? throw new ArgumentNullException(nameof(realtimeTranscriptionController));
         _autoStartService =
             autoStartService ?? throw new ArgumentNullException(nameof(autoStartService));
+        _httpClientFactory =
+            httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
 
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         DoubleBuffered = true;
@@ -301,7 +305,8 @@ public class MainForm : Form
         results.AppendLine("LLM Endpoint:");
         try
         {
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            using var httpClient = _httpClientFactory.CreateClient(HttpClientNames.Default);
+            httpClient.Timeout = TimeSpan.FromSeconds(5);
             var llmUrl = _currentConfig.Llm.BaseUrl.TrimEnd('/');
             var response = await httpClient.GetAsync(llmUrl + "/models");
             results.AppendLine($"  URL: {llmUrl}");
@@ -320,7 +325,8 @@ public class MainForm : Form
         results.AppendLine("Transcription Endpoint:");
         try
         {
-            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            using var httpClient = _httpClientFactory.CreateClient(HttpClientNames.Default);
+            httpClient.Timeout = TimeSpan.FromSeconds(5);
             var transcriberUrl = _currentConfig.Transcriber.BaseUrl.TrimEnd('/');
             var response = await httpClient.GetAsync(transcriberUrl);
             results.AppendLine($"  URL: {transcriberUrl}");
