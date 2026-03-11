@@ -1,5 +1,5 @@
 using System;
-using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,7 +25,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private string _typedText = "";
     private int _lastTypedLength = 0;
     private readonly SemaphoreSlim _transcriptionLock = new(1, 1);
-    private readonly List<byte> _streamingBuffer = new();
+    private readonly MemoryStream _streamingBuffer = new();
     private const int SEND_BUFFER_SIZE = 16000;
     private IntPtr _streamingTargetWindow = IntPtr.Zero;
     private int _cleanupInProgress = 0;
@@ -218,10 +218,11 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 byte[]? remainingData = null;
                 lock (_streamingBuffer)
                 {
-                    if (_streamingBuffer.Count > 0)
+                    if (_streamingBuffer.Length > 0)
                     {
                         remainingData = _streamingBuffer.ToArray();
-                        _streamingBuffer.Clear();
+                        _streamingBuffer.SetLength(0);
+                        _streamingBuffer.Position = 0;
                     }
                 }
 
@@ -283,18 +284,16 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         {
             lock (_streamingBuffer)
             {
-                if (chunk.Array != null)
+                if (chunk.Array != null && chunk.Count > 0)
                 {
-                    for (int i = 0; i < chunk.Count; i++)
-                    {
-                        _streamingBuffer.Add(chunk.Array[chunk.Offset + i]);
-                    }
+                    _streamingBuffer.Write(chunk.Array, chunk.Offset, chunk.Count);
                 }
 
-                if (_streamingBuffer.Count >= SEND_BUFFER_SIZE)
+                if (_streamingBuffer.Length >= SEND_BUFFER_SIZE)
                 {
                     var dataToSend = _streamingBuffer.ToArray();
-                    _streamingBuffer.Clear();
+                    _streamingBuffer.SetLength(0);
+                    _streamingBuffer.Position = 0;
                     _ = _realtimeTranscriber.SendAudioChunkAsync(
                         new ArraySegment<byte>(dataToSend)
                     );
@@ -642,7 +641,8 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             lock (_streamingBuffer)
             {
-                _streamingBuffer.Clear();
+                _streamingBuffer.SetLength(0);
+                _streamingBuffer.Position = 0;
             }
             _streamingTargetWindow = IntPtr.Zero;
             _streamingStartTime = DateTime.MinValue;

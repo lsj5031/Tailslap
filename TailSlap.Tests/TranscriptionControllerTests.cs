@@ -11,6 +11,13 @@ public class TranscriptionControllerTests
         var mockConfig = new Mock<IConfigService>();
         var config = new AppConfig
         {
+            Llm = new LlmConfig
+            {
+                Enabled = true,
+                BaseUrl = "http://localhost:11434/v1",
+                Model = "llama2",
+                Temperature = 0.7,
+            },
             Transcriber = new TranscriberConfig
             {
                 Enabled = transcriberEnabled,
@@ -20,6 +27,8 @@ public class TranscriptionControllerTests
                 AutoPaste = true,
                 EnableVAD = true,
                 SilenceThresholdMs = 2000,
+                EnableAutoEnhance = true,
+                AutoEnhanceThresholdChars = 100,
             },
         };
         mockConfig.Setup(c => c.CreateValidatedCopy()).Returns(config);
@@ -35,6 +44,7 @@ public class TranscriptionControllerTests
         var mockTranscriberFactory = new Mock<IRemoteTranscriberFactory>();
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var mockRefinerFactory = new Mock<ITextRefinerFactory>();
 
         // Act
         var controller = new TranscriptionController(
@@ -42,7 +52,8 @@ public class TranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            mockRefinerFactory.Object
         );
 
         // Assert
@@ -59,6 +70,7 @@ public class TranscriptionControllerTests
         var mockTranscriberFactory = new Mock<IRemoteTranscriberFactory>();
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var mockRefinerFactory = new Mock<ITextRefinerFactory>();
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
@@ -67,7 +79,8 @@ public class TranscriptionControllerTests
                 mockClip.Object,
                 mockTranscriberFactory.Object,
                 mockAudioRecorderFactory.Object,
-                mockHistory.Object
+                mockHistory.Object,
+                mockRefinerFactory.Object
             )
         );
     }
@@ -81,13 +94,15 @@ public class TranscriptionControllerTests
         var mockTranscriberFactory = new Mock<IRemoteTranscriberFactory>();
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var mockRefinerFactory = new Mock<ITextRefinerFactory>();
 
         var controller = new TranscriptionController(
             mockConfig.Object,
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            mockRefinerFactory.Object
         );
 
         // Act
@@ -106,13 +121,15 @@ public class TranscriptionControllerTests
         var mockTranscriberFactory = new Mock<IRemoteTranscriberFactory>();
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var mockRefinerFactory = new Mock<ITextRefinerFactory>();
 
         var controller = new TranscriptionController(
             mockConfig.Object,
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            mockRefinerFactory.Object
         );
 
         // Act - should not throw

@@ -9,6 +9,7 @@ public sealed class RefinementController : IRefinementController
     private readonly IClipboardService _clip;
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly IHistoryService _history;
+    private readonly ClipboardHelper _clipboardHelper;
 
     private bool _isRefining;
     private CancellationTokenSource? _currentCts;
@@ -31,6 +32,7 @@ public sealed class RefinementController : IRefinementController
         _textRefinerFactory =
             textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
         _history = history ?? throw new ArgumentNullException(nameof(history));
+        _clipboardHelper = new ClipboardHelper(clip);
     }
 
     public async Task<bool> TriggerRefineAsync()
@@ -122,29 +124,7 @@ public sealed class RefinementController : IRefinementController
 
             ct.ThrowIfCancellationRequested();
 
-            bool setTextSuccess = _clip.SetText(refined);
-            if (!setTextSuccess)
-            {
-                return false;
-            }
-
-            await Task.Delay(100, ct);
-
-            if (cfg.AutoPaste)
-            {
-                Logger.Log("Auto-paste attempt");
-                bool pasteSuccess = await _clip.PasteAsync();
-                if (!pasteSuccess)
-                {
-                    NotificationService.ShowInfo(
-                        "Text is ready. You can paste manually with Ctrl+V."
-                    );
-                }
-            }
-            else
-            {
-                NotificationService.ShowTextReadyNotification();
-            }
+            var success = await _clipboardHelper.SetTextAndPasteAsync(refined, cfg.AutoPaste);
 
             try
             {
@@ -153,7 +133,7 @@ public sealed class RefinementController : IRefinementController
             catch { }
 
             Logger.Log("Refinement completed successfully.");
-            return true;
+            return success;
         }
         catch (OperationCanceledException)
         {

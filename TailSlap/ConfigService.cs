@@ -100,6 +100,10 @@ public sealed class TranscriberConfig
     public bool UseWebRtcVad { get; set; } = true; // Use WebRTC VAD instead of RMS thresholds
     public int WebRtcVadSensitivity { get; set; } = 2; // 0=Low, 1=Medium, 2=High, 3=VeryHigh
 
+    // Auto-enhancement for longer transcriptions
+    public bool EnableAutoEnhance { get; set; } = true; // Auto-enhance long transcriptions with LLM
+    public int AutoEnhanceThresholdChars { get; set; } = 100; // Minimum chars to trigger enhancement
+
     [JsonIgnore]
     public string? ApiKey
     {
@@ -195,6 +199,8 @@ public sealed class TranscriberConfig
             VadSilenceThreshold = VadSilenceThreshold,
             UseWebRtcVad = UseWebRtcVad,
             WebRtcVadSensitivity = WebRtcVadSensitivity,
+            EnableAutoEnhance = EnableAutoEnhance,
+            AutoEnhanceThresholdChars = AutoEnhanceThresholdChars,
         };
     }
 }
