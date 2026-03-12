@@ -34,7 +34,8 @@ public sealed class TranscriptionController : ITranscriptionController
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _clipboardHelper = clipboardHelper ?? throw new ArgumentNullException(nameof(clipboardHelper));
+        _clipboardHelper =
+            clipboardHelper ?? throw new ArgumentNullException(nameof(clipboardHelper));
         _remoteTranscriberFactory =
             remoteTranscriberFactory
             ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
@@ -70,7 +71,9 @@ public sealed class TranscriptionController : ITranscriptionController
         if (_isTranscribing)
         {
             Logger.Log("Transcription already in progress - waiting for completion");
-            NotificationService.ShowWarning("Transcription in progress. Please wait for completion.");
+            NotificationService.ShowWarning(
+                "Transcription in progress. Please wait for completion."
+            );
             return false;
         }
 
@@ -127,7 +130,10 @@ public sealed class TranscriptionController : ITranscriptionController
             NotificationService.ShowInfo("🎤 Recording... Press hotkey again to stop.");
 
             // Record audio from microphone
-            audioFilePath = Path.Combine(Path.GetTempPath(), $"tailslap_recording_{Guid.NewGuid():N}.wav");
+            audioFilePath = Path.Combine(
+                Path.GetTempPath(),
+                $"tailslap_recording_{Guid.NewGuid():N}.wav"
+            );
             Logger.Log($"Audio file path: {audioFilePath}");
 
             try
@@ -142,7 +148,9 @@ public sealed class TranscriptionController : ITranscriptionController
                         $"Audio recording stopped early due to silence detection at {recordingStats.DurationMs}ms"
                     );
                 }
-                Logger.Log($"Audio recorded to: {audioFilePath}, duration={recordingStats.DurationMs}ms");
+                Logger.Log(
+                    $"Audio recorded to: {audioFilePath}, duration={recordingStats.DurationMs}ms"
+                );
 
                 if (recordingStats.DurationMs < 500)
                 {
@@ -180,7 +188,8 @@ public sealed class TranscriptionController : ITranscriptionController
             var transcriber = _remoteTranscriberFactory.Create(cfg.Transcriber);
 
             var transcriptionText = cfg.Transcriber.StreamResults
-                ? await TranscribeStreamingAsync(transcriber, audioFilePath, cfg).ConfigureAwait(false)
+                ? await TranscribeStreamingAsync(transcriber, audioFilePath, cfg)
+                    .ConfigureAwait(false)
                 : await TranscribeNonStreamingAsync(transcriber, audioFilePath, cfg)
                     .ConfigureAwait(false);
 
@@ -191,12 +200,9 @@ public sealed class TranscriptionController : ITranscriptionController
             var finalText = await MaybeEnhanceTranscriptionAsync(transcriptionText, cfg)
                 .ConfigureAwait(false);
 
-            if (!string.Equals(finalText, transcriptionText, StringComparison.Ordinal))
-            {
-                await _clipboardHelper
-                    .SetTextAndPasteAsync(finalText, cfg.Transcriber.AutoPaste)
-                    .ConfigureAwait(false);
-            }
+            await _clipboardHelper
+                .SetTextAndPasteAsync(finalText, cfg.Transcriber.AutoPaste)
+                .ConfigureAwait(false);
 
             // Log transcription to history
             try
@@ -258,13 +264,15 @@ public sealed class TranscriptionController : ITranscriptionController
         try
         {
             Logger.Log("Starting recorder with CancellationToken");
-            var stats = await recorder.RecordAsync(
-                audioFilePath,
-                maxDurationMs: 0,
-                ct: _transcriberCts?.Token ?? CancellationToken.None,
-                enableVAD: cfg.Transcriber.EnableVAD,
-                silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
-            ).ConfigureAwait(false);
+            var stats = await recorder
+                .RecordAsync(
+                    audioFilePath,
+                    maxDurationMs: 0,
+                    ct: _transcriberCts?.Token ?? CancellationToken.None,
+                    enableVAD: cfg.Transcriber.EnableVAD,
+                    silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
+                )
+                .ConfigureAwait(false);
 
             Logger.Log(
                 $"Recording completed: {stats.DurationMs}ms, {stats.BytesRecorded} bytes, silence_detected={stats.SilenceDetected}"
@@ -278,7 +286,10 @@ public sealed class TranscriptionController : ITranscriptionController
         }
     }
 
-    private async Task<string> MaybeEnhanceTranscriptionAsync(string transcriptionText, AppConfig cfg)
+    private async Task<string> MaybeEnhanceTranscriptionAsync(
+        string transcriptionText,
+        AppConfig cfg
+    )
     {
         if (!cfg.Transcriber.EnableAutoEnhance)
             return transcriptionText;
@@ -350,10 +361,6 @@ public sealed class TranscriptionController : ITranscriptionController
                 return "";
             }
 
-            await _clipboardHelper
-                .SetTextAndPasteAsync(transcriptionText, cfg.Transcriber.AutoPaste)
-                .ConfigureAwait(false);
-
             return transcriptionText;
         }
         catch (TranscriberException ex)
@@ -391,10 +398,6 @@ public sealed class TranscriptionController : ITranscriptionController
                 NotificationService.ShowWarning("No speech detected.");
                 return "";
             }
-
-            await _clipboardHelper
-                .SetTextAndPasteAsync(transcriptionText ?? "", cfg.Transcriber.AutoPaste)
-                .ConfigureAwait(false);
 
             return transcriptionText ?? "";
         }

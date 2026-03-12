@@ -1128,7 +1128,8 @@ public sealed class SettingsForm : Form
             _transcriberAutoPaste!.Checked = defaultCfg.Transcriber.AutoPaste;
             _transcriberStreamResults!.Checked = defaultCfg.Transcriber.StreamResults;
             _transcriberEnableAutoEnhance!.Checked = defaultCfg.Transcriber.EnableAutoEnhance;
-            _transcriberAutoEnhanceThreshold!.Text = defaultCfg.Transcriber.AutoEnhanceThresholdChars.ToString();
+            _transcriberAutoEnhanceThreshold!.Text =
+                defaultCfg.Transcriber.AutoEnhanceThresholdChars.ToString();
             if (
                 defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0
                 && defaultCfg.Transcriber.PreferredMicrophoneIndex
