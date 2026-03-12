@@ -24,7 +24,8 @@ public sealed class RefinementController : IRefinementController
         IConfigService config,
         IClipboardService clip,
         ITextRefinerFactory textRefinerFactory,
-        IHistoryService history
+        IHistoryService history,
+        ClipboardHelper clipboardHelper
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -32,7 +33,7 @@ public sealed class RefinementController : IRefinementController
         _textRefinerFactory =
             textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
         _history = history ?? throw new ArgumentNullException(nameof(history));
-        _clipboardHelper = new ClipboardHelper(clip);
+        _clipboardHelper = clipboardHelper ?? throw new ArgumentNullException(nameof(clipboardHelper));
     }
 
     public async Task<bool> TriggerRefineAsync()

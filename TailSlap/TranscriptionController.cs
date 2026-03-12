@@ -8,7 +8,6 @@ namespace TailSlap;
 public sealed class TranscriptionController : ITranscriptionController
 {
     private readonly IConfigService _config;
-    private readonly IClipboardService _clip;
     private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
     private readonly IAudioRecorderFactory _audioRecorderFactory;
     private readonly IHistoryService _history;
@@ -27,7 +26,7 @@ public sealed class TranscriptionController : ITranscriptionController
 
     public TranscriptionController(
         IConfigService config,
-        IClipboardService clip,
+        ClipboardHelper clipboardHelper,
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
         IHistoryService history,
@@ -35,7 +34,7 @@ public sealed class TranscriptionController : ITranscriptionController
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _clip = clip ?? throw new ArgumentNullException(nameof(clip));
+        _clipboardHelper = clipboardHelper ?? throw new ArgumentNullException(nameof(clipboardHelper));
         _remoteTranscriberFactory =
             remoteTranscriberFactory
             ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
@@ -44,7 +43,6 @@ public sealed class TranscriptionController : ITranscriptionController
         _history = history ?? throw new ArgumentNullException(nameof(history));
         _textRefinerFactory =
             textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
-        _clipboardHelper = new ClipboardHelper(clip);
     }
 
     public async Task<bool> TriggerTranscribeAsync()
@@ -82,7 +80,7 @@ public sealed class TranscriptionController : ITranscriptionController
 
         try
         {
-            await TranscribeSelectionAsync(cfg);
+            await TranscribeSelectionAsync(cfg).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)
@@ -136,7 +134,7 @@ public sealed class TranscriptionController : ITranscriptionController
             {
                 Logger.Log("Starting audio recording from microphone");
                 _isRecording = true;
-                recordingStats = await RecordAudioAsync(audioFilePath, cfg);
+                recordingStats = await RecordAudioAsync(audioFilePath, cfg).ConfigureAwait(false);
 
                 if (recordingStats.SilenceDetected)
                 {
@@ -182,14 +180,23 @@ public sealed class TranscriptionController : ITranscriptionController
             var transcriber = _remoteTranscriberFactory.Create(cfg.Transcriber);
 
             var transcriptionText = cfg.Transcriber.StreamResults
-                ? await TranscribeStreamingAsync(transcriber, audioFilePath, cfg)
-                : await TranscribeNonStreamingAsync(transcriber, audioFilePath, cfg);
+                ? await TranscribeStreamingAsync(transcriber, audioFilePath, cfg).ConfigureAwait(false)
+                : await TranscribeNonStreamingAsync(transcriber, audioFilePath, cfg)
+                    .ConfigureAwait(false);
 
             if (string.IsNullOrEmpty(transcriptionText))
                 return;
 
             // Auto-enhance if enabled and transcription is long enough
-            var finalText = await MaybeEnhanceTranscriptionAsync(transcriptionText, cfg);
+            var finalText = await MaybeEnhanceTranscriptionAsync(transcriptionText, cfg)
+                .ConfigureAwait(false);
+
+            if (!string.Equals(finalText, transcriptionText, StringComparison.Ordinal))
+            {
+                await _clipboardHelper
+                    .SetTextAndPasteAsync(finalText, cfg.Transcriber.AutoPaste)
+                    .ConfigureAwait(false);
+            }
 
             // Log transcription to history
             try
@@ -257,7 +264,7 @@ public sealed class TranscriptionController : ITranscriptionController
                 ct: _transcriberCts?.Token ?? CancellationToken.None,
                 enableVAD: cfg.Transcriber.EnableVAD,
                 silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
-            );
+            ).ConfigureAwait(false);
 
             Logger.Log(
                 $"Recording completed: {stats.DurationMs}ms, {stats.BytesRecorded} bytes, silence_detected={stats.SilenceDetected}"
@@ -293,7 +300,9 @@ public sealed class TranscriptionController : ITranscriptionController
             NotificationService.ShowInfo("Enhancing transcription with LLM...");
 
             var refiner = _textRefinerFactory.Create(cfg.Llm);
-            var enhanced = await refiner.RefineAsync(transcriptionText, CancellationToken.None);
+            var enhanced = await refiner
+                .RefineAsync(transcriptionText, CancellationToken.None)
+                .ConfigureAwait(false);
 
             if (!string.IsNullOrWhiteSpace(enhanced) && enhanced.Length > 0)
             {
@@ -341,7 +350,9 @@ public sealed class TranscriptionController : ITranscriptionController
                 return "";
             }
 
-            await _clipboardHelper.SetTextAndPasteAsync(transcriptionText, cfg.Transcriber.AutoPaste);
+            await _clipboardHelper
+                .SetTextAndPasteAsync(transcriptionText, cfg.Transcriber.AutoPaste)
+                .ConfigureAwait(false);
 
             return transcriptionText;
         }
@@ -370,7 +381,9 @@ public sealed class TranscriptionController : ITranscriptionController
         try
         {
             Logger.Log($"Starting remote transcription of {audioFilePath}");
-            var transcriptionText = await transcriber.TranscribeAudioAsync(audioFilePath);
+            var transcriptionText = await transcriber
+                .TranscribeAudioAsync(audioFilePath)
+                .ConfigureAwait(false);
             Logger.Log($"Transcription completed: {transcriptionText?.Length ?? 0} characters");
 
             if (IsEmptyTranscription(transcriptionText))
@@ -379,10 +392,9 @@ public sealed class TranscriptionController : ITranscriptionController
                 return "";
             }
 
-            await _clipboardHelper.SetTextAndPasteAsync(
-                transcriptionText ?? "",
-                cfg.Transcriber.AutoPaste
-            );
+            await _clipboardHelper
+                .SetTextAndPasteAsync(transcriptionText ?? "", cfg.Transcriber.AutoPaste)
+                .ConfigureAwait(false);
 
             return transcriptionText ?? "";
         }

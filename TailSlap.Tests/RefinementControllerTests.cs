@@ -33,13 +33,15 @@ public class RefinementControllerTests
         var mockClip = new Mock<IClipboardService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         // Act
         var controller = new RefinementController(
             mockConfig.Object,
             mockClip.Object,
             mockRefinerFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            clipboardHelper
         );
 
         // Assert
@@ -54,6 +56,7 @@ public class RefinementControllerTests
         var mockClip = new Mock<IClipboardService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
@@ -61,7 +64,8 @@ public class RefinementControllerTests
                 null!,
                 mockClip.Object,
                 mockRefinerFactory.Object,
-                mockHistory.Object
+                mockHistory.Object,
+                clipboardHelper
             )
         );
     }
@@ -74,12 +78,14 @@ public class RefinementControllerTests
         var mockClip = new Mock<IClipboardService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         var controller = new RefinementController(
             mockConfig.Object,
             mockClip.Object,
             mockRefinerFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            clipboardHelper
         );
 
         // Act
@@ -100,12 +106,14 @@ public class RefinementControllerTests
             .ReturnsAsync(string.Empty);
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         var controller = new RefinementController(
             mockConfig.Object,
             mockClip.Object,
             mockRefinerFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            clipboardHelper
         );
 
         // Act
@@ -136,12 +144,14 @@ public class RefinementControllerTests
         mockRefinerFactory.Setup(f => f.Create(It.IsAny<LlmConfig>())).Returns(mockRefiner.Object);
 
         var mockHistory = new Mock<IHistoryService>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         var controller = new RefinementController(
             mockConfig.Object,
             mockClip.Object,
             mockRefinerFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            clipboardHelper
         );
 
         bool onStartedFired = false;
@@ -178,12 +188,14 @@ public class RefinementControllerTests
         mockRefinerFactory.Setup(f => f.Create(It.IsAny<LlmConfig>())).Returns(mockRefiner.Object);
 
         var mockHistory = new Mock<IHistoryService>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         var controller = new RefinementController(
             mockConfig.Object,
             mockClip.Object,
             mockRefinerFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            clipboardHelper
         );
 
         // Act
@@ -201,12 +213,14 @@ public class RefinementControllerTests
         var mockClip = new Mock<IClipboardService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
         var mockHistory = new Mock<IHistoryService>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         var controller = new RefinementController(
             mockConfig.Object,
             mockClip.Object,
             mockRefinerFactory.Object,
-            mockHistory.Object
+            mockHistory.Object,
+            clipboardHelper
         );
 
         // Act - should not throw even if not refining

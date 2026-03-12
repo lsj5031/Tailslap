@@ -45,11 +45,12 @@ public class TranscriptionControllerTests
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
         var mockHistory = new Mock<IHistoryService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         // Act
         var controller = new TranscriptionController(
             mockConfig.Object,
-            mockClip.Object,
+            clipboardHelper,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
             mockHistory.Object,
@@ -71,12 +72,13 @@ public class TranscriptionControllerTests
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
         var mockHistory = new Mock<IHistoryService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
             new TranscriptionController(
                 null!,
-                mockClip.Object,
+                clipboardHelper,
                 mockTranscriberFactory.Object,
                 mockAudioRecorderFactory.Object,
                 mockHistory.Object,
@@ -95,10 +97,11 @@ public class TranscriptionControllerTests
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
         var mockHistory = new Mock<IHistoryService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         var controller = new TranscriptionController(
             mockConfig.Object,
-            mockClip.Object,
+            clipboardHelper,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
             mockHistory.Object,
@@ -122,10 +125,11 @@ public class TranscriptionControllerTests
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
         var mockHistory = new Mock<IHistoryService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
+        var clipboardHelper = new ClipboardHelper(mockClip.Object);
 
         var controller = new TranscriptionController(
             mockConfig.Object,
-            mockClip.Object,
+            clipboardHelper,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
             mockHistory.Object,
