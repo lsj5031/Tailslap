@@ -222,6 +222,8 @@ public sealed class ConfigService : IConfigService, IDisposable
     };
 
     private FileSystemWatcher? _watcher;
+    private System.Threading.Timer? _debounceTimer;
+    private readonly object _debounceLock = new();
     public event Action? ConfigChanged;
     private DateTime _lastRead = DateTime.MinValue;
     private bool _disposed;
@@ -249,6 +251,20 @@ public sealed class ConfigService : IConfigService, IDisposable
             _watcher.Renamed += OnFileRenamed;
             _watcher.Deleted += OnFileChanged;
             _watcher.EnableRaisingEvents = true;
+
+            _debounceTimer = new System.Threading.Timer(
+                _ =>
+                {
+                    try
+                    {
+                        ConfigChanged?.Invoke();
+                    }
+                    catch { }
+                },
+                null,
+                Timeout.Infinite,
+                Timeout.Infinite
+            );
         }
         catch (Exception ex)
         {
@@ -267,7 +283,24 @@ public sealed class ConfigService : IConfigService, IDisposable
             return;
 
         _lastRead = DateTime.Now;
-        ConfigChanged?.Invoke();
+        try
+        {
+            var timer = _debounceTimer;
+            if (timer == null)
+            {
+                ConfigChanged?.Invoke();
+                return;
+            }
+
+            lock (_debounceLock)
+            {
+                timer.Change(500, Timeout.Infinite);
+            }
+        }
+        catch
+        {
+            ConfigChanged?.Invoke();
+        }
     }
 
     private void OnFileRenamed(object sender, RenamedEventArgs e)
@@ -464,6 +497,18 @@ public sealed class ConfigService : IConfigService, IDisposable
                 catch { }
 
                 _watcher = null;
+            }
+
+            if (_debounceTimer != null)
+            {
+                try
+                {
+                    _debounceTimer.Change(Timeout.Infinite, Timeout.Infinite);
+                    _debounceTimer.Dispose();
+                }
+                catch { }
+
+                _debounceTimer = null;
             }
         }
         catch { }

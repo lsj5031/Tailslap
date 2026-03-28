@@ -106,15 +106,16 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 .Content.ReadAsStringAsync(timeoutCts.Token)
                 .ConfigureAwait(false);
 
+            var responseFingerprint =
+                $"len={responseText.Length}, sha256={Hashing.Sha256Hex(responseText)}";
+
             if (response.StatusCode != System.Net.HttpStatusCode.OK)
             {
                 throw new TranscriberException(
                     TranscriberErrorType.HttpError,
                     $"Remote API returned error (HTTP {(int)response.StatusCode})",
                     statusCode: (int)response.StatusCode,
-                    responseText: responseText.Length > 500
-                        ? responseText.Substring(0, 500)
-                        : responseText
+                    responseText: responseFingerprint
                 );
             }
             try
@@ -128,9 +129,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                     TranscriberErrorType.ParseError,
                     "Remote API returned invalid JSON",
                     e,
-                    responseText: responseText.Length > 500
-                        ? responseText.Substring(0, 500)
-                        : responseText
+                    responseText: responseFingerprint
                 );
             }
         }
@@ -246,20 +245,18 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 var responseText = await response
                     .Content.ReadAsStringAsync(timeoutCts.Token)
                     .ConfigureAwait(false);
-                Logger.Log(
-                    $"Response body length: {responseText.Length}, content: {responseText.Substring(0, Math.Min(500, responseText.Length))}"
-                );
+                var responseFingerprint =
+                    $"len={responseText.Length}, sha256={Hashing.Sha256Hex(responseText)}";
+                Logger.Log($"Response body fingerprint: {responseFingerprint}");
 
                 if (response.StatusCode != System.Net.HttpStatusCode.OK)
                 {
-                    Logger.Log($"Error response: {responseText}");
+                    Logger.Log($"Error response fingerprint: {responseFingerprint}");
                     throw new TranscriberException(
                         TranscriberErrorType.HttpError,
                         $"Remote API returned error (HTTP {(int)response.StatusCode})",
                         statusCode: (int)response.StatusCode,
-                        responseText: responseText.Length > 500
-                            ? responseText.Substring(0, 500)
-                            : responseText
+                        responseText: responseFingerprint
                     );
                 }
 
