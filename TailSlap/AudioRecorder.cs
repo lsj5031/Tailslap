@@ -106,6 +106,7 @@ public sealed class AudioRecorder : IDisposable
     private bool _disposed;
     private int _preferredDeviceIndex = -1;
     private int _stopInvoked;
+    private bool _waveInResetIssued;
 
     public bool IsRecording => _isRecording;
 
@@ -195,6 +196,7 @@ public sealed class AudioRecorder : IDisposable
         if (_disposed)
             throw new ObjectDisposedException(nameof(AudioRecorder));
         _stopInvoked = 0;
+        _waveInResetIssued = false;
         Logger.Log(
             $"AudioRecorder.RecordAsync: outputPath={outputPath}, maxDurationMs={maxDurationMs}, enableVAD={enableVAD}, silenceThresholdMs={silenceThresholdMs}"
         );
@@ -297,6 +299,7 @@ public sealed class AudioRecorder : IDisposable
             int consecutiveSilenceMs = 0;
             bool hasDetectedSpeech = false;
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            bool stopRequestedBySilence = false;
 
             try
             {
@@ -337,9 +340,8 @@ public sealed class AudioRecorder : IDisposable
                             );
                             stats.SilenceDetected = true;
                             stopwatch.Stop();
-                            stats.DurationMs = (int)stopwatch.ElapsedMilliseconds;
-                            stats.BytesRecorded = (int)_recordedData.Length;
-                            return await FinishRecordingAsync(outputPath, stats);
+                            stopRequestedBySilence = true;
+                            break;
                         }
                     }
 
@@ -375,7 +377,21 @@ public sealed class AudioRecorder : IDisposable
                 }
             }
 
-            await WaitForAllBuffersReturnedAsync(1000).ConfigureAwait(false);
+            bool buffersReturned = await WaitForAllBuffersReturnedAsync(
+                    timeoutMs: stopRequestedBySilence ? 300 : 200,
+                    logOnTimeout: false
+                )
+                .ConfigureAwait(false);
+
+            if (!buffersReturned)
+            {
+                Logger.Log(
+                    "AudioRecorder: Buffers still queued after waveInStop; calling waveInReset for final drain"
+                );
+                ResetWaveIn("AudioRecorder");
+                await WaitForAllBuffersReturnedAsync(timeoutMs: 300, logOnTimeout: false)
+                    .ConfigureAwait(false);
+            }
 
             // Collect any final data from buffers
             ProcessBuffers(
@@ -426,7 +442,7 @@ public sealed class AudioRecorder : IDisposable
         return true;
     }
 
-    private async Task WaitForAllBuffersReturnedAsync(int timeoutMs)
+    private async Task<bool> WaitForAllBuffersReturnedAsync(int timeoutMs, bool logOnTimeout = true)
     {
         const int pollIntervalMs = 20;
         int waitedMs = 0;
@@ -437,12 +453,15 @@ public sealed class AudioRecorder : IDisposable
             waitedMs += pollIntervalMs;
         }
 
-        if (!IsAllBuffersReturned())
+        bool allReturned = IsAllBuffersReturned();
+        if (!allReturned && logOnTimeout)
         {
             Logger.Log(
                 $"AudioRecorder: Timed out waiting for buffers to return after {timeoutMs}ms"
             );
         }
+
+        return allReturned;
     }
 
     private void ProcessBuffers(
@@ -632,10 +651,11 @@ public sealed class AudioRecorder : IDisposable
 
         if (_hWaveIn != null && !_hWaveIn.IsInvalid)
         {
-            Logger.Log("AudioRecorder.Stop: Calling waveInReset");
-            int resetResult = waveInReset(_hWaveIn); // Stop and reset position
-            if (resetResult != 0)
-                Logger.Log($"AudioRecorder.Stop: waveInReset returned error {resetResult}");
+            if (!_waveInResetIssued)
+            {
+                Logger.Log("AudioRecorder.Stop: Calling waveInReset");
+                ResetWaveIn("AudioRecorder.Stop");
+            }
 
             // Let WinMM return ownership of any in-flight buffers before unpreparing them.
             var waitStart = Environment.TickCount64;
@@ -697,6 +717,24 @@ public sealed class AudioRecorder : IDisposable
 
     [DllImport("winmm.dll")]
     private static extern int waveInReset(SafeWaveInHandle hwi);
+
+    private int ResetWaveIn(string caller)
+    {
+        if (_hWaveIn == null || _hWaveIn.IsInvalid)
+        {
+            return 0;
+        }
+
+        int resetResult = waveInReset(_hWaveIn);
+        _waveInResetIssued = true;
+
+        if (resetResult != 0)
+        {
+            Logger.Log($"{caller}: waveInReset returned error {resetResult}");
+        }
+
+        return resetResult;
+    }
 
     private static void SaveAsWav(
         string filePath,
@@ -765,6 +803,7 @@ public sealed class AudioRecorder : IDisposable
         _externalSpeechDetected = false;
         _lastExternalSpeechTime = DateTime.MinValue;
         _stopInvoked = 0;
+        _waveInResetIssued = false;
 
         int numDevices = waveInGetNumDevs();
         Logger.Log(
