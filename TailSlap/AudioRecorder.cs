@@ -23,6 +23,8 @@ public sealed class AudioRecorder : IDisposable
     private const int MM_WIM_CLOSE = 0x3BF;
     private const int MM_WIM_DATA = 0x3C0;
     private const uint WHDR_DONE = 0x00000001; // Buffer is done
+    private const uint WHDR_PREPARED = 0x00000002;
+    private const uint WHDR_INQUEUE = 0x00000010;
 
     // WebRTC VAD for smarter speech detection
     private WebRtcVadService? _webRtcVad;
@@ -103,6 +105,7 @@ public sealed class AudioRecorder : IDisposable
     private bool _isRecording;
     private bool _disposed;
     private int _preferredDeviceIndex = -1;
+    private int _stopInvoked;
 
     public bool IsRecording => _isRecording;
 
@@ -191,6 +194,7 @@ public sealed class AudioRecorder : IDisposable
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(AudioRecorder));
+        _stopInvoked = 0;
         Logger.Log(
             $"AudioRecorder.RecordAsync: outputPath={outputPath}, maxDurationMs={maxDurationMs}, enableVAD={enableVAD}, silenceThresholdMs={silenceThresholdMs}"
         );
@@ -364,18 +368,14 @@ public sealed class AudioRecorder : IDisposable
             if (_hWaveIn != null && !_hWaveIn.IsInvalid)
             {
                 Logger.Log("AudioRecorder: Calling waveInStop");
-                waveInStop(_hWaveIn);
+                int stopResult = waveInStop(_hWaveIn);
+                if (stopResult != 0)
+                {
+                    Logger.Log($"AudioRecorder: waveInStop returned error {stopResult}");
+                }
             }
 
-            // Wait for buffers to return. We know we have BUFFER_COUNT buffers.
-            // In a robust implementation, we might wait on an event, but a short delay loop is often sufficient for simple WinMM wrappers.
-            // We'll give it up to 500ms to return all buffers.
-            for (int i = 0; i < 10; i++)
-            {
-                if (IsAllBuffersReturned())
-                    break;
-                await Task.Delay(50);
-            }
+            await WaitForAllBuffersReturnedAsync(1000).ConfigureAwait(false);
 
             // Collect any final data from buffers
             ProcessBuffers(
@@ -420,11 +420,29 @@ public sealed class AudioRecorder : IDisposable
     {
         for (int i = 0; i < BUFFER_COUNT; i++)
         {
-            // If the buffer is still in the queue (WHDR_INQUEUE = 0x00000010), it hasn't returned
-            if ((_waveHeaders[i].dwFlags & 0x00000010) != 0)
+            if ((_waveHeaders[i].dwFlags & WHDR_INQUEUE) != 0)
                 return false;
         }
         return true;
+    }
+
+    private async Task WaitForAllBuffersReturnedAsync(int timeoutMs)
+    {
+        const int pollIntervalMs = 20;
+        int waitedMs = 0;
+
+        while (!IsAllBuffersReturned() && waitedMs < timeoutMs)
+        {
+            await Task.Delay(pollIntervalMs).ConfigureAwait(false);
+            waitedMs += pollIntervalMs;
+        }
+
+        if (!IsAllBuffersReturned())
+        {
+            Logger.Log(
+                $"AudioRecorder: Timed out waiting for buffers to return after {timeoutMs}ms"
+            );
+        }
     }
 
     private void ProcessBuffers(
@@ -604,6 +622,11 @@ public sealed class AudioRecorder : IDisposable
 
     private void Stop()
     {
+        if (Interlocked.Exchange(ref _stopInvoked, 1) == 1)
+        {
+            return;
+        }
+
         Logger.Log("AudioRecorder.Stop: Starting cleanup");
         _isRecording = false;
 
@@ -614,10 +637,17 @@ public sealed class AudioRecorder : IDisposable
             if (resetResult != 0)
                 Logger.Log($"AudioRecorder.Stop: waveInReset returned error {resetResult}");
 
+            // Let WinMM return ownership of any in-flight buffers before unpreparing them.
+            var waitStart = Environment.TickCount64;
+            while (!IsAllBuffersReturned() && Environment.TickCount64 - waitStart < 1000)
+            {
+                Thread.Sleep(20);
+            }
+
             // Unprepare headers BEFORE closing the device (requires valid handle)
             for (int i = 0; i < BUFFER_COUNT; i++)
             {
-                if (_bufferHandles[i].IsAllocated)
+                if (_bufferHandles[i].IsAllocated && (_waveHeaders[i].dwFlags & WHDR_PREPARED) != 0)
                 {
                     try
                     {
@@ -734,6 +764,7 @@ public sealed class AudioRecorder : IDisposable
         _lastSpeechTime = DateTime.MinValue;
         _externalSpeechDetected = false;
         _lastExternalSpeechTime = DateTime.MinValue;
+        _stopInvoked = 0;
 
         int numDevices = waveInGetNumDevs();
         Logger.Log(
@@ -1056,7 +1087,9 @@ public sealed class AudioRecorder : IDisposable
         if (buffersProcessedThisCall == 0 && _totalBuffersProcessed > 0)
         {
             var gap = (now - _lastBufferTime).TotalMilliseconds;
-            if (gap > 100) // Log if gap > 100ms
+            int expectedBufferCadenceMs = BUFFER_SIZE / BYTES_PER_MS;
+            int warningThresholdMs = Math.Max(500, expectedBufferCadenceMs * 2);
+            if (gap > warningThresholdMs)
             {
                 Logger.Log($"VAD[WARN]: No buffers ready! Gap since last buffer: {gap:F0}ms");
             }

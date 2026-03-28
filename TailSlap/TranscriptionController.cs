@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -8,10 +9,11 @@ namespace TailSlap;
 public sealed class TranscriptionController : ITranscriptionController
 {
     private readonly IConfigService _config;
-    private readonly IClipboardService _clip;
     private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
     private readonly IAudioRecorderFactory _audioRecorderFactory;
     private readonly IHistoryService _history;
+    private readonly ITextRefinerFactory _textRefinerFactory;
+    private readonly ClipboardHelper _clipboardHelper;
 
     private bool _isTranscribing;
     private bool _isRecording;
@@ -25,20 +27,24 @@ public sealed class TranscriptionController : ITranscriptionController
 
     public TranscriptionController(
         IConfigService config,
-        IClipboardService clip,
+        ClipboardHelper clipboardHelper,
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
-        IHistoryService history
+        IHistoryService history,
+        ITextRefinerFactory textRefinerFactory
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _clip = clip ?? throw new ArgumentNullException(nameof(clip));
+        _clipboardHelper =
+            clipboardHelper ?? throw new ArgumentNullException(nameof(clipboardHelper));
         _remoteTranscriberFactory =
             remoteTranscriberFactory
             ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
         _audioRecorderFactory =
             audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
         _history = history ?? throw new ArgumentNullException(nameof(history));
+        _textRefinerFactory =
+            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
     }
 
     public async Task<bool> TriggerTranscribeAsync()
@@ -62,7 +68,7 @@ public sealed class TranscriptionController : ITranscriptionController
             return false;
         }
 
-        // If transcription is already in progress but recording is done, wait
+        // If transcription is already in progress, wait
         if (_isTranscribing)
         {
             Logger.Log("Transcription already in progress - waiting for completion");
@@ -78,7 +84,7 @@ public sealed class TranscriptionController : ITranscriptionController
 
         try
         {
-            await TranscribeSelectionAsync(cfg);
+            await TranscribeSelectionAsync(cfg).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)
@@ -135,7 +141,7 @@ public sealed class TranscriptionController : ITranscriptionController
             {
                 Logger.Log("Starting audio recording from microphone");
                 _isRecording = true;
-                recordingStats = await RecordAudioAsync(audioFilePath, cfg);
+                recordingStats = await RecordAudioAsync(audioFilePath, cfg).ConfigureAwait(false);
 
                 if (recordingStats.SilenceDetected)
                 {
@@ -181,31 +187,30 @@ public sealed class TranscriptionController : ITranscriptionController
             // Transcribe audio using remote API
             Logger.Log($"Creating RemoteTranscriber with BaseUrl: {cfg.Transcriber.BaseUrl}");
             var transcriber = _remoteTranscriberFactory.Create(cfg.Transcriber);
-            string transcriptionText = "";
 
-            // Use streaming if requested for faster feedback
-            if (cfg.Transcriber.StreamResults)
-            {
-                transcriptionText = await TranscribeStreamingAsync(transcriber, audioFilePath, cfg);
-            }
-            else
-            {
-                transcriptionText = await TranscribeNonStreamingAsync(
-                    transcriber,
-                    audioFilePath,
-                    cfg
-                );
-            }
+            var transcriptionText = cfg.Transcriber.StreamResults
+                ? await TranscribeStreamingAsync(transcriber, audioFilePath, cfg)
+                    .ConfigureAwait(false)
+                : await TranscribeNonStreamingAsync(transcriber, audioFilePath, cfg)
+                    .ConfigureAwait(false);
 
             if (string.IsNullOrEmpty(transcriptionText))
                 return;
 
+            // Auto-enhance if enabled and transcription is long enough
+            var finalText = await MaybeEnhanceTranscriptionAsync(transcriptionText, cfg)
+                .ConfigureAwait(false);
+
+            await _clipboardHelper
+                .SetTextAndPasteAsync(finalText, cfg.Transcriber.AutoPaste)
+                .ConfigureAwait(false);
+
             // Log transcription to history
             try
             {
-                _history.AppendTranscription(transcriptionText, recordingStats?.DurationMs ?? 0);
+                _history.AppendTranscription(finalText, recordingStats?.DurationMs ?? 0);
                 Logger.Log(
-                    $"Transcription logged: {transcriptionText.Length} characters, duration={recordingStats?.DurationMs}ms"
+                    $"Transcription logged: {finalText.Length} characters, duration={recordingStats?.DurationMs}ms"
                 );
             }
             catch (Exception ex)
@@ -260,13 +265,15 @@ public sealed class TranscriptionController : ITranscriptionController
         try
         {
             Logger.Log("Starting recorder with CancellationToken");
-            var stats = await recorder.RecordAsync(
-                audioFilePath,
-                maxDurationMs: 0,
-                ct: _transcriberCts?.Token ?? CancellationToken.None,
-                enableVAD: cfg.Transcriber.EnableVAD,
-                silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
-            );
+            var stats = await recorder
+                .RecordAsync(
+                    audioFilePath,
+                    maxDurationMs: 0,
+                    ct: _transcriberCts?.Token ?? CancellationToken.None,
+                    enableVAD: cfg.Transcriber.EnableVAD,
+                    silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
+                )
+                .ConfigureAwait(false);
 
             Logger.Log(
                 $"Recording completed: {stats.DurationMs}ms, {stats.BytesRecorded} bytes, silence_detected={stats.SilenceDetected}"
@@ -278,6 +285,146 @@ public sealed class TranscriptionController : ITranscriptionController
             Logger.Log("Recording cancelled");
             throw;
         }
+    }
+
+    private async Task<string> MaybeEnhanceTranscriptionAsync(
+        string transcriptionText,
+        AppConfig cfg
+    )
+    {
+        if (!cfg.Transcriber.EnableAutoEnhance)
+            return transcriptionText;
+
+        if (transcriptionText.Length < cfg.Transcriber.AutoEnhanceThresholdChars)
+            return transcriptionText;
+
+        if (!cfg.Llm.Enabled)
+        {
+            Logger.Log("Auto-enhancement skipped: LLM is disabled");
+            return transcriptionText;
+        }
+
+        try
+        {
+            Logger.Log(
+                $"Auto-enhancing transcription ({transcriptionText.Length} chars >= {cfg.Transcriber.AutoEnhanceThresholdChars} threshold)"
+            );
+            NotificationService.ShowInfo("Enhancing transcription with LLM...");
+
+            var enhancementConfig = cfg.Llm.Clone();
+            enhancementConfig.Temperature = Math.Min(enhancementConfig.Temperature, 0.2);
+            var refiner = _textRefinerFactory.Create(enhancementConfig);
+            var enhanced = await refiner
+                .RefineAsync(transcriptionText, _transcriberCts?.Token ?? CancellationToken.None)
+                .ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(enhanced) && enhanced.Length > 0)
+            {
+                if (!ShouldUseEnhancedText(transcriptionText, enhanced, out var rejectionReason))
+                {
+                    Logger.Log(
+                        $"Auto-enhancement rejected: {rejectionReason}. Keeping original transcription."
+                    );
+                    NotificationService.ShowWarning(
+                        "Enhancement looked unreliable. Using the original transcription."
+                    );
+                    return transcriptionText;
+                }
+
+                Logger.Log(
+                    $"Transcription enhanced: {transcriptionText.Length} -> {enhanced.Length} chars"
+                );
+                NotificationService.ShowSuccess("Transcription enhanced!");
+                return enhanced;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Auto-enhancement failed: {ex.Message}. Using original transcription.");
+            NotificationService.ShowWarning("Enhancement failed. Using original transcription.");
+        }
+
+        return transcriptionText;
+    }
+
+    internal static bool ShouldUseEnhancedText(
+        string original,
+        string enhanced,
+        out string rejectionReason
+    )
+    {
+        var originalTrimmed = original?.Trim() ?? string.Empty;
+        var enhancedTrimmed = enhanced?.Trim() ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(enhancedTrimmed))
+        {
+            rejectionReason = "empty enhancement";
+            return false;
+        }
+
+        if (string.Equals(originalTrimmed, enhancedTrimmed, StringComparison.Ordinal))
+        {
+            rejectionReason = string.Empty;
+            return true;
+        }
+
+        if (
+            originalTrimmed.Length >= 80
+            && enhancedTrimmed.Length < Math.Max(20, originalTrimmed.Length / 2)
+        )
+        {
+            rejectionReason =
+                $"enhancement shrank too far ({originalTrimmed.Length} -> {enhancedTrimmed.Length})";
+            return false;
+        }
+
+        var originalWords = SplitWords(originalTrimmed);
+        var enhancedWords = SplitWords(enhancedTrimmed);
+        if (originalWords.Length >= 6 && enhancedWords.Length > 0)
+        {
+            int sharedWords = enhancedWords.Count(word => originalWords.Contains(word));
+            double overlap = sharedWords / (double)enhancedWords.Length;
+            if (overlap < 0.35)
+            {
+                rejectionReason = $"lexical overlap too low ({overlap:F2})";
+                return false;
+            }
+        }
+
+        rejectionReason = string.Empty;
+        return true;
+    }
+
+    private static string[] SplitWords(string text)
+    {
+        return text.ToLowerInvariant()
+            .Split(
+                new[]
+                {
+                    ' ',
+                    '\t',
+                    '\r',
+                    '\n',
+                    '.',
+                    ',',
+                    ';',
+                    ':',
+                    '!',
+                    '?',
+                    '(',
+                    ')',
+                    '[',
+                    ']',
+                    '{',
+                    '}',
+                    '"',
+                    '\'',
+                    '-',
+                    '_',
+                    '/',
+                },
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+            );
     }
 
     private async Task<string> TranscribeStreamingAsync(
@@ -308,26 +455,6 @@ public sealed class TranscriptionController : ITranscriptionController
                 return "";
             }
 
-            _clip.SetText(transcriptionText);
-
-            await Task.Delay(100);
-
-            if (cfg.Transcriber.AutoPaste)
-            {
-                Logger.Log("Streaming transcriber auto-paste attempt");
-                bool pasteSuccess = await _clip.PasteAsync();
-                if (!pasteSuccess)
-                {
-                    NotificationService.ShowInfo(
-                        "Transcription is ready. You can paste manually with Ctrl+V."
-                    );
-                }
-            }
-            else
-            {
-                NotificationService.ShowTextReadyNotification();
-            }
-
             return transcriptionText;
         }
         catch (TranscriberException ex)
@@ -355,37 +482,15 @@ public sealed class TranscriptionController : ITranscriptionController
         try
         {
             Logger.Log($"Starting remote transcription of {audioFilePath}");
-            var transcriptionText = await transcriber.TranscribeAudioAsync(audioFilePath);
+            var transcriptionText = await transcriber
+                .TranscribeAudioAsync(audioFilePath)
+                .ConfigureAwait(false);
             Logger.Log($"Transcription completed: {transcriptionText?.Length ?? 0} characters");
 
             if (IsEmptyTranscription(transcriptionText))
             {
                 NotificationService.ShowWarning("No speech detected.");
                 return "";
-            }
-
-            bool setTextSuccess = _clip.SetText(transcriptionText ?? "");
-            if (!setTextSuccess)
-            {
-                return "";
-            }
-
-            await Task.Delay(100);
-
-            if (cfg.Transcriber.AutoPaste)
-            {
-                Logger.Log("Transcriber auto-paste attempt");
-                bool pasteSuccess = await _clip.PasteAsync();
-                if (!pasteSuccess)
-                {
-                    NotificationService.ShowInfo(
-                        "Transcription is ready. You can paste manually with Ctrl+V."
-                    );
-                }
-            }
-            else
-            {
-                NotificationService.ShowTextReadyNotification();
             }
 
             return transcriptionText ?? "";

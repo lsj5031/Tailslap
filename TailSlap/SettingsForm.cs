@@ -41,6 +41,8 @@ public sealed class SettingsForm : Form
     private CheckBox? _transcriberEnableVAD;
     private TextBox? _transcriberSilenceThreshold;
     private ComboBox? _transcriberVadSensitivity;
+    private CheckBox? _transcriberEnableAutoEnhance;
+    private TextBox? _transcriberAutoEnhanceThreshold;
 
     public SettingsForm(
         AppConfig cfg,
@@ -382,6 +384,7 @@ public sealed class SettingsForm : Form
         _transcriberBaseUrl!.TextChanged += ValidateTranscriberInput;
         _transcriberModel!.TextChanged += ValidateTranscriberInput;
         _transcriberTimeout!.TextChanged += ValidateTranscriberInput;
+        _transcriberAutoEnhanceThreshold!.TextChanged += ValidateTranscriberInput;
     }
 
     private TableLayoutPanel CreateTranscriberTab()
@@ -391,13 +394,13 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 15,
+            RowCount = 17,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 15; i++)
+        for (int i = 0; i < 17; i++)
             transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox
@@ -637,6 +640,44 @@ public sealed class SettingsForm : Form
         _detectMicrophonesButton!.Click += DetectMicrophones;
         transcriber.Controls.Add(_detectMicrophonesButton, 1, 11);
 
+        _transcriberEnableAutoEnhance = new CheckBox
+        {
+            Text = "Auto-enhance long transcriptions with LLM",
+            Checked = _cfg.Transcriber.EnableAutoEnhance,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Auto-Enhance",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            12
+        );
+        transcriber.Controls.Add(_transcriberEnableAutoEnhance, 1, 12);
+
+        _transcriberAutoEnhanceThreshold = new TextBox
+        {
+            Text = _cfg.Transcriber.AutoEnhanceThresholdChars.ToString(),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Enhance Threshold (chars)",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            13
+        );
+        transcriber.Controls.Add(_transcriberAutoEnhanceThreshold, 1, 13);
+
         _transcriberHotkey = new TextBox
         {
             ReadOnly = true,
@@ -652,9 +693,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            12
+            14
         );
-        transcriber.Controls.Add(_transcriberHotkey, 1, 12);
+        transcriber.Controls.Add(_transcriberHotkey, 1, 14);
 
         _captureTranscriberHotkeyButton = new Button
         {
@@ -663,7 +704,7 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _captureTranscriberHotkeyButton!.Click += CaptureTranscriberHotkey;
-        transcriber.Controls.Add(_captureTranscriberHotkeyButton, 1, 13);
+        transcriber.Controls.Add(_captureTranscriberHotkeyButton, 1, 15);
 
         _testTranscriberConnectionButton = new Button
         {
@@ -681,9 +722,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            14
+            16
         );
-        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 14);
+        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 16);
 
         return transcriber;
     }
@@ -783,6 +824,15 @@ public sealed class SettingsForm : Form
 
         _cfg.Transcriber.PreferredMicrophoneIndex =
             _microphoneDropdown!.SelectedIndex >= 0 ? _microphoneDropdown.SelectedIndex : -1;
+
+        // Apply auto-enhance settings
+        _cfg.Transcriber.EnableAutoEnhance = _transcriberEnableAutoEnhance!.Checked;
+        if (
+            int.TryParse(_transcriberAutoEnhanceThreshold!.Text.Trim(), out var thresholdChars)
+            && thresholdChars >= 10
+            && thresholdChars <= 10000
+        )
+            _cfg.Transcriber.AutoEnhanceThresholdChars = thresholdChars;
     }
 
     private void ValidateInput(object? sender, EventArgs e)
@@ -862,6 +912,19 @@ public sealed class SettingsForm : Form
         if (string.IsNullOrWhiteSpace(_transcriberModel!.Text))
         {
             errors.Add("Model name is required for transcriber");
+        }
+
+        // Validate auto-enhance threshold
+        if (!string.IsNullOrWhiteSpace(_transcriberAutoEnhanceThreshold!.Text))
+        {
+            if (
+                !int.TryParse(_transcriberAutoEnhanceThreshold.Text, out var threshold)
+                || threshold < 10
+                || threshold > 10000
+            )
+            {
+                errors.Add("Auto-enhance threshold must be between 10 and 10000 characters");
+            }
         }
 
         _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
@@ -1064,6 +1127,9 @@ public sealed class SettingsForm : Form
             _transcriberApiKey!.Text = "";
             _transcriberAutoPaste!.Checked = defaultCfg.Transcriber.AutoPaste;
             _transcriberStreamResults!.Checked = defaultCfg.Transcriber.StreamResults;
+            _transcriberEnableAutoEnhance!.Checked = defaultCfg.Transcriber.EnableAutoEnhance;
+            _transcriberAutoEnhanceThreshold!.Text =
+                defaultCfg.Transcriber.AutoEnhanceThresholdChars.ToString();
             if (
                 defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0
                 && defaultCfg.Transcriber.PreferredMicrophoneIndex

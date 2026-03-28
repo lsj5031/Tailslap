@@ -83,6 +83,7 @@ internal static class Program
     {
         services.AddSingleton<IConfigService, ConfigService>();
         services.AddSingleton<IClipboardService, ClipboardService>();
+        services.AddSingleton<ClipboardHelper>();
         services.AddSingleton<ITextRefinerFactory, TextRefinerFactory>();
         services.AddSingleton<IRemoteTranscriberFactory, RemoteTranscriberFactory>();
         services.AddSingleton<IAudioRecorderFactory, AudioRecorderFactory>();
