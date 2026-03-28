@@ -142,4 +142,38 @@ public class TranscriptionControllerTests
         // Assert - no exception means success
         Assert.False(controller.IsRecording);
     }
+
+    [Fact]
+    public void ShouldUseEnhancedText_RejectsAggressiveShrink()
+    {
+        var original =
+            "Yes, you should rethink and revise your plan carefully because this flow is still fragile and needs more review.";
+
+        var accepted = TranscriptionController.ShouldUseEnhancedText(
+            original,
+            "OK.",
+            out var rejectionReason
+        );
+
+        Assert.False(accepted);
+        Assert.Contains("shrank too far", rejectionReason);
+    }
+
+    [Fact]
+    public void ShouldUseEnhancedText_AcceptsConservativeRewrite()
+    {
+        var original =
+            "Yes, you should rethink and revise your plan carefully because this flow is still fragile and needs more review.";
+        var enhanced =
+            "Yes, you should rethink and revise your plan carefully because the flow is still fragile and needs more review.";
+
+        var accepted = TranscriptionController.ShouldUseEnhancedText(
+            original,
+            enhanced,
+            out var rejectionReason
+        );
+
+        Assert.True(accepted);
+        Assert.Equal(string.Empty, rejectionReason);
+    }
 }

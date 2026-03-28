@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using TailSlap;
 
 public sealed class RealtimeTranscriber : IDisposable
 {
@@ -293,7 +294,7 @@ public sealed class RealtimeTranscriber : IDisposable
                                 else
                                 {
                                     Logger.Log(
-                                        $"RealtimeTranscriber: Received text (final={msg.Final}): {msg.Text?.Substring(0, Math.Min(50, msg.Text?.Length ?? 0))}"
+                                        $"RealtimeTranscriber: Received text (final={msg.Final}, len={msg.Text?.Length ?? 0}, sha256={Hashing.Sha256Hex(msg.Text ?? string.Empty)})"
                                     );
                                     OnTranscription?.Invoke(msg.Text ?? "", msg.Final);
                                 }

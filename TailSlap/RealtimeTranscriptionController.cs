@@ -31,6 +31,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private int _cleanupInProgress = 0;
     private DateTime _streamingStartTime = DateTime.MinValue;
     private const int NO_SPEECH_TIMEOUT_SECONDS = 30;
+    private CancellationTokenSource? _textProcessingCts;
+    private volatile bool _allowRealtimeTextUpdates;
+    private string _lastReceivedRealtimeText = "";
 
     public StreamingState State
     {
@@ -111,18 +114,27 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         }
         else
         {
-            await StartAsync();
+            await StartAsync(cfg);
         }
     }
 
     public async Task StartAsync()
     {
-        var cfg = _config.CreateValidatedCopy();
+        await StartAsync(_config.CreateValidatedCopy());
+    }
+
+    private async Task StartAsync(AppConfig cfg)
+    {
+        _textProcessingCts?.Cancel();
+        _textProcessingCts?.Dispose();
+        _textProcessingCts = new CancellationTokenSource();
 
         Logger.Log("StartAsync: Starting real-time WebSocket transcription");
         _realtimeTranscriptionText = "";
         _typedText = "";
         _lastTypedLength = 0;
+        _lastReceivedRealtimeText = "";
+        _allowRealtimeTextUpdates = true;
 
         try
         {
@@ -191,6 +203,8 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     {
         Logger.Log("StopAsync: Stopping real-time transcription");
         NotificationService.ShowInfo("Stopping real-time transcription...");
+        _allowRealtimeTextUpdates = false;
+        _textProcessingCts?.Cancel();
 
         _realtimeRecorder?.StopRecording();
 
@@ -313,27 +327,62 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
         OnTranscription?.Invoke(text, isFinal);
 
-        _ = ProcessTranscriptionAsync(text, isFinal);
+        if (!isFinal && string.Equals(text, _lastReceivedRealtimeText, StringComparison.Ordinal))
+        {
+            Logger.Log("HandleRealtimeTranscriptionEvent: Duplicate interim text, skipping");
+            return;
+        }
+
+        _lastReceivedRealtimeText = text;
+
+        if (!_allowRealtimeTextUpdates)
+        {
+            Logger.Log("HandleRealtimeTranscriptionEvent: Ignoring local text update during stop");
+            return;
+        }
+
+        var textProcessingToken = _textProcessingCts?.Token ?? CancellationToken.None;
+        _ = ProcessTranscriptionAsync(text, isFinal, textProcessingToken);
     }
 
-    private async Task ProcessTranscriptionAsync(string text, bool isFinal)
+    private async Task ProcessTranscriptionAsync(
+        string text,
+        bool isFinal,
+        CancellationToken cancellationToken
+    )
     {
-        await _transcriptionLock.WaitAsync();
         try
         {
+            await _transcriptionLock.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
             StreamingState state;
             lock (_streamingStateLock)
             {
                 state = _streamingState;
             }
-            if (state == StreamingState.Idle)
+            if (state != StreamingState.Streaming)
             {
-                Logger.Log("ProcessTranscriptionAsync: Ignoring, state=Idle");
+                Logger.Log($"ProcessTranscriptionAsync: Ignoring, state={state}");
                 return;
             }
 
             if (string.IsNullOrEmpty(text))
                 return;
+
+            if (string.Equals(text, _realtimeTranscriptionText, StringComparison.Ordinal))
+            {
+                Logger.Log("ProcessTranscriptionAsync: Text unchanged, skipping");
+                return;
+            }
 
             if (!IsForegroundWindowSafe())
             {
@@ -374,13 +423,14 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 );
                 SendBackspace(backspaceCount);
                 _lastTypedLength = commonPrefixLen;
-                await Task.Delay(20);
+                await Task.Delay(20, cancellationToken);
             }
 
             if (text.Length > _lastTypedLength)
             {
                 var newText = text.Substring(_lastTypedLength);
                 Logger.Log($"ProcessTranscriptionAsync: Typing {newText.Length} chars");
+                cancellationToken.ThrowIfCancellationRequested();
 
                 if (newText.Length > 5)
                 {
@@ -407,6 +457,10 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 _lastTypedLength = 0;
                 _realtimeTranscriptionText = "";
             }
+        }
+        catch (OperationCanceledException)
+        {
+            Logger.Log("ProcessTranscriptionAsync: Cancelled");
         }
         finally
         {
@@ -589,16 +643,18 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         try
         {
             Logger.Log("CleanupAsync: Cleaning up");
+            _allowRealtimeTextUpdates = false;
+            _textProcessingCts?.Cancel();
 
             await _transcriptionLock.WaitAsync();
 
             string finalTranscriptionText = _realtimeTranscriptionText;
-            int finalLastTypedLength = _lastTypedLength;
             string finalTypedText = _typedText;
 
             _typedText = "";
             _realtimeTranscriptionText = "";
             _lastTypedLength = 0;
+            _lastReceivedRealtimeText = "";
 
             lock (_streamingStateLock)
             {
@@ -610,10 +666,12 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             var transcriber = _realtimeTranscriber;
             var recorder = _realtimeRecorder;
             var cts = _transcriberCts;
+            var textProcessingCts = _textProcessingCts;
 
             _realtimeTranscriber = null;
             _realtimeRecorder = null;
             _transcriberCts = null;
+            _textProcessingCts = null;
 
             if (transcriber != null)
             {
@@ -647,21 +705,6 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             _streamingTargetWindow = IntPtr.Zero;
             _streamingStartTime = DateTime.MinValue;
 
-            if (finalTranscriptionText.Length > finalLastTypedLength)
-            {
-                var remainingText = finalTranscriptionText.Substring(finalLastTypedLength);
-                Logger.Log($"CleanupAsync: Typing remaining {remainingText.Length} chars");
-
-                if (remainingText.Length > 5)
-                {
-                    await _clip.SetTextAndPasteAsync(remainingText);
-                }
-                else
-                {
-                    TypeTextDirectly(remainingText);
-                }
-            }
-
             if (
                 !string.IsNullOrEmpty(finalTranscriptionText)
                 || !string.IsNullOrEmpty(finalTypedText)
@@ -672,6 +715,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             OnStopped?.Invoke();
             Logger.Log("CleanupAsync: Done");
+            textProcessingCts?.Dispose();
         }
         finally
         {

@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using TailSlap;
 
 public enum TranscriberErrorType
 {
@@ -519,7 +520,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                     if (!string.IsNullOrEmpty(text))
                     {
                         Logger.Log(
-                            $"Streaming chunk: {text.Substring(0, Math.Min(50, text.Length))}"
+                            $"Streaming chunk: len={text.Length}, sha256={Hashing.Sha256Hex(text)}"
                         );
                         yield return text;
                     }
@@ -548,7 +549,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                     if (!string.IsNullOrEmpty(text))
                     {
                         Logger.Log(
-                            $"Streaming chunk: {text.Substring(0, Math.Min(50, text.Length))}"
+                            $"Streaming chunk: len={text.Length}, sha256={Hashing.Sha256Hex(text)}"
                         );
                         yield return text;
                     }
