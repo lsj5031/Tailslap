@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.5] - 2026-03-28
+
+### Added
+- **WebRTC Voice Activity Detection**: Added ML-based WebRTC VAD with configurable sensitivity for both push-to-talk and real-time transcription modes.
+- **Transcription Auto-Enhancement Controls**: Added settings to auto-enhance longer transcriptions with the configured LLM after a configurable character threshold.
+- **Clipboard Helper Abstraction**: Added a shared clipboard/paste helper to reduce duplication between refinement and transcription workflows.
+
+### Changed
+- **Real-Time Streaming Performance**: Replaced byte-by-byte buffering with `MemoryStream` aggregation in the real-time transcription path.
+- **Diagnostics Pipeline**: Moved config change debouncing to `System.Threading.Timer` and switched diagnostics HTTP calls to `HttpClientFactory`.
+- **Secure Logging**: Expanded SHA256 fingerprint logging for transcription and streaming output so troubleshooting stays useful without logging raw text.
+
+### Fixed
+- **WebRTC VAD Deployment**: Ensured `WebRtcVad.dll` is copied into publish output so release builds can actually enable WebRTC VAD.
+- **Paste Reliability**: Normalized modifier key state before paste, prioritized `Ctrl+V`, and added foreground-window diagnostics for paste troubleshooting.
+- **Realtime Stop Behavior**: Prevented real-time transcription from continuing to backspace/type after stop is requested.
+- **Unsafe Auto-Enhancement Output**: Rejected obviously bad LLM rewrites, such as aggressive shrinkage or low-overlap replacements, and fall back to the original transcription.
+- **Audio Recording Shutdown**: Hardened WinMM cleanup to avoid `waveInUnprepareHeader` still-playing errors and switched standard recording shutdown to a reset-backed final drain path.
+- **Clipboard Integration Regressions**: Fixed helper wiring so enhanced transcription output is what gets placed on the clipboard and pasted.
+
 ## [2.0.2] - 2026-01-06
 
 ### Fixed
