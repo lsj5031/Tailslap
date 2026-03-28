@@ -1203,7 +1203,20 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
-            await Task.Delay(150).ConfigureAwait(true); // Increased delay for better focus restoration
+            LogPasteDiagnostic("PasteAsync");
+
+            // Verify focus before attempting paste
+            var foregroundWindow = GetForegroundWindow();
+            if (foregroundWindow == IntPtr.Zero)
+            {
+                try
+                {
+                    Logger.Log("PasteAsync: No foreground window, will still attempt paste");
+                }
+                catch { }
+            }
+
+            await Task.Delay(250).ConfigureAwait(true); // Increased delay for better focus restoration
             bool success = await PasteWithMultipleMethodsAsync();
             if (!success)
             {
@@ -1244,14 +1257,19 @@ public sealed class ClipboardService : IClipboardService
 
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync()
     {
-        // Try multiple paste methods in order of reliability
-        string[] methods = { "Shift+Insert", "Ctrl+V", "SendInput Ctrl+V" };
+        // Try multiple paste methods in order: Ctrl+V (most universal), Shift+Insert (terminals), SendInput (fallback)
+        string[] methods = { "Ctrl+V", "Shift+Insert", "SendInput Ctrl+V" };
+
+        LogPasteDiagnostic("PasteWithMultipleMethods");
 
         foreach (string method in methods)
         {
             try
             {
                 Logger.Log($"Attempting paste with {method}");
+
+                // Normalize input state before each attempt to release held modifiers
+                NormalizeInputState();
 
                 bool success = method switch
                 {
@@ -1287,8 +1305,9 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
+            NormalizeInputState();
             SendKeys.SendWait("^v");
-            await Task.Delay(30).ConfigureAwait(true);
+            await Task.Delay(75).ConfigureAwait(true); // Increased delay to let clipboard settle
             return true;
         }
         catch
@@ -1301,8 +1320,9 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
+            NormalizeInputState();
             SendKeys.SendWait("+{INSERT}");
-            await Task.Delay(30).ConfigureAwait(true);
+            await Task.Delay(75).ConfigureAwait(true); // Increased delay to let clipboard settle
             return true;
         }
         catch
@@ -1316,6 +1336,7 @@ public sealed class ClipboardService : IClipboardService
         try
         {
             // Use SendInput for more reliable paste
+            NormalizeInputState();
             ushort[] modifiers =
             {
                 0x11, /*CTRL*/
@@ -1324,7 +1345,7 @@ public sealed class ClipboardService : IClipboardService
                 modifiers,
                 0x56 /*'V'*/
             );
-            await Task.Delay(30).ConfigureAwait(true);
+            await Task.Delay(75).ConfigureAwait(true); // Increased delay to let clipboard settle
             return true;
         }
         catch
@@ -2291,6 +2312,24 @@ public sealed class ClipboardService : IClipboardService
                 catch { }
                 Thread.Sleep(20); // Reduced from 40ms
             }
+        }
+        catch { }
+    }
+
+    private static void LogPasteDiagnostic(string prefix)
+    {
+        try
+        {
+            var fw = GetForegroundWindow();
+            var windowInfo = fw != IntPtr.Zero ? DescribeWindow(fw) : "no foreground window";
+
+            // Check held modifiers
+            bool ctrl = (GetAsyncKeyState(0x11) & 0x8000) != 0;
+            bool alt = (GetAsyncKeyState(0x12) & 0x8000) != 0;
+            bool shift = (GetAsyncKeyState(0x10) & 0x8000) != 0;
+            bool win = (GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0;
+
+            Logger.Log($"[{prefix}] Foreground: {windowInfo}, Modifiers: Ctrl={ctrl}, Alt={alt}, Shift={shift}, Win={win}");
         }
         catch { }
     }
