@@ -141,10 +141,11 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             NotificationService.ShowInfo("Real-time transcription started. Speak now...");
             OnStarted?.Invoke();
 
-            _realtimeTranscriber = _transcriberFactory.Create(cfg.Transcriber.WebSocketUrl);
+            _realtimeTranscriber = _transcriberFactory.Create(cfg.Transcriber);
             _realtimeTranscriber.OnTranscription += HandleRealtimeTranscriptionEvent;
             _realtimeTranscriber.OnError += HandleRealtimeError;
             _realtimeTranscriber.OnDisconnected += HandleRealtimeDisconnected;
+            _realtimeTranscriber.OnConnectionLost += HandleRealtimeConnectionLost;
 
             await _realtimeTranscriber.ConnectAsync();
             Logger.Log("StartAsync: WebSocket connected");
@@ -608,6 +609,37 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         }
     }
 
+    private async void HandleRealtimeConnectionLost()
+    {
+        try
+        {
+            Logger.Log("HandleRealtimeConnectionLost: Connection lost detected, initiating recovery");
+
+            bool shouldRecover = false;
+            lock (_streamingStateLock)
+            {
+                if (_streamingState == StreamingState.Streaming)
+                {
+                    _streamingState = StreamingState.Stopping;
+                    shouldRecover = true;
+                }
+            }
+
+            if (shouldRecover)
+            {
+                // Notify user of connection issue
+                NotificationService.ShowWarning("Real-time transcription connection lost. Stopping...");
+
+                // Gracefully stop and cleanup
+                await StopAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"HandleRealtimeConnectionLost: ERROR - {ex.Message}");
+        }
+    }
+
     private async void HandleRealtimeSilenceDetected()
     {
         try
@@ -678,6 +710,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 transcriber.OnTranscription -= HandleRealtimeTranscriptionEvent;
                 transcriber.OnError -= HandleRealtimeError;
                 transcriber.OnDisconnected -= HandleRealtimeDisconnected;
+                transcriber.OnConnectionLost -= HandleRealtimeConnectionLost;
 
                 try
                 {

@@ -6,4 +6,16 @@ public sealed class RealtimeTranscriberFactory : IRealtimeTranscriberFactory
     {
         return new RealtimeTranscriber(webSocketUrl);
     }
+
+    public RealtimeTranscriber Create(TranscriberConfig config)
+    {
+        return new RealtimeTranscriber(
+            config.WebSocketUrl,
+            connectionTimeoutSeconds: config.WebSocketConnectionTimeoutSeconds,
+            receiveTimeoutSeconds: config.WebSocketReceiveTimeoutSeconds,
+            sendTimeoutSeconds: config.WebSocketSendTimeoutSeconds,
+            heartbeatIntervalSeconds: config.WebSocketHeartbeatIntervalSeconds,
+            heartbeatTimeoutSeconds: config.WebSocketHeartbeatTimeoutSeconds
+        );
+    }
 }

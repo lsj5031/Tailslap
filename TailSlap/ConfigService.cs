@@ -90,6 +90,13 @@ public sealed class TranscriberConfig
     public int PreferredMicrophoneIndex { get; set; } = -1;
     public bool StreamResults { get; set; } = false;
 
+    // WebSocket timeout settings (for real-time mode)
+    public int WebSocketConnectionTimeoutSeconds { get; set; } = 10;
+    public int WebSocketReceiveTimeoutSeconds { get; set; } = 30;
+    public int WebSocketSendTimeoutSeconds { get; set; } = 10;
+    public int WebSocketHeartbeatIntervalSeconds { get; set; } = 10;
+    public int WebSocketHeartbeatTimeoutSeconds { get; set; } = 15;
+
     // VAD sensitivity thresholds (RMS values for 16-bit audio)
     // Higher values = less sensitive (requires louder speech to trigger)
     public int VadActivationThreshold { get; set; } = 900; // Threshold to START detecting speech
@@ -201,6 +208,11 @@ public sealed class TranscriberConfig
             WebRtcVadSensitivity = WebRtcVadSensitivity,
             EnableAutoEnhance = EnableAutoEnhance,
             AutoEnhanceThresholdChars = AutoEnhanceThresholdChars,
+            WebSocketConnectionTimeoutSeconds = WebSocketConnectionTimeoutSeconds,
+            WebSocketReceiveTimeoutSeconds = WebSocketReceiveTimeoutSeconds,
+            WebSocketSendTimeoutSeconds = WebSocketSendTimeoutSeconds,
+            WebSocketHeartbeatIntervalSeconds = WebSocketHeartbeatIntervalSeconds,
+            WebSocketHeartbeatTimeoutSeconds = WebSocketHeartbeatTimeoutSeconds,
         };
     }
 }
@@ -408,6 +420,21 @@ public sealed class ConfigService : IConfigService, IDisposable
         return thresholdMs >= 100 && thresholdMs <= 5000;
     }
 
+    public static bool IsValidWebSocketTimeout(int timeoutSeconds)
+    {
+        return timeoutSeconds >= 1 && timeoutSeconds <= 120;
+    }
+
+    public static bool IsValidWebSocketHeartbeatInterval(int intervalSeconds)
+    {
+        return intervalSeconds >= 5 && intervalSeconds <= 60;
+    }
+
+    public static bool IsValidWebSocketHeartbeatTimeout(int timeoutSeconds)
+    {
+        return timeoutSeconds >= 10 && timeoutSeconds <= 120;
+    }
+
     public AppConfig CreateValidatedCopy()
     {
         var cfg = LoadOrDefault();
@@ -452,6 +479,28 @@ public sealed class ConfigService : IConfigService, IDisposable
         if (!IsValidSilenceThreshold(cfg.Transcriber.SilenceThresholdMs))
         {
             cfg.Transcriber.SilenceThresholdMs = 2000;
+        }
+
+        // Validate WebSocket settings
+        if (!IsValidWebSocketTimeout(cfg.Transcriber.WebSocketConnectionTimeoutSeconds))
+        {
+            cfg.Transcriber.WebSocketConnectionTimeoutSeconds = 10;
+        }
+        if (!IsValidWebSocketTimeout(cfg.Transcriber.WebSocketReceiveTimeoutSeconds))
+        {
+            cfg.Transcriber.WebSocketReceiveTimeoutSeconds = 30;
+        }
+        if (!IsValidWebSocketTimeout(cfg.Transcriber.WebSocketSendTimeoutSeconds))
+        {
+            cfg.Transcriber.WebSocketSendTimeoutSeconds = 10;
+        }
+        if (!IsValidWebSocketHeartbeatInterval(cfg.Transcriber.WebSocketHeartbeatIntervalSeconds))
+        {
+            cfg.Transcriber.WebSocketHeartbeatIntervalSeconds = 10;
+        }
+        if (!IsValidWebSocketHeartbeatTimeout(cfg.Transcriber.WebSocketHeartbeatTimeoutSeconds))
+        {
+            cfg.Transcriber.WebSocketHeartbeatTimeoutSeconds = 15;
         }
 
         // Default transcriber hotkey to Ctrl+Alt+T
