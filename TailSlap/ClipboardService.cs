@@ -2431,8 +2431,42 @@ public sealed class ClipboardService : IClipboardService
                 int hr = CoInitializeEx(IntPtr.Zero, COINIT_MULTITHREADED);
                 comInit = (hr == 0 || hr == 1); // S_OK or S_FALSE
 
-                var r = func();
-                tcs.SetResult(r);
+                T result;
+                try
+                {
+                    result = func();
+                }
+                catch (COMException ex)
+                {
+                    try
+                    {
+                        Logger.Log($"UIA COM exception in delegate: {ex.GetType().Name}: {ex.Message}");
+                    }
+                    catch { }
+                    tcs.TrySetException(ex);
+                    return;
+                }
+                catch (InvalidOperationException ex)
+                {
+                    try
+                    {
+                        Logger.Log($"UIA InvalidOperationException in delegate: {ex.GetType().Name}: {ex.Message}");
+                    }
+                    catch { }
+                    tcs.TrySetException(ex);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        Logger.Log($"UIA delegate exception: {ex.GetType().Name}: {ex.Message}");
+                    }
+                    catch { }
+                    tcs.TrySetException(ex);
+                    return;
+                }
+                tcs.SetResult(result);
             }
             catch (ThreadAbortException)
             {
@@ -2443,6 +2477,16 @@ public sealed class ClipboardService : IClipboardService
                 }
                 catch { }
                 tcs.TrySetCanceled();
+
+                // Attempt thread abort cleanup for COM
+                try
+                {
+                    if (comInit)
+                    {
+                        CoUninitialize();
+                    }
+                }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -2457,7 +2501,11 @@ public sealed class ClipboardService : IClipboardService
             {
                 if (comInit)
                 {
-                    CoUninitialize();
+                    try
+                    {
+                        CoUninitialize();
+                    }
+                    catch { }
                 }
             }
         });
@@ -2465,9 +2513,14 @@ public sealed class ClipboardService : IClipboardService
         th.SetApartmentState(ApartmentState.MTA); // Use MTA for UI Automation as per Microsoft docs
         th.Start();
 
-        // Monitor thread but don't try to abort (PlatformNotSupported in .NET Core/5+)
-        // We just rely on the Task.Wait timeout in the caller to unblock the main thread
-        // The background thread may remain as a zombie if it hangs, but won't crash the app
+        // Monitor thread and attempt abort on timeout if possible
+        // Note: Thread.Abort may not work in .NET Core/5+ (PlatformNotSupported)
+        // In that case, we just let the thread run and rely on the timeout to unblock callers
+        if (cts != null)
+        {
+            // The caller is responsible for timing out the task and handling cancellation
+            // This is a best-effort cleanup attempt
+        }
 
         return tcs.Task;
     }

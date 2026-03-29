@@ -14,7 +14,9 @@ public sealed class ClipboardHelper
     public async Task<bool> SetTextAndPasteAsync(string text, bool autoPaste)
     {
         if (string.IsNullOrEmpty(text))
+        {
             return false;
+        }
 
         bool setTextSuccess = _clip.SetText(text);
         if (!setTextSuccess)
