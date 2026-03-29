@@ -44,6 +44,13 @@ public sealed class SettingsForm : Form
     private CheckBox? _transcriberEnableAutoEnhance;
     private TextBox? _transcriberAutoEnhanceThreshold;
 
+    // WebSocket timeout controls
+    private TextBox? _wsConnectionTimeout;
+    private TextBox? _wsReceiveTimeout;
+    private TextBox? _wsSendTimeout;
+    private TextBox? _wsHeartbeatInterval;
+    private TextBox? _wsHeartbeatTimeout;
+
     public SettingsForm(
         AppConfig cfg,
         ITextRefinerFactory textRefinerFactory,
@@ -394,13 +401,13 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 17,
+            RowCount = 22,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 17; i++)
+        for (int i = 0; i < 22; i++)
             transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox
@@ -726,6 +733,118 @@ public sealed class SettingsForm : Form
         );
         transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 16);
 
+        // WebSocket Timeout Settings Section
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "WebSocket Timeout Settings",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font(this.Font, FontStyle.Bold),
+            },
+            0,
+            17
+        );
+        transcriber.Controls.Add(new Label(), 1, 17);
+
+        _wsConnectionTimeout = new TextBox
+        {
+            Text = _cfg.Transcriber.WebSocketConnectionTimeoutSeconds.ToString(),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Connection Timeout (sec)",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            18
+        );
+        transcriber.Controls.Add(_wsConnectionTimeout, 1, 18);
+
+        _wsReceiveTimeout = new TextBox
+        {
+            Text = _cfg.Transcriber.WebSocketReceiveTimeoutSeconds.ToString(),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Receive Timeout (sec)",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            19
+        );
+        transcriber.Controls.Add(_wsReceiveTimeout, 1, 19);
+
+        _wsSendTimeout = new TextBox
+        {
+            Text = _cfg.Transcriber.WebSocketSendTimeoutSeconds.ToString(),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Send Timeout (sec)",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            20
+        );
+        transcriber.Controls.Add(_wsSendTimeout, 1, 20);
+
+        _wsHeartbeatInterval = new TextBox
+        {
+            Text = _cfg.Transcriber.WebSocketHeartbeatIntervalSeconds.ToString(),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Heartbeat Interval (sec)",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            21
+        );
+        transcriber.Controls.Add(_wsHeartbeatInterval, 1, 21);
+
+        _wsHeartbeatTimeout = new TextBox
+        {
+            Text = _cfg.Transcriber.WebSocketHeartbeatTimeoutSeconds.ToString(),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Heartbeat Timeout (sec)",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            22
+        );
+        transcriber.Controls.Add(_wsHeartbeatTimeout, 1, 22);
+
+        // Add validation handlers
+        _wsConnectionTimeout.TextChanged += ValidateTranscriberInput;
+        _wsReceiveTimeout.TextChanged += ValidateTranscriberInput;
+        _wsSendTimeout.TextChanged += ValidateTranscriberInput;
+        _wsHeartbeatInterval.TextChanged += ValidateTranscriberInput;
+        _wsHeartbeatTimeout.TextChanged += ValidateTranscriberInput;
+
         return transcriber;
     }
 
@@ -833,6 +952,42 @@ public sealed class SettingsForm : Form
             && thresholdChars <= 10000
         )
             _cfg.Transcriber.AutoEnhanceThresholdChars = thresholdChars;
+
+        // Apply WebSocket timeout settings
+        if (
+            int.TryParse(_wsConnectionTimeout!.Text.Trim(), out var wsConnTimeout)
+            && wsConnTimeout >= 1
+            && wsConnTimeout <= 120
+        )
+            _cfg.Transcriber.WebSocketConnectionTimeoutSeconds = wsConnTimeout;
+
+        if (
+            int.TryParse(_wsReceiveTimeout!.Text.Trim(), out var wsRecvTimeout)
+            && wsRecvTimeout >= 1
+            && wsRecvTimeout <= 120
+        )
+            _cfg.Transcriber.WebSocketReceiveTimeoutSeconds = wsRecvTimeout;
+
+        if (
+            int.TryParse(_wsSendTimeout!.Text.Trim(), out var wsSendTimeout)
+            && wsSendTimeout >= 1
+            && wsSendTimeout <= 120
+        )
+            _cfg.Transcriber.WebSocketSendTimeoutSeconds = wsSendTimeout;
+
+        if (
+            int.TryParse(_wsHeartbeatInterval!.Text.Trim(), out var wsHbInterval)
+            && wsHbInterval >= 5
+            && wsHbInterval <= 60
+        )
+            _cfg.Transcriber.WebSocketHeartbeatIntervalSeconds = wsHbInterval;
+
+        if (
+            int.TryParse(_wsHeartbeatTimeout!.Text.Trim(), out var wsHbTimeout)
+            && wsHbTimeout >= 10
+            && wsHbTimeout <= 120
+        )
+            _cfg.Transcriber.WebSocketHeartbeatTimeoutSeconds = wsHbTimeout;
     }
 
     private void ValidateInput(object? sender, EventArgs e)
@@ -924,6 +1079,67 @@ public sealed class SettingsForm : Form
             )
             {
                 errors.Add("Auto-enhance threshold must be between 10 and 10000 characters");
+            }
+        }
+
+        // Validate WebSocket timeout settings
+        if (!string.IsNullOrWhiteSpace(_wsConnectionTimeout!.Text))
+        {
+            if (
+                !int.TryParse(_wsConnectionTimeout.Text, out var connTimeout)
+                || connTimeout < 1
+                || connTimeout > 120
+            )
+            {
+                errors.Add("Connection timeout must be between 1 and 120 seconds");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(_wsReceiveTimeout!.Text))
+        {
+            if (
+                !int.TryParse(_wsReceiveTimeout.Text, out var recvTimeout)
+                || recvTimeout < 1
+                || recvTimeout > 120
+            )
+            {
+                errors.Add("Receive timeout must be between 1 and 120 seconds");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(_wsSendTimeout!.Text))
+        {
+            if (
+                !int.TryParse(_wsSendTimeout.Text, out var sendTimeout)
+                || sendTimeout < 1
+                || sendTimeout > 120
+            )
+            {
+                errors.Add("Send timeout must be between 1 and 120 seconds");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(_wsHeartbeatInterval!.Text))
+        {
+            if (
+                !int.TryParse(_wsHeartbeatInterval.Text, out var hbInterval)
+                || hbInterval < 5
+                || hbInterval > 60
+            )
+            {
+                errors.Add("Heartbeat interval must be between 5 and 60 seconds");
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(_wsHeartbeatTimeout!.Text))
+        {
+            if (
+                !int.TryParse(_wsHeartbeatTimeout.Text, out var hbTimeout)
+                || hbTimeout < 10
+                || hbTimeout > 120
+            )
+            {
+                errors.Add("Heartbeat timeout must be between 10 and 120 seconds");
             }
         }
 
@@ -1130,6 +1346,13 @@ public sealed class SettingsForm : Form
             _transcriberEnableAutoEnhance!.Checked = defaultCfg.Transcriber.EnableAutoEnhance;
             _transcriberAutoEnhanceThreshold!.Text =
                 defaultCfg.Transcriber.AutoEnhanceThresholdChars.ToString();
+
+            // Reset WebSocket timeout settings
+            _wsConnectionTimeout!.Text = defaultCfg.Transcriber.WebSocketConnectionTimeoutSeconds.ToString();
+            _wsReceiveTimeout!.Text = defaultCfg.Transcriber.WebSocketReceiveTimeoutSeconds.ToString();
+            _wsSendTimeout!.Text = defaultCfg.Transcriber.WebSocketSendTimeoutSeconds.ToString();
+            _wsHeartbeatInterval!.Text = defaultCfg.Transcriber.WebSocketHeartbeatIntervalSeconds.ToString();
+            _wsHeartbeatTimeout!.Text = defaultCfg.Transcriber.WebSocketHeartbeatTimeoutSeconds.ToString();
             if (
                 defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0
                 && defaultCfg.Transcriber.PreferredMicrophoneIndex
