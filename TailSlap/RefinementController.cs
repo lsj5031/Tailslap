@@ -13,6 +13,7 @@ public sealed class RefinementController : IRefinementController
 
     private bool _isRefining;
     private CancellationTokenSource? _currentCts;
+    private readonly object _ctsLock = new();
 
     public bool IsRefining => _isRefining;
     public CancellationTokenSource? CurrentCts => _currentCts;
@@ -51,7 +52,12 @@ public sealed class RefinementController : IRefinementController
 
         if (_isRefining)
         {
-            if (_currentCts != null && !_currentCts.IsCancellationRequested)
+            CancellationTokenSource? ctsToCheck;
+            lock (_ctsLock)
+            {
+                ctsToCheck = _currentCts;
+            }
+            if (ctsToCheck != null && !ctsToCheck.IsCancellationRequested)
             {
                 CancelRefine();
                 return false;
@@ -61,18 +67,29 @@ public sealed class RefinementController : IRefinementController
         }
 
         _isRefining = true;
-        _currentCts = new CancellationTokenSource();
+        lock (_ctsLock)
+        {
+            _currentCts = new CancellationTokenSource();
+        }
         OnStarted?.Invoke();
 
         try
         {
-            var success = await RefineSelectionAsync(cfg, _currentCts.Token);
+            CancellationToken token;
+            lock (_ctsLock)
+            {
+                token = _currentCts?.Token ?? CancellationToken.None;
+            }
+            var success = await RefineSelectionAsync(cfg, token);
             return success;
         }
         finally
         {
-            _currentCts?.Dispose();
-            _currentCts = null;
+            lock (_ctsLock)
+            {
+                _currentCts?.Dispose();
+                _currentCts = null;
+            }
             _isRefining = false;
             OnCompleted?.Invoke();
         }
@@ -82,13 +99,18 @@ public sealed class RefinementController : IRefinementController
     {
         try
         {
-            _currentCts?.Cancel();
+            CancellationTokenSource? cts;
+            lock (_ctsLock)
+            {
+                cts = _currentCts;
+            }
+            cts?.Cancel();
             NotificationService.ShowInfo("Refinement cancelled.");
             Logger.Log("Refinement cancelled by user.");
         }
         catch (Exception ex)
         {
-            Logger.Log($"Error cancelling refinement: {ex.Message}");
+            Logger.Log("Error cancelling refinement: " + ex.Message);
         }
     }
 

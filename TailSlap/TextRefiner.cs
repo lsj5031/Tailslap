@@ -208,7 +208,6 @@ public sealed class TextRefiner : ITextRefiner
 
                     throw new InvalidOperationException(ShortOutputErrorMessage);
                 }
-
                 try
                 {
                     Logger.Log(
@@ -331,7 +330,11 @@ public sealed class TextRefiner : ITextRefiner
         var parsed =
             JsonSerializer.Deserialize(body, TailSlapJsonContext.Default.ChatResponse)
             ?? throw new Exception("Invalid response JSON");
-        if (parsed.Choices is not { Count: > 0 } || parsed.Choices[0].Message is null)
+        if (
+            parsed.Choices == null
+            || parsed.Choices.Count == 0
+            || parsed.Choices[0].Message == null
+        )
             throw new Exception("No choices in response");
         return parsed.Choices[0].Message.Content?.Trim() ?? "";
     }
