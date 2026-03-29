@@ -2,13 +2,18 @@ namespace TailSlap;
 
 public sealed class RealtimeTranscriberFactory : IRealtimeTranscriberFactory
 {
-    public RealtimeTranscriber Create(string webSocketUrl)
+    public IRealtimeTranscriber Create(string webSocketUrl)
     {
         return new RealtimeTranscriber(webSocketUrl);
     }
 
-    public RealtimeTranscriber Create(TranscriberConfig config)
+    public IRealtimeTranscriber Create(TranscriberConfig config)
     {
+        if (string.Equals(config.RealtimeProvider, "openai", StringComparison.OrdinalIgnoreCase))
+        {
+            return new OpenAIRealtimeTranscriber(config);
+        }
+
         return new RealtimeTranscriber(
             config.WebSocketUrl,
             connectionTimeoutSeconds: config.WebSocketConnectionTimeoutSeconds,

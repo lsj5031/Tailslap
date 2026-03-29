@@ -347,6 +347,19 @@ public class MainForm : Form
         try
         {
             using var ws = new ClientWebSocket();
+            if (
+                string.Equals(
+                    _currentConfig.Transcriber.RealtimeProvider,
+                    "openai",
+                    StringComparison.OrdinalIgnoreCase
+                ) && !string.IsNullOrWhiteSpace(_currentConfig.Transcriber.ApiKey)
+            )
+            {
+                ws.Options.SetRequestHeader(
+                    "Authorization",
+                    $"Bearer {_currentConfig.Transcriber.ApiKey}"
+                );
+            }
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await ws.ConnectAsync(new Uri(_currentConfig.Transcriber.WebSocketUrl), cts.Token);
             results.AppendLine("  Status: ✓ Connectable");

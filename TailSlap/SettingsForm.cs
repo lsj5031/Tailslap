@@ -44,6 +44,7 @@ public sealed class SettingsForm : Form
     private ComboBox? _transcriberVadSensitivity;
     private CheckBox? _transcriberEnableAutoEnhance;
     private TextBox? _transcriberAutoEnhanceThreshold;
+    private ComboBox? _realtimeProviderDropdown;
 
     // WebSocket timeout controls
     private TextBox? _wsConnectionTimeout;
@@ -423,13 +424,13 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 22,
+            RowCount = 24,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 22; i++)
+        for (int i = 0; i < 24; i++)
             transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox
@@ -867,6 +868,32 @@ public sealed class SettingsForm : Form
         _wsHeartbeatInterval.TextChanged += ValidateTranscriberInput;
         _wsHeartbeatTimeout.TextChanged += ValidateTranscriberInput;
 
+        _realtimeProviderDropdown = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Dock = DockStyle.Fill,
+        };
+        _realtimeProviderDropdown.Items.AddRange(new object[] { "custom", "openai" });
+        _realtimeProviderDropdown.SelectedItem = string.Equals(
+            _cfg.Transcriber.RealtimeProvider,
+            "openai",
+            StringComparison.OrdinalIgnoreCase
+        )
+            ? "openai"
+            : "custom";
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Realtime Provider",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            23
+        );
+        transcriber.Controls.Add(_realtimeProviderDropdown, 1, 23);
+
         return transcriber;
     }
 
@@ -1013,6 +1040,14 @@ public sealed class SettingsForm : Form
             && wsHbTimeout <= 120
         )
             _cfg.Transcriber.WebSocketHeartbeatTimeoutSeconds = wsHbTimeout;
+
+        _cfg.Transcriber.RealtimeProvider = string.Equals(
+            _realtimeProviderDropdown?.SelectedItem?.ToString(),
+            "openai",
+            StringComparison.OrdinalIgnoreCase
+        )
+            ? "openai"
+            : "custom";
     }
 
     private void ValidateInput(object? sender, EventArgs e)
@@ -1386,6 +1421,7 @@ public sealed class SettingsForm : Form
                 defaultCfg.Transcriber.WebSocketHeartbeatIntervalSeconds.ToString();
             _wsHeartbeatTimeout!.Text =
                 defaultCfg.Transcriber.WebSocketHeartbeatTimeoutSeconds.ToString();
+            _realtimeProviderDropdown!.SelectedItem = defaultCfg.Transcriber.RealtimeProvider;
             if (
                 defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0
                 && defaultCfg.Transcriber.PreferredMicrophoneIndex

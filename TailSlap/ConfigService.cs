@@ -135,6 +135,9 @@ public sealed class TranscriberConfig
     public bool EnableAutoEnhance { get; set; } = true; // Auto-enhance long transcriptions with LLM
     public int AutoEnhanceThresholdChars { get; set; } = 100; // Minimum chars to trigger enhancement
 
+    // Real-time transcription provider: "custom" (glm-asr-docker) or "openai" (Realtime API)
+    public string RealtimeProvider { get; set; } = "custom";
+
     [JsonIgnore]
     public string? ApiKey
     {
@@ -148,10 +151,56 @@ public sealed class TranscriberConfig
     {
         get
         {
+            if (string.Equals(RealtimeProvider, "openai", StringComparison.OrdinalIgnoreCase))
+            {
+                return BuildOpenAIRealtimeUrl();
+            }
+
             var builder = CreateBaseUriBuilder(forWebSocket: true);
             builder.Path = BuildTranscriptionPath(builder.Path, includeStream: true);
             return builder.ToString();
         }
+    }
+
+    private string BuildOpenAIRealtimeUrl()
+    {
+        var baseUrl = BaseUrl;
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            return "wss://api.openai.com/v1/realtime?intent=transcription";
+        }
+
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
+        {
+            return "wss://api.openai.com/v1/realtime?intent=transcription";
+        }
+
+        var builder = new UriBuilder(baseUri);
+        builder.Scheme = builder.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
+            ? "wss"
+            : "ws";
+
+        var path = builder.Path.TrimEnd('/');
+        if (
+            !path.EndsWith("/v1/realtime", StringComparison.OrdinalIgnoreCase)
+            && !path.EndsWith("/realtime", StringComparison.OrdinalIgnoreCase)
+        )
+        {
+            if (path.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+                path += "/realtime";
+            else if (path.EndsWith("/v1/audio/transcriptions", StringComparison.OrdinalIgnoreCase))
+                path = path[..^"/audio/transcriptions".Length] + "/realtime";
+            else
+                path += "/v1/realtime";
+        }
+        builder.Path = path;
+
+        var query = "intent=transcription";
+        builder.Query = string.IsNullOrEmpty(builder.Query)
+            ? query
+            : builder.Query.TrimStart('?') + "&" + query;
+
+        return builder.ToString();
     }
 
     [JsonIgnore]
@@ -237,6 +286,7 @@ public sealed class TranscriberConfig
             WebSocketSendTimeoutSeconds = WebSocketSendTimeoutSeconds,
             WebSocketHeartbeatIntervalSeconds = WebSocketHeartbeatIntervalSeconds,
             WebSocketHeartbeatTimeoutSeconds = WebSocketHeartbeatTimeoutSeconds,
+            RealtimeProvider = RealtimeProvider,
         };
     }
 }

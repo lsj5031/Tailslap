@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -18,7 +19,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private readonly object _streamingStateLock = new();
 
     private CancellationTokenSource? _transcriberCts;
-    private RealtimeTranscriber? _realtimeTranscriber;
+    private IRealtimeTranscriber? _realtimeTranscriber;
     private AudioRecorder? _realtimeRecorder;
 
     private string _realtimeTranscriptionText = "";
@@ -33,7 +34,18 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private const int NO_SPEECH_TIMEOUT_SECONDS = 30;
     private CancellationTokenSource? _textProcessingCts;
     private volatile bool _allowRealtimeTextUpdates;
+    private volatile bool _allowRealtimeInterimWhileStopping;
     private string _lastReceivedRealtimeText = "";
+    private string? _currentRealtimeItemId;
+    private readonly Dictionary<
+        string,
+        PendingOrderedRealtimeUpdate
+    > _pendingOrderedRealtimeUpdates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _orderedRealtimeSequences = new(
+        StringComparer.Ordinal
+    );
+    private readonly HashSet<string> _completedOrderedRealtimeItems = new(StringComparer.Ordinal);
+    private long _nextOrderedRealtimeSequence = 0;
 
     public StreamingState State
     {
@@ -54,6 +66,12 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    private sealed class PendingOrderedRealtimeUpdate
+    {
+        public required RealtimeTranscriptionUpdate Update { get; set; }
+        public required long Sequence { get; init; }
+    }
 
     public RealtimeTranscriptionController(
         IConfigService config,
@@ -110,7 +128,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
         if (currentState == StreamingState.Stopping)
         {
-            await StopAsync();
+            await StopAsyncInternal(suppressInterimUpdates: true);
         }
         else
         {
@@ -134,7 +152,13 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         _typedText = "";
         _lastTypedLength = 0;
         _lastReceivedRealtimeText = "";
+        _currentRealtimeItemId = null;
         _allowRealtimeTextUpdates = true;
+        _allowRealtimeInterimWhileStopping = false;
+        _pendingOrderedRealtimeUpdates.Clear();
+        _orderedRealtimeSequences.Clear();
+        _completedOrderedRealtimeItems.Clear();
+        _nextOrderedRealtimeSequence = 0;
 
         try
         {
@@ -200,11 +224,17 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         }
     }
 
-    public async Task StopAsync()
+    public Task StopAsync()
+    {
+        return StopAsyncInternal(suppressInterimUpdates: true);
+    }
+
+    private async Task StopAsyncInternal(bool suppressInterimUpdates)
     {
         Logger.Log("StopAsync: Stopping real-time transcription");
         NotificationService.ShowInfo("Stopping real-time transcription...");
-        _allowRealtimeTextUpdates = false;
+        _allowRealtimeTextUpdates = true;
+        _allowRealtimeInterimWhileStopping = !suppressInterimUpdates;
 
         _realtimeRecorder?.StopRecording();
 
@@ -220,9 +250,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                     serverClosedTcs.TrySetResult(true);
                 }
 
-                void OnTranscriptionReceived(string text, bool isFinal)
+                void OnTranscriptionReceived(RealtimeTranscriptionUpdate update)
                 {
-                    if (isFinal)
+                    if (update.IsFinal)
                         finalMessageTcs.TrySetResult(true);
                 }
 
@@ -324,17 +354,97 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         }
     }
 
-    private void HandleRealtimeTranscriptionEvent(string text, bool isFinal)
+    private void HandleRealtimeTranscriptionEvent(RealtimeTranscriptionUpdate update)
     {
-        Logger.Log($"HandleRealtimeTranscriptionEvent: text.Length={text.Length}, final={isFinal}");
+        Logger.Log(
+            $"HandleRealtimeTranscriptionEvent: text.Length={update.Text.Length}, final={update.IsFinal}, itemId={update.ItemId ?? "<none>"}"
+        );
 
-        if (!string.IsNullOrEmpty(text) && !isFinal)
+        if (!string.IsNullOrEmpty(update.Text) && !update.IsFinal)
         {
             _realtimeRecorder?.NotifySpeechDetected();
         }
 
-        OnTranscription?.Invoke(text, isFinal);
+        OnTranscription?.Invoke(update.Text, update.IsFinal);
 
+        if (!_allowRealtimeTextUpdates && !update.IsFinal)
+        {
+            Logger.Log("HandleRealtimeTranscriptionEvent: Ignoring local text update during stop");
+            return;
+        }
+
+        if (string.IsNullOrEmpty(update.ItemId))
+        {
+            ProcessLegacyTranscriptionEvent(update.Text, update.IsFinal);
+            return;
+        }
+
+        if (!_orderedRealtimeSequences.TryGetValue(update.ItemId, out var sequence))
+        {
+            sequence = _nextOrderedRealtimeSequence++;
+            _orderedRealtimeSequences[update.ItemId] = sequence;
+        }
+
+        _pendingOrderedRealtimeUpdates[update.ItemId] = new PendingOrderedRealtimeUpdate
+        {
+            Update = update,
+            Sequence = sequence,
+        };
+
+        TryProcessQueuedOrderedRealtimeUpdates();
+    }
+
+    private void TryProcessQueuedOrderedRealtimeUpdates()
+    {
+        var textProcessingToken = _textProcessingCts?.Token ?? CancellationToken.None;
+
+        while (true)
+        {
+            PendingOrderedRealtimeUpdate? next = null;
+            foreach (var queuedUpdate in _pendingOrderedRealtimeUpdates.Values)
+            {
+                if (!CanProcessOrderedRealtimeUpdate(queuedUpdate.Update))
+                {
+                    continue;
+                }
+
+                if (next == null || queuedUpdate.Sequence < next.Sequence)
+                {
+                    next = queuedUpdate;
+                }
+            }
+
+            if (next == null)
+            {
+                return;
+            }
+
+            _ = ProcessTranscriptionAsync(
+                next.Update.Text,
+                next.Update.IsFinal,
+                next.Update.ItemId,
+                textProcessingToken
+            );
+
+            if (!next.Update.IsFinal)
+            {
+                return;
+            }
+
+            _completedOrderedRealtimeItems.Add(next.Update.ItemId!);
+            _pendingOrderedRealtimeUpdates.Remove(next.Update.ItemId!);
+            _orderedRealtimeSequences.Remove(next.Update.ItemId!);
+        }
+    }
+
+    private bool CanProcessOrderedRealtimeUpdate(RealtimeTranscriptionUpdate update)
+    {
+        return string.IsNullOrEmpty(update.PreviousItemId)
+            || _completedOrderedRealtimeItems.Contains(update.PreviousItemId);
+    }
+
+    private void ProcessLegacyTranscriptionEvent(string text, bool isFinal)
+    {
         if (!isFinal && string.Equals(text, _lastReceivedRealtimeText, StringComparison.Ordinal))
         {
             Logger.Log("HandleRealtimeTranscriptionEvent: Duplicate interim text, skipping");
@@ -343,19 +453,14 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
         _lastReceivedRealtimeText = text;
 
-        if (!_allowRealtimeTextUpdates && !isFinal)
-        {
-            Logger.Log("HandleRealtimeTranscriptionEvent: Ignoring local text update during stop");
-            return;
-        }
-
         var textProcessingToken = _textProcessingCts?.Token ?? CancellationToken.None;
-        _ = ProcessTranscriptionAsync(text, isFinal, textProcessingToken);
+        _ = ProcessTranscriptionAsync(text, isFinal, null, textProcessingToken);
     }
 
     private async Task ProcessTranscriptionAsync(
         string text,
         bool isFinal,
+        string? itemId,
         CancellationToken cancellationToken
     )
     {
@@ -377,7 +482,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             {
                 state = _streamingState;
             }
-            if (state != StreamingState.Streaming && !(isFinal && state == StreamingState.Stopping))
+            bool canProcessWhileStopping =
+                state == StreamingState.Stopping && (isFinal || _allowRealtimeInterimWhileStopping);
+            if (state != StreamingState.Streaming && !canProcessWhileStopping)
             {
                 Logger.Log($"ProcessTranscriptionAsync: Ignoring, state={state}");
                 return;
@@ -386,10 +493,40 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             if (string.IsNullOrEmpty(text))
                 return;
 
+            if (
+                !string.IsNullOrEmpty(itemId)
+                && !string.IsNullOrEmpty(_currentRealtimeItemId)
+                && !string.Equals(_currentRealtimeItemId, itemId, StringComparison.Ordinal)
+            )
+            {
+                Logger.Log(
+                    $"ProcessTranscriptionAsync: Switching item baseline from {_currentRealtimeItemId} to {itemId}"
+                );
+
+                if (_lastTypedLength > 0 && _lastTypedLength <= _realtimeTranscriptionText.Length)
+                {
+                    _typedText += _realtimeTranscriptionText.Substring(0, _lastTypedLength);
+                }
+
+                _realtimeTranscriptionText = "";
+                _lastTypedLength = 0;
+                _lastReceivedRealtimeText = "";
+            }
+
+            if (!string.IsNullOrEmpty(itemId))
+            {
+                _currentRealtimeItemId = itemId;
+            }
+
             if (string.Equals(text, _realtimeTranscriptionText, StringComparison.Ordinal))
             {
-                Logger.Log("ProcessTranscriptionAsync: Text unchanged, skipping");
-                return;
+                if (!isFinal)
+                {
+                    Logger.Log("ProcessTranscriptionAsync: Text unchanged, skipping");
+                    return;
+                }
+
+                Logger.Log("ProcessTranscriptionAsync: Final text unchanged, finalizing");
             }
 
             if (!IsForegroundWindowSafe())
@@ -464,6 +601,13 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 _typedText += text;
                 _lastTypedLength = 0;
                 _realtimeTranscriptionText = "";
+                if (
+                    !string.IsNullOrEmpty(itemId)
+                    && string.Equals(_currentRealtimeItemId, itemId, StringComparison.Ordinal)
+                )
+                {
+                    _currentRealtimeItemId = null;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -576,7 +720,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 _streamingState = StreamingState.Stopping;
             }
 
-            await StopAsync();
+            await StopAsyncInternal(suppressInterimUpdates: true);
         }
         catch (Exception ex)
         {
@@ -607,7 +751,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             if (shouldInitiateStop)
             {
-                await StopAsync();
+                await StopAsyncInternal(suppressInterimUpdates: true);
             }
         }
         catch (Exception ex)
@@ -642,7 +786,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 );
 
                 // Gracefully stop and cleanup
-                await StopAsync();
+                await StopAsyncInternal(suppressInterimUpdates: true);
             }
         }
         catch (Exception ex)
@@ -667,7 +811,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 _streamingState = StreamingState.Stopping;
             }
 
-            await StopAsync();
+            await StopAsyncInternal(suppressInterimUpdates: false);
         }
         catch (Exception ex)
         {
@@ -687,6 +831,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         {
             Logger.Log("CleanupAsync: Cleaning up");
             _allowRealtimeTextUpdates = false;
+            _allowRealtimeInterimWhileStopping = false;
             _textProcessingCts?.Cancel();
 
             await _transcriptionLock.WaitAsync();
@@ -698,6 +843,11 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             _realtimeTranscriptionText = "";
             _lastTypedLength = 0;
             _lastReceivedRealtimeText = "";
+            _currentRealtimeItemId = null;
+            _pendingOrderedRealtimeUpdates.Clear();
+            _orderedRealtimeSequences.Clear();
+            _completedOrderedRealtimeItems.Clear();
+            _nextOrderedRealtimeSequence = 0;
 
             lock (_streamingStateLock)
             {
