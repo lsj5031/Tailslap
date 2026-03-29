@@ -45,9 +45,12 @@ public sealed class RealtimeTranscriber : IDisposable
     public DateTime LastReceiveTime => _lastReceiveTime;
 
     public RealtimeTranscriber(string wsEndpoint)
-        : this(wsEndpoint, connectionTimeoutSeconds: 10, receiveTimeoutSeconds: 30, sendTimeoutSeconds: 10)
-    {
-    }
+        : this(
+            wsEndpoint,
+            connectionTimeoutSeconds: 10,
+            receiveTimeoutSeconds: 30,
+            sendTimeoutSeconds: 10
+        ) { }
 
     public RealtimeTranscriber(
         string wsEndpoint,
@@ -222,7 +225,9 @@ public sealed class RealtimeTranscriber : IDisposable
 
                             if (_consecutiveErrors >= MaxConsecutiveErrors)
                             {
-                                Logger.Log("SendLoopAsync: Too many consecutive errors, triggering disconnect");
+                                Logger.Log(
+                                    "SendLoopAsync: Too many consecutive errors, triggering disconnect"
+                                );
                                 _ = HandleConnectionLostAsync("Too many send failures");
                                 return;
                             }
@@ -238,7 +243,9 @@ public sealed class RealtimeTranscriber : IDisposable
 
                             if (_consecutiveErrors >= MaxConsecutiveErrors)
                             {
-                                Logger.Log("SendLoopAsync: Too many consecutive errors, triggering disconnect");
+                                Logger.Log(
+                                    "SendLoopAsync: Too many consecutive errors, triggering disconnect"
+                                );
                                 _ = HandleConnectionLostAsync("Too many send failures");
                                 return;
                             }
@@ -278,7 +285,9 @@ public sealed class RealtimeTranscriber : IDisposable
                 var timeSinceLastReceive = DateTime.UtcNow - _lastReceiveTime;
                 if (timeSinceLastReceive > _heartbeatTimeout)
                 {
-                    Logger.Log($"Heartbeat: No data received for {timeSinceLastReceive.TotalSeconds:F1}s, connection may be stale");
+                    Logger.Log(
+                        $"Heartbeat: No data received for {timeSinceLastReceive.TotalSeconds:F1}s, connection may be stale"
+                    );
                     await HandleConnectionLostAsync("Connection timeout - no data received");
                     return;
                 }
@@ -291,11 +300,12 @@ public sealed class RealtimeTranscriber : IDisposable
 
                     // Send an empty binary frame as a keepalive/ping
                     await _ws.SendAsync(
-                        ArraySegment<byte>.Empty,
-                        WebSocketMessageType.Binary,
-                        endOfMessage: true,
-                        pingCts.Token
-                    ).ConfigureAwait(false);
+                            ArraySegment<byte>.Empty,
+                            WebSocketMessageType.Binary,
+                            endOfMessage: true,
+                            pingCts.Token
+                        )
+                        .ConfigureAwait(false);
 
                     Logger.Log("Heartbeat: Ping sent");
                 }
@@ -422,7 +432,10 @@ public sealed class RealtimeTranscriber : IDisposable
                     using var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     receiveCts.CancelAfter(_receiveTimeout);
 
-                    result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), receiveCts.Token)
+                    result = await _ws.ReceiveAsync(
+                            new ArraySegment<byte>(buffer),
+                            receiveCts.Token
+                        )
                         .ConfigureAwait(false);
 
                     // Update last receive time for heartbeat
@@ -495,7 +508,9 @@ public sealed class RealtimeTranscriber : IDisposable
                     // but don't contain transcription data
                     if (result.Count > 0)
                     {
-                        Logger.Log($"RealtimeTranscriber: Received {result.Count} bytes of binary data (likely ping response)");
+                        Logger.Log(
+                            $"RealtimeTranscriber: Received {result.Count} bytes of binary data (likely ping response)"
+                        );
                     }
                 }
             }

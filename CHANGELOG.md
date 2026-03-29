@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.7] - 2026-03-29
+
+### Changed
+- **UI Automation Isolation**: Moved selection-reading UI Automation work into an isolated helper-process mode so buggy accessibility providers cannot crash the main tray app during refinement.
+
+### Fixed
+- **Refine Crash Containment**: If UI Automation hangs, faults, or returns invalid output for the active app, TailSlap now logs the helper failure and falls back to Win32/clipboard capture instead of terminating.
+
 ## [2.0.6] - 2026-03-29
 
 ### Added

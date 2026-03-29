@@ -1377,11 +1377,15 @@ public sealed class SettingsForm : Form
                 defaultCfg.Transcriber.AutoEnhanceThresholdChars.ToString();
 
             // Reset WebSocket timeout settings
-            _wsConnectionTimeout!.Text = defaultCfg.Transcriber.WebSocketConnectionTimeoutSeconds.ToString();
-            _wsReceiveTimeout!.Text = defaultCfg.Transcriber.WebSocketReceiveTimeoutSeconds.ToString();
+            _wsConnectionTimeout!.Text =
+                defaultCfg.Transcriber.WebSocketConnectionTimeoutSeconds.ToString();
+            _wsReceiveTimeout!.Text =
+                defaultCfg.Transcriber.WebSocketReceiveTimeoutSeconds.ToString();
             _wsSendTimeout!.Text = defaultCfg.Transcriber.WebSocketSendTimeoutSeconds.ToString();
-            _wsHeartbeatInterval!.Text = defaultCfg.Transcriber.WebSocketHeartbeatIntervalSeconds.ToString();
-            _wsHeartbeatTimeout!.Text = defaultCfg.Transcriber.WebSocketHeartbeatTimeoutSeconds.ToString();
+            _wsHeartbeatInterval!.Text =
+                defaultCfg.Transcriber.WebSocketHeartbeatIntervalSeconds.ToString();
+            _wsHeartbeatTimeout!.Text =
+                defaultCfg.Transcriber.WebSocketHeartbeatTimeoutSeconds.ToString();
             if (
                 defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0
                 && defaultCfg.Transcriber.PreferredMicrophoneIndex

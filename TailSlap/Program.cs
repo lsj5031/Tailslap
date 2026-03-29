@@ -9,8 +9,14 @@ using TailSlap;
 internal static class Program
 {
     [STAThread]
-    static void Main()
+    static void Main(string[] args)
     {
+        if (UiaProbeCommand.IsProbeInvocation(args))
+        {
+            Environment.ExitCode = UiaProbeCommand.Run(args);
+            return;
+        }
+
         try
         {
             Logger.Log("App starting");

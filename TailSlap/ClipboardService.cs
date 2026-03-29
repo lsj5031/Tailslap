@@ -544,80 +544,95 @@ public sealed class ClipboardService : IClipboardService
                 windowClass = "(analysis error)";
             }
 
-            // 1) Try UI Automation first (but skip for some window classes due to stability issues)
+            // 1) Try UI Automation first, but isolate it in a helper process so provider crashes
+            // cannot terminate the main tray app.
             bool isFirefox = windowClass.Equals("MozillaWindowClass", StringComparison.Ordinal);
             bool isSublime = IsWindowClass(foregroundWindow, "PX_WINDOW_CLASS");
-            bool isNotepad = windowClass.Equals("Notepad", StringComparison.Ordinal);
-            bool isChrome = windowClass.StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal); // Chrome, Edge, etc.
-
-            // Dynamic Canary Probe: Check if UIA is responsive for others
-            // Note: We explicitly skip Chrome because it passes the probe but hangs on deep calls
-            bool isUiaResponsive =
-                !isFirefox && !isNotepad && !isChrome && IsUiaResponsive(foregroundWindow);
-
-            bool skipUIA = isFirefox || isNotepad || isChrome || !isUiaResponsive;
             try
             {
                 Logger.Log(
-                    $"Step 3c: Window analysis: isFirefox={isFirefox}, isSublime={isSublime}, isNotepad={isNotepad}, "
-                        + $"isChrome={isChrome}, isUiaResponsive={isUiaResponsive}, skipUIA={skipUIA}, useClipboardFallback={useClipboardFallback}"
+                    $"Step 3c: Window analysis: isFirefox={isFirefox}, isSublime={isSublime}, useClipboardFallback={useClipboardFallback}"
                 );
             }
             catch { }
-            if (!skipUIA)
+
+            bool continueUiaAttempts = true;
+            try
+            {
+                Logger.Log(
+                    $"Step 4: Attempting UI Automation via isolated helper for {windowClass}..."
+                );
+            }
+            catch { }
+
+            try
+            {
+                var uia = TryGetSelectionViaUiaProbe(
+                    UiaProbeMode.Focused,
+                    foregroundWindow,
+                    800,
+                    "UIA"
+                );
+                continueUiaAttempts = uia.ContinueAttempts;
+                if (!string.IsNullOrWhiteSpace(uia.Text))
+                {
+                    RecordCaptureSuccess("UIA", true);
+                    try
+                    {
+                        Logger.Log($"Step 4a: UIA selection captured: len={uia.Text.Length}");
+                    }
+                    catch { }
+                    try
+                    {
+                        Logger.Log("=== CAPTURE SUCCESS (UIA) ===");
+                    }
+                    catch { }
+                    return uia.Text!;
+                }
+
+                RecordCaptureSuccess("UIA", false);
+                try
+                {
+                    Logger.Log("Step 4a: UIA selection unavailable or empty");
+                }
+                catch { }
+            }
+            catch (Exception ex)
+            {
+                continueUiaAttempts = false;
+                try
+                {
+                    Logger.Log(
+                        $"Step 4 ERROR: UIA selection error: {ex.GetType().Name}: {ex.Message}"
+                    );
+                }
+                catch { }
+            }
+
+            if (continueUiaAttempts)
             {
                 try
                 {
-                    try
-                    {
-                        Logger.Log($"Step 4: Attempting UI Automation for {windowClass}...");
-                    }
-                    catch { }
+                    Logger.Log("Step 4b: Attempting UIA FromPoint via isolated helper...");
+                }
+                catch { }
 
-                    // Create cancellation token for this UIA attempt
-                    using var cts = new CancellationTokenSource();
-
-                    var uia = TryGetSelectionViaUIA(cts);
-                    if (!string.IsNullOrWhiteSpace(uia))
-                    {
-                        RecordCaptureSuccess("UIA", true);
-                        try
-                        {
-                            Logger.Log($"Step 4a: UIA selection captured: len={uia.Length}");
-                        }
-                        catch { }
-                        try
-                        {
-                            Logger.Log("=== CAPTURE SUCCESS (UIA) ===");
-                        }
-                        catch { }
-                        return uia;
-                    }
-                    else
-                    {
-                        RecordCaptureSuccess("UIA", false);
-                        try
-                        {
-                            Logger.Log("Step 4a: UIA selection unavailable or empty");
-                        }
-                        catch { }
-                    }
-                    // UIA hit-test near caret as a secondary attempt
-                    try
-                    {
-                        Logger.Log("Step 4b: Attempting UIA FromPoint...");
-                    }
-                    catch { }
-
-                    using var ctsPt = new CancellationTokenSource();
-                    var uiaPt = TryGetSelectionViaUIAFromCaret(ctsPt);
-                    if (!string.IsNullOrWhiteSpace(uiaPt))
+                try
+                {
+                    var uiaPt = TryGetSelectionViaUiaProbe(
+                        UiaProbeMode.Caret,
+                        foregroundWindow,
+                        500,
+                        "UIA(FromPoint)"
+                    );
+                    continueUiaAttempts = uiaPt.ContinueAttempts;
+                    if (!string.IsNullOrWhiteSpace(uiaPt.Text))
                     {
                         RecordCaptureSuccess("UIA_FromPoint", true);
                         try
                         {
                             Logger.Log(
-                                $"Step 4c: UIA(FromPoint) selection captured: len={uiaPt.Length}"
+                                $"Step 4c: UIA(FromPoint) selection captured: len={uiaPt.Text.Length}"
                             );
                         }
                         catch { }
@@ -626,98 +641,65 @@ public sealed class ClipboardService : IClipboardService
                             Logger.Log("=== CAPTURE SUCCESS (UIA FromPoint) ===");
                         }
                         catch { }
-                        return uiaPt;
+                        return uiaPt.Text!;
                     }
-                    else
+
+                    RecordCaptureSuccess("UIA_FromPoint", false);
+                    try
                     {
-                        RecordCaptureSuccess("UIA_FromPoint", false);
-                        try
-                        {
-                            Logger.Log("Step 4c: UIA(FromPoint) selection unavailable or empty");
-                        }
-                        catch { }
+                        Logger.Log("Step 4c: UIA(FromPoint) selection unavailable or empty");
                     }
+                    catch { }
                 }
                 catch (Exception ex)
                 {
+                    continueUiaAttempts = false;
                     try
                     {
                         Logger.Log(
-                            $"Step 4 ERROR: UIA selection error: {ex.GetType().Name}: {ex.Message}"
+                            $"Step 4 ERROR: UIA(FromPoint) selection error: {ex.GetType().Name}: {ex.Message}"
                         );
                     }
                     catch { }
-                    // Continue to other methods instead of crashing
                 }
-            }
-            else if (isFirefox)
-            {
-                try
-                {
-                    Logger.Log(
-                        "Step 4: Skipping UI Automation for Firefox (MozillaWindowClass) to prevent COM crashes - will attempt copy methods"
-                    );
-                }
-                catch { }
-            }
-            else if (isNotepad)
-            {
-                try
-                {
-                    Logger.Log(
-                        "Step 4: Skipping UI Automation for Notepad window to avoid potential UIA instability - will attempt copy methods"
-                    );
-                }
-                catch { }
-            }
-            else if (isChrome)
-            {
-                try
-                {
-                    Logger.Log(
-                        "Step 4: Skipping UI Automation for Chrome/Edge (Chrome_WidgetWin_*) to prevent UIA crashes - will attempt copy methods"
-                    );
-                }
-                catch { }
-            }
-            else if (!isUiaResponsive)
-            {
-                try
-                {
-                    Logger.Log(
-                        "Step 4: Skipping UI Automation because window failed Canary Probe (unresponsive) - will attempt copy methods"
-                    );
-                }
-                catch { }
             }
 
-            // 1b) UIA deep search (caret point and subtree scan) - skip for blacklisted windows
-            if (!skipUIA)
+            if (continueUiaAttempts)
             {
                 try
                 {
-                    using var ctsDeep = new CancellationTokenSource();
-                    var uiaDeep = TryGetSelectionViaUIADeep(foregroundWindow, ctsDeep);
-                    if (!string.IsNullOrWhiteSpace(uiaDeep))
+                    Logger.Log("Step 4d: Attempting UIA deep search via isolated helper...");
+                }
+                catch { }
+
+                try
+                {
+                    var uiaDeep = TryGetSelectionViaUiaProbe(
+                        UiaProbeMode.Deep,
+                        foregroundWindow,
+                        800,
+                        "UIA(deep)"
+                    );
+                    continueUiaAttempts = uiaDeep.ContinueAttempts;
+                    if (!string.IsNullOrWhiteSpace(uiaDeep.Text))
                     {
                         try
                         {
-                            Logger.Log($"UIA(deep) selection captured: len={uiaDeep.Length}");
+                            Logger.Log($"UIA(deep) selection captured: len={uiaDeep.Text.Length}");
                         }
                         catch { }
-                        return uiaDeep;
+                        return uiaDeep.Text!;
                     }
-                    else
+
+                    try
                     {
-                        try
-                        {
-                            Logger.Log("UIA(deep) found no selection");
-                        }
-                        catch { }
+                        Logger.Log("UIA(deep) found no selection");
                     }
+                    catch { }
                 }
                 catch (Exception ex)
                 {
+                    continueUiaAttempts = false;
                     try
                     {
                         Logger.Log($"UIA(deep) error: {ex.GetType().Name}: {ex.Message}");
@@ -725,42 +707,13 @@ public sealed class ClipboardService : IClipboardService
                     catch { }
                 }
             }
-            else if (isFirefox)
+
+            if (!continueUiaAttempts)
             {
                 try
                 {
                     Logger.Log(
-                        "Step 4b: Skipping UIA deep search for Firefox to prevent COM crashes"
-                    );
-                }
-                catch { }
-            }
-            else if (isNotepad)
-            {
-                try
-                {
-                    Logger.Log(
-                        "Step 4b: Skipping UIA deep search for Notepad to avoid potential UIA instability"
-                    );
-                }
-                catch { }
-            }
-            else if (isChrome)
-            {
-                try
-                {
-                    Logger.Log(
-                        "Step 4b: Skipping UIA deep search for Chrome/Edge to prevent UIA crashes"
-                    );
-                }
-                catch { }
-            }
-            else if (!isUiaResponsive)
-            {
-                try
-                {
-                    Logger.Log(
-                        "Step 4b: Skipping UIA deep search because window failed Canary Probe"
+                        "Step 4e: UIA helper failed or timed out; skipping additional UI Automation attempts"
                     );
                 }
                 catch { }
@@ -1466,6 +1419,26 @@ public sealed class ClipboardService : IClipboardService
             catch { }
             return null;
         }
+    }
+
+    private static UiaProbeInvocationResult TryGetSelectionViaUiaProbe(
+        UiaProbeMode mode,
+        IntPtr foregroundWindow,
+        int timeoutMs,
+        string label
+    )
+    {
+        var result = UiaProbeClient.TryGetSelection(mode, foregroundWindow, timeoutMs);
+        if (!result.ContinueAttempts && !string.IsNullOrWhiteSpace(result.FailureReason))
+        {
+            try
+            {
+                Logger.Log($"{label} helper failed: {result.FailureReason}");
+            }
+            catch { }
+        }
+
+        return result;
     }
 
     private static string? TryGetSelectionViaUIAFromCaret(CancellationTokenSource? cts = null)
@@ -2440,7 +2413,9 @@ public sealed class ClipboardService : IClipboardService
                 {
                     try
                     {
-                        Logger.Log($"UIA COM exception in delegate: {ex.GetType().Name}: {ex.Message}");
+                        Logger.Log(
+                            $"UIA COM exception in delegate: {ex.GetType().Name}: {ex.Message}"
+                        );
                     }
                     catch { }
                     tcs.TrySetException(ex);
@@ -2450,7 +2425,9 @@ public sealed class ClipboardService : IClipboardService
                 {
                     try
                     {
-                        Logger.Log($"UIA InvalidOperationException in delegate: {ex.GetType().Name}: {ex.Message}");
+                        Logger.Log(
+                            $"UIA InvalidOperationException in delegate: {ex.GetType().Name}: {ex.Message}"
+                        );
                     }
                     catch { }
                     tcs.TrySetException(ex);
