@@ -27,7 +27,7 @@
 
 ## Installation
 
-1. Download TailSlap.exe from the [releases page](https://github.com/lsj5031/tailslap-lite/releases)
+1. Download TailSlap.exe from the [releases page](https://github.com/lsj5031/Tailslap/releases)
 2. Run the executable directly (no installation needed)
 3. The application will start automatically and appear in your system tray
 
@@ -36,9 +36,10 @@
 - **Windows 10 or later**
 - **Internet connection** for LLM processing (local Ollama doesn't require internet)
 ### Real-time Backend Requirements
-- **WebSocket Streaming**: Requires WebSocket-compatible transcription service
-- **Default Endpoint**: `ws://localhost:18000/v1/audio/transcriptions/stream`
-- **Recommended**: [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker) for full streaming support
+- **WebSocket Streaming**: Requires a WebSocket-compatible transcription service
+- **Custom Provider**: Uses `ws://localhost:18000/v1/audio/transcriptions/stream` and TailSlap's richer custom streaming protocol
+- **OpenAI Provider**: Uses `ws://localhost:18000/v1/realtime?intent=transcription` for OpenAI-compatible realtime transcription
+- **Recommended**: [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker) for both streaming modes
 - **Fallback**: Standard HTTP transcription also supported
 
 ## Usage
@@ -56,11 +57,12 @@
 ### Real-time Streaming Transcription
 1. Press the streaming hotkey (default: `Ctrl+Alt+Y`)
 2. Speak naturally - text appears in real-time via WebSocket connection
-3. Automatic silence detection stops recording when you pause speaking
+3. Automatic silence detection can stop recording when you pause speaking, or you can stop manually
 
 **Advanced Settings:**
 - **Streaming Mode**: Enable WebSocket streaming for real-time feedback (requires WebSocket endpoint)
-- **WebSocket Endpoint**: Defaults to `ws://localhost:18000/v1/audio/transcriptions/stream` (built from the base API endpoint)
+- **Realtime Provider**: Choose `custom` for TailSlap's richer streaming protocol or `openai` for OpenAI-compatible `/v1/realtime?intent=transcription`
+- **WebSocket Endpoint**: Built automatically from the base API endpoint for the selected realtime provider
 - **Silence Detection**: Configure threshold (default: 2000ms) to auto-stop recording
 - **Microphone Selection**: Choose preferred microphone device in Settings
 - **Buffer Management**: 500ms aggregation for optimal streaming performance
@@ -104,7 +106,8 @@ You can edit this file directly or use the Settings dialog in the system tray me
 - `SilenceThresholdMs`: Silence detection threshold in milliseconds (default: `2000`)
 - `PreferredMicrophoneIndex`: Microphone device selection (default: `-1` for system default)
 - `StreamResults`: Enable WebSocket streaming (default: `false`)
-- `WebSocketUrl`: Auto-constructed WebSocket endpoint for streaming
+- `RealtimeProvider`: `custom` for TailSlap's native protocol or `openai` for OpenAI-compatible realtime transcription (default: `custom`)
+- `WebSocketUrl`: Auto-constructed WebSocket endpoint for the selected streaming provider
 
 #### Hotkey Configuration
 - `Hotkey`: Text refinement hotkey (default: `Ctrl+Alt+R`)
@@ -176,13 +179,13 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/lsj5031/tailslap-lite/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/lsj5031/tailslap-lite/discussions)
+- **Issues**: [GitHub Issues](https://github.com/lsj5031/Tailslap/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/lsj5031/Tailslap/discussions)
 - **Logs**: Check `%APPDATA%\TailSlap\app.log` for debugging
 
 ## Build Status
 
-![Build](https://github.com/lsj5031/tailslap-lite/actions/workflows/build.yml/badge.svg)
+![Build](https://github.com/lsj5031/Tailslap/actions/workflows/build.yml/badge.svg)
 
 All commits and pull requests are automatically built and tested via GitHub Actions.
 

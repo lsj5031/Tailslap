@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.8] - 2026-03-29
+
+### Added
+- **OpenAI-Compatible Realtime Provider**: Added an `openai` realtime transcription mode that connects to `/v1/realtime?intent=transcription`, supports session update events, and handles OpenAI-style transcription event names alongside the existing custom streaming provider.
+- **Realtime Compatibility Probe Script**: Added `scripts/Test-OpenAIRealtimeTranscription.ps1` to validate OpenAI-compatible realtime transcription endpoints end-to-end.
+
+### Changed
+- **Realtime Provider Selection**: Exposed realtime provider selection in settings so TailSlap can switch between the richer custom streaming protocol and the OpenAI-compatible transcription WebSocket flow.
+- **Repository Automation Links**: Updated docs and GitHub workflows to track the repository's current `master` default branch and GitHub home.
+
+### Fixed
+- **Realtime Item Ordering**: Preserved `item_id` / `previous_item_id` ordering so independent utterances do not overwrite each other during OpenAI-style realtime transcription.
+- **Realtime Finalization During Stop**: Final transcript events now still finalize local state even when the final text matches the last preview, preventing stale item bookkeeping and lost completion handling.
+- **Silence Stop Compatibility**: Local stop-on-silence now cooperates better with server-driven turn detection by allowing late realtime updates to settle during shutdown.
+
 ## [2.0.7] - 2026-03-29
 
 ### Changed

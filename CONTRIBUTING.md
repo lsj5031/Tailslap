@@ -10,7 +10,7 @@ Be respectful, inclusive, and constructive in all interactions.
 
 ### Reporting Issues
 
-1. Check existing [issues](https://github.com/lsj5031/tailslap-lite/issues) to avoid duplicates
+1. Check existing [issues](https://github.com/lsj5031/Tailslap/issues) to avoid duplicates
 2. Include a clear description and steps to reproduce
 3. Share your environment: Windows version, .NET runtime version, LLM provider used
 4. Attach logs from `%APPDATA%\TailSlap\app.log` if relevant

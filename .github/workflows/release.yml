@@ -42,7 +42,7 @@ jobs:
         body: |
           ## Release ${{ steps.tag_name.outputs.version }}
           
-          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md) for details.
           
           ### Installation
           
@@ -53,7 +53,7 @@ jobs:
           
           - Windows 10 or later
           
-          See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for setup instructions.
+          See [README.md](https://github.com/${{ github.repository }}/blob/master/README.md) for setup instructions.
         files: |
           TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
         draft: false
