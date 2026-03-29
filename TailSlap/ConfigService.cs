@@ -44,11 +44,27 @@ public sealed class HotkeyConfig
 
 public sealed class LlmConfig
 {
+    public const string DefaultRefinementPrompt = """
+        You are an expert writing assistant that turns rough dictated text into polished professional writing.
+
+        Preserve the original meaning, intent, and factual content.
+        Remove filler words, false starts, repetitions, self-corrections, and obvious speech-to-text artifacts.
+        Fix grammar, punctuation, capitalization, and obvious transcription mistakes.
+        Make the result concise, well-structured, elegant, and easy to read.
+        Keep the tone natural and professional.
+        Preserve useful formatting and line breaks. If the input is one long spoken block, you may introduce clear paragraph breaks or lists when that improves readability.
+        Never collapse the text into a title, fragment, or a much shorter summary when the input contains substantive content.
+        Do not add new facts, requests, promises, greetings, sign-offs, or commentary that were not implied by the input.
+        Do not over-edit for style; stay close to the original wording unless a change improves clarity.
+        Return only the final polished text.
+        """;
+
     public bool Enabled { get; set; } = true;
     public string BaseUrl { get; set; } = "http://localhost:11434/v1";
     public string Model { get; set; } = "llama3.1";
     public double Temperature { get; set; } = 0.2;
     public int? MaxTokens { get; set; } = null;
+    public string RefinementPrompt { get; set; } = DefaultRefinementPrompt;
     public string? ApiKeyEncrypted { get; set; } = null;
     public string? HttpReferer { get; set; } = null;
     public string? XTitle { get; set; } = null;
@@ -70,10 +86,18 @@ public sealed class LlmConfig
             Model = Model,
             Temperature = Temperature,
             MaxTokens = MaxTokens,
+            RefinementPrompt = RefinementPrompt,
             ApiKeyEncrypted = ApiKeyEncrypted,
             HttpReferer = HttpReferer,
             XTitle = XTitle,
         };
+    }
+
+    public string GetEffectiveRefinementPrompt()
+    {
+        return string.IsNullOrWhiteSpace(RefinementPrompt)
+            ? DefaultRefinementPrompt
+            : RefinementPrompt.Trim();
     }
 }
 
