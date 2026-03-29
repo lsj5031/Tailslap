@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.6] - 2026-03-29
+
+### Added
+- **Custom Refinement Prompt**: Added a configurable `Llm.RefinementPrompt` setting and corresponding Settings UI field so refinement behavior can be tuned without rebuilding.
+- **Realtime WebSocket Timeout Controls**: Added configurable connection, receive, send, heartbeat interval, and heartbeat timeout settings for real-time transcription.
+
+### Changed
+- **Refinement Prompting**: Reworked the default refinement instructions to better clean up dictated text while preserving meaning, structure, and professional tone.
+- **Realtime Shutdown Flow**: Allowed final transcription updates to continue during shutdown so delayed server-finalized text can still be applied before cleanup completes.
+
+### Fixed
+- **OpenAI-Compatible `max_tokens` Interop**: Stopped sending `max_tokens: null`, which fixed one-token truncation from certain local OpenAI-compatible proxy endpoints.
+- **Broken Refinement Output Guardrails**: Added recovery logic and validation for suspiciously short refinement results so obviously incomplete model output is not pasted over user text.
+- **Refine Stability**: Hardened cancellation, null checks, and clipboard/UIA error handling to reduce intermittent refine crashes.
+- **Realtime Connection Recovery**: Added heartbeat-based connection monitoring, timeout handling, and connection-loss recovery for real-time transcription sessions.
+- **Realtime Final Transcript Loss**: Fixed a shutdown bug where final server text could arrive after stop had begun and be ignored by the client.
+
 ## [2.0.5] - 2026-03-28
 
 ### Added
