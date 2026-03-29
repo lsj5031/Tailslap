@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.9] - 2026-03-29
+
+### Changed
+- **Standard Transcription Mode**: Standard push-to-talk transcription now always uses the non-streaming `/audio/transcriptions` request path, even if `StreamResults` is enabled. Live incremental streaming remains available through the dedicated realtime hotkey.
+- **Transcription History Semantics**: Standard transcription history now keeps the raw transcription result, while enhanced output is mirrored into refinement history as a raw-to-refined pair when auto-enhancement changes the text.
+
+### Fixed
+- **Manual Stop Auto-Enhancement**: Stopping recording with the transcription hotkey no longer cancels the later LLM enhancement step, so long recordings can still be auto-refined after you stop recording.
+- **Standard Transcription Truncation**: Avoided fragmentary standard transcription results caused by SSE chunk aggregation on non-realtime endpoints by routing standard transcription through the full-response path.
+
 ## [2.0.8] - 2026-03-29
 
 ### Added

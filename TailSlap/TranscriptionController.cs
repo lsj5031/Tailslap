@@ -17,7 +17,7 @@ public sealed class TranscriptionController : ITranscriptionController
 
     private bool _isTranscribing;
     private bool _isRecording;
-    private CancellationTokenSource? _transcriberCts;
+    private CancellationTokenSource? _recordingCts;
 
     public bool IsTranscribing => _isTranscribing;
     public bool IsRecording => _isRecording;
@@ -104,7 +104,7 @@ public sealed class TranscriptionController : ITranscriptionController
     {
         try
         {
-            _transcriberCts?.Cancel();
+            _recordingCts?.Cancel();
             NotificationService.ShowInfo("Stopping recording... Processing audio.");
         }
         catch (Exception ex)
@@ -125,8 +125,10 @@ public sealed class TranscriptionController : ITranscriptionController
                 $"Transcriber config: BaseUrl={cfg.Transcriber.BaseUrl}, Model={cfg.Transcriber.Model}, Timeout={cfg.Transcriber.TimeoutSeconds}s"
             );
 
-            _transcriberCts = new CancellationTokenSource();
-            Logger.Log($"Created new CancellationTokenSource: {_transcriberCts?.GetHashCode()}");
+            _recordingCts = new CancellationTokenSource();
+            Logger.Log(
+                $"Created new recording CancellationTokenSource: {_recordingCts?.GetHashCode()}"
+            );
 
             NotificationService.ShowInfo("🎤 Recording... Press hotkey again to stop.");
 
@@ -188,11 +190,12 @@ public sealed class TranscriptionController : ITranscriptionController
             Logger.Log($"Creating RemoteTranscriber with BaseUrl: {cfg.Transcriber.BaseUrl}");
             var transcriber = _remoteTranscriberFactory.Create(cfg.Transcriber);
 
-            var transcriptionText = cfg.Transcriber.StreamResults
-                ? await TranscribeStreamingAsync(transcriber, audioFilePath, cfg)
-                    .ConfigureAwait(false)
-                : await TranscribeNonStreamingAsync(transcriber, audioFilePath, cfg)
-                    .ConfigureAwait(false);
+            var transcriptionText = await TranscribeRecordedAudioAsync(
+                    transcriber,
+                    audioFilePath,
+                    cfg
+                )
+                .ConfigureAwait(false);
 
             if (string.IsNullOrEmpty(transcriptionText))
                 return;
@@ -205,18 +208,12 @@ public sealed class TranscriptionController : ITranscriptionController
                 .SetTextAndPasteAsync(finalText, cfg.Transcriber.AutoPaste)
                 .ConfigureAwait(false);
 
-            // Log transcription to history
-            try
-            {
-                _history.AppendTranscription(finalText, recordingStats?.DurationMs ?? 0);
-                Logger.Log(
-                    $"Transcription logged: {finalText.Length} characters, duration={recordingStats?.DurationMs}ms"
-                );
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"Failed to log transcription to history: {ex.Message}");
-            }
+            PersistHistoryEntries(
+                transcriptionText,
+                finalText,
+                cfg,
+                recordingStats?.DurationMs ?? 0
+            );
 
             Logger.Log("Transcription completed successfully.");
         }
@@ -227,8 +224,8 @@ public sealed class TranscriptionController : ITranscriptionController
         }
         finally
         {
-            _transcriberCts?.Dispose();
-            _transcriberCts = null;
+            _recordingCts?.Dispose();
+            _recordingCts = null;
 
             // Clean up temporary audio file
             try
@@ -269,7 +266,7 @@ public sealed class TranscriptionController : ITranscriptionController
                 .RecordAsync(
                     audioFilePath,
                     maxDurationMs: 0,
-                    ct: _transcriberCts?.Token ?? CancellationToken.None,
+                    ct: _recordingCts?.Token ?? CancellationToken.None,
                     enableVAD: cfg.Transcriber.EnableVAD,
                     silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
                 )
@@ -285,6 +282,23 @@ public sealed class TranscriptionController : ITranscriptionController
             Logger.Log("Recording cancelled");
             throw;
         }
+    }
+
+    private async Task<string> TranscribeRecordedAudioAsync(
+        IRemoteTranscriber transcriber,
+        string audioFilePath,
+        AppConfig cfg
+    )
+    {
+        if (cfg.Transcriber.StreamResults)
+        {
+            Logger.Log(
+                "Standard transcription ignores StreamResults and uses non-streaming mode. Use the dedicated realtime hotkey for live updates."
+            );
+        }
+
+        return await TranscribeNonStreamingAsync(transcriber, audioFilePath, cfg)
+            .ConfigureAwait(false);
     }
 
     private async Task<string> MaybeEnhanceTranscriptionAsync(
@@ -314,9 +328,8 @@ public sealed class TranscriptionController : ITranscriptionController
             var enhancementConfig = cfg.Llm.Clone();
             enhancementConfig.Temperature = Math.Min(enhancementConfig.Temperature, 0.2);
             var refiner = _textRefinerFactory.Create(enhancementConfig);
-            var enhanced = await refiner
-                .RefineAsync(transcriptionText, _transcriberCts?.Token ?? CancellationToken.None)
-                .ConfigureAwait(false);
+            // Manual stop should end recording only; enhancement still needs a live token.
+            var enhanced = await refiner.RefineAsync(transcriptionText).ConfigureAwait(false);
 
             if (!string.IsNullOrWhiteSpace(enhanced) && enhanced.Length > 0)
             {
@@ -345,6 +358,41 @@ public sealed class TranscriptionController : ITranscriptionController
         }
 
         return transcriptionText;
+    }
+
+    private void PersistHistoryEntries(
+        string transcriptionText,
+        string finalText,
+        AppConfig cfg,
+        int recordingDurationMs
+    )
+    {
+        try
+        {
+            _history.AppendTranscription(transcriptionText, recordingDurationMs);
+            Logger.Log(
+                $"Raw transcription logged: {transcriptionText.Length} characters, duration={recordingDurationMs}ms"
+            );
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Failed to log transcription to history: {ex.Message}");
+        }
+
+        if (string.Equals(transcriptionText, finalText, StringComparison.Ordinal))
+            return;
+
+        try
+        {
+            _history.Append(transcriptionText, finalText, cfg.Llm.Model);
+            Logger.Log(
+                $"Enhanced transcription logged to refinement history: {finalText.Length} characters, model={cfg.Llm.Model}"
+            );
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Failed to log enhanced transcription to refinement history: {ex.Message}");
+        }
     }
 
     internal static bool ShouldUseEnhancedText(
