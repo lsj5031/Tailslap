@@ -205,7 +205,6 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         Logger.Log("StopAsync: Stopping real-time transcription");
         NotificationService.ShowInfo("Stopping real-time transcription...");
         _allowRealtimeTextUpdates = false;
-        _textProcessingCts?.Cancel();
 
         _realtimeRecorder?.StopRecording();
 
@@ -254,6 +253,14 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                     "StopAsync: Waiting for server to close connection or send final message..."
                 );
                 await Task.WhenAny(serverClosedTcs.Task, finalMessageTcs.Task, Task.Delay(10000));
+
+                // If the server delivered a final transcript, let any in-flight text processing
+                // finish before cleanup cancels the processing token and resets state.
+                if (finalMessageTcs.Task.IsCompletedSuccessfully)
+                {
+                    await _transcriptionLock.WaitAsync();
+                    _transcriptionLock.Release();
+                }
 
                 _realtimeTranscriber.OnDisconnected -= OnServerDisconnected;
                 _realtimeTranscriber.OnTranscription -= OnTranscriptionReceived;
@@ -336,7 +343,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
         _lastReceivedRealtimeText = text;
 
-        if (!_allowRealtimeTextUpdates)
+        if (!_allowRealtimeTextUpdates && !isFinal)
         {
             Logger.Log("HandleRealtimeTranscriptionEvent: Ignoring local text update during stop");
             return;
@@ -370,7 +377,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             {
                 state = _streamingState;
             }
-            if (state != StreamingState.Streaming)
+            if (state != StreamingState.Streaming && !(isFinal && state == StreamingState.Stopping))
             {
                 Logger.Log($"ProcessTranscriptionAsync: Ignoring, state={state}");
                 return;
@@ -613,7 +620,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     {
         try
         {
-            Logger.Log("HandleRealtimeConnectionLost: Connection lost detected, initiating recovery");
+            Logger.Log(
+                "HandleRealtimeConnectionLost: Connection lost detected, initiating recovery"
+            );
 
             bool shouldRecover = false;
             lock (_streamingStateLock)
@@ -628,7 +637,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             if (shouldRecover)
             {
                 // Notify user of connection issue
-                NotificationService.ShowWarning("Real-time transcription connection lost. Stopping...");
+                NotificationService.ShowWarning(
+                    "Real-time transcription connection lost. Stopping..."
+                );
 
                 // Gracefully stop and cleanup
                 await StopAsync();
