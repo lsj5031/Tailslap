@@ -99,6 +99,16 @@ public static class NotificationService
 
         if (_trayIcon == null)
         {
+            if (_uiContext == null)
+            {
+                try
+                {
+                    Logger.Log($"Notification suppressed without UI context [{type}]: {message}");
+                }
+                catch { }
+                return;
+            }
+
             // Fallback to simple message box if no tray icon
             ShowFallbackMessageBox(title, message, type);
             return;
