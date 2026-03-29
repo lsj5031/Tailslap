@@ -107,6 +107,7 @@ public sealed class AudioRecorder : IDisposable
     private int _preferredDeviceIndex = -1;
     private int _stopInvoked;
     private bool _waveInResetIssued;
+    private DateTime _lastStreamingRecoveryAttempt = DateTime.MinValue;
 
     public bool IsRecording => _isRecording;
 
@@ -804,6 +805,7 @@ public sealed class AudioRecorder : IDisposable
         _lastExternalSpeechTime = DateTime.MinValue;
         _stopInvoked = 0;
         _waveInResetIssued = false;
+        _lastStreamingRecoveryAttempt = DateTime.MinValue;
 
         int numDevices = waveInGetNumDevs();
         Logger.Log(
@@ -1131,6 +1133,18 @@ public sealed class AudioRecorder : IDisposable
             if (gap > warningThresholdMs)
             {
                 Logger.Log($"VAD[WARN]: No buffers ready! Gap since last buffer: {gap:F0}ms");
+
+                const int recoveryThresholdMs = 3000;
+                const int recoveryRetryIntervalMs = 3000;
+                bool recoveryCooldownElapsed =
+                    _lastStreamingRecoveryAttempt == DateTime.MinValue
+                    || (now - _lastStreamingRecoveryAttempt).TotalMilliseconds
+                        >= recoveryRetryIntervalMs;
+
+                if (gap >= recoveryThresholdMs && recoveryCooldownElapsed)
+                {
+                    AttemptStreamingBufferRecovery(gap);
+                }
             }
         }
 
@@ -1140,6 +1154,120 @@ public sealed class AudioRecorder : IDisposable
         }
 
         return false;
+    }
+
+    private void AttemptStreamingBufferRecovery(double gapMs)
+    {
+        if (!_isRecording || _hWaveIn == null || _hWaveIn.IsInvalid)
+        {
+            return;
+        }
+
+        _lastStreamingRecoveryAttempt = DateTime.Now;
+        Logger.Log(
+            $"AudioRecorder: Attempting streaming buffer recovery after {gapMs:F0}ms without buffers"
+        );
+
+        try
+        {
+            int stopResult = waveInStop(_hWaveIn);
+            if (stopResult != 0)
+            {
+                Logger.Log(
+                    $"AudioRecorder.StreamingRecovery: waveInStop returned error {stopResult}"
+                );
+            }
+
+            int resetResult = ResetWaveIn("AudioRecorder.StreamingRecovery");
+            if (resetResult != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Streaming recovery failed during waveInReset: error {resetResult}"
+                );
+            }
+
+            var waitStart = Environment.TickCount64;
+            while (!IsAllBuffersReturned() && Environment.TickCount64 - waitStart < 1000)
+            {
+                Thread.Sleep(20);
+            }
+
+            if (!IsAllBuffersReturned())
+            {
+                throw new InvalidOperationException(
+                    "Streaming recovery timed out waiting for audio buffers to return."
+                );
+            }
+
+            for (int i = 0; i < BUFFER_COUNT; i++)
+            {
+                if ((_waveHeaders[i].dwFlags & WHDR_PREPARED) != 0)
+                {
+                    int unprepResult = waveInUnprepareHeader(
+                        _hWaveIn,
+                        ref _waveHeaders[i],
+                        Marshal.SizeOf(typeof(WAVEHDR))
+                    );
+                    if (unprepResult != 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Streaming recovery failed to unprepare header {i}: error {unprepResult}"
+                        );
+                    }
+                }
+
+                _waveHeaders[i] = new WAVEHDR
+                {
+                    lpData = _bufferHandles[i].AddrOfPinnedObject(),
+                    dwBufferLength = (uint)BUFFER_SIZE,
+                    dwBytesRecorded = 0,
+                    dwUser = IntPtr.Zero,
+                    dwFlags = 0,
+                    dwLoops = 0,
+                };
+
+                int prepResult = waveInPrepareHeader(
+                    _hWaveIn,
+                    ref _waveHeaders[i],
+                    Marshal.SizeOf(typeof(WAVEHDR))
+                );
+                if (prepResult != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Streaming recovery failed to prepare header {i}: error {prepResult}"
+                    );
+                }
+
+                int addResult = waveInAddBuffer(
+                    _hWaveIn,
+                    ref _waveHeaders[i],
+                    Marshal.SizeOf(typeof(WAVEHDR))
+                );
+                if (addResult != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Streaming recovery failed to re-add header {i}: error {addResult}"
+                    );
+                }
+            }
+
+            int startResult = waveInStart(_hWaveIn);
+            if (startResult != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Streaming recovery failed to restart capture: error {startResult}"
+                );
+            }
+
+            _waveInResetIssued = false;
+            _lastBufferTime = DateTime.Now;
+            Logger.Log("AudioRecorder: Streaming buffer recovery restarted capture successfully");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"AudioRecorder.StreamingRecovery: Exception - {ex.Message}");
+            throw;
+        }
     }
 
     public void StopRecording()

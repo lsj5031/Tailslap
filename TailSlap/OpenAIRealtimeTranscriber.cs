@@ -28,6 +28,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
     private int _chunksSent = 0;
     private int _chunksSkipped = 0;
     private DateTime _lastReceiveTime = DateTime.MinValue;
+    private DateTime _lastSendTime = DateTime.MinValue;
     private int _consecutiveErrors = 0;
     private const int MaxConsecutiveErrors = 5;
     private readonly Dictionary<string, string> _itemTexts = new(StringComparer.Ordinal);
@@ -86,6 +87,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
             Logger.Log("OpenAIRealtimeTranscriber: Connected successfully");
 
             _lastReceiveTime = DateTime.UtcNow;
+            _lastSendTime = _lastReceiveTime;
             _chunksSent = 0;
             _chunksSkipped = 0;
             _itemTexts.Clear();
@@ -278,6 +280,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                                 )
                                 .ConfigureAwait(false);
 
+                            _lastSendTime = DateTime.UtcNow;
                             Interlocked.Increment(ref _chunksSent);
                         }
 
@@ -333,6 +336,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         await _ws!
             .SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct)
             .ConfigureAwait(false);
+        _lastSendTime = DateTime.UtcNow;
 
         // Commit the buffer to trigger transcription
         var commitEvent = new { type = "input_audio_buffer.commit" };
@@ -342,6 +346,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         await _ws!
             .SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct)
             .ConfigureAwait(false);
+        _lastSendTime = DateTime.UtcNow;
 
         Logger.Log("OpenAIRealtimeTranscriber: Sent commit");
 
@@ -353,6 +358,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         await _ws!
             .SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct)
             .ConfigureAwait(false);
+        _lastSendTime = DateTime.UtcNow;
 
         Logger.Log("OpenAIRealtimeTranscriber: Sent buffer clear");
     }
@@ -385,6 +391,14 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                 {
                     if (ct.IsCancellationRequested)
                         break;
+
+                    if (!ShouldTreatReceiveTimeoutAsConnectionLoss())
+                    {
+                        Logger.Log(
+                            "OpenAIRealtimeTranscriber: Receive timeout while audio is still flowing; continuing"
+                        );
+                        continue;
+                    }
 
                     Logger.Log("OpenAIRealtimeTranscriber: Receive timeout");
                     await HandleConnectionLostAsync("Receive timeout");
@@ -584,6 +598,17 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                 break;
             }
         }
+    }
+
+    private bool ShouldTreatReceiveTimeoutAsConnectionLoss()
+    {
+        var now = DateTime.UtcNow;
+        if (_lastSendTime == DateTime.MinValue)
+        {
+            return true;
+        }
+
+        return now - _lastSendTime >= _receiveTimeout;
     }
 
     private string MergeItemText(string? itemId, string delta)

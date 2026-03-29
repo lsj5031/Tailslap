@@ -195,6 +195,101 @@ public class RealtimeTranscriptionControllerTests
         Assert.Equal(6, GetPrivateField<int>(controller, "_lastTypedLength"));
     }
 
+    [Fact]
+    public void CanProcessOrderedRealtimeUpdate_UnknownPreviousItem_DoesNotBlock()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        var update = new RealtimeTranscriptionUpdate
+        {
+            Text = "hello",
+            IsFinal = false,
+            ItemId = "item-2",
+            PreviousItemId = "item-1",
+        };
+
+        Assert.True(InvokeCanProcessOrderedRealtimeUpdate(controller, update));
+    }
+
+    [Fact]
+    public void CanProcessOrderedRealtimeUpdate_PendingPreviousItem_StillBlocks()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        var pendingUpdatesField = typeof(RealtimeTranscriptionController).GetField(
+            "_pendingOrderedRealtimeUpdates",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(pendingUpdatesField);
+
+        var pendingUpdateType = pendingUpdatesField!.FieldType.GenericTypeArguments[1];
+        var pendingUpdate = Activator.CreateInstance(pendingUpdateType);
+        Assert.NotNull(pendingUpdate);
+
+        pendingUpdateType
+            .GetProperty("Update", BindingFlags.Instance | BindingFlags.Public)!
+            .SetValue(
+                pendingUpdate,
+                new RealtimeTranscriptionUpdate
+                {
+                    Text = "first",
+                    IsFinal = false,
+                    ItemId = "item-1",
+                }
+            );
+        pendingUpdateType
+            .GetProperty("Sequence", BindingFlags.Instance | BindingFlags.Public)!
+            .SetValue(pendingUpdate, 0L);
+
+        var pendingUpdates = pendingUpdatesField.GetValue(controller);
+        pendingUpdatesField
+            .FieldType.GetMethod("Add")!
+            .Invoke(pendingUpdates, new object?[] { "item-1", pendingUpdate });
+
+        var update = new RealtimeTranscriptionUpdate
+        {
+            Text = "second",
+            IsFinal = false,
+            ItemId = "item-2",
+            PreviousItemId = "item-1",
+        };
+
+        Assert.False(InvokeCanProcessOrderedRealtimeUpdate(controller, update));
+    }
+
+    private static bool InvokeCanProcessOrderedRealtimeUpdate(
+        RealtimeTranscriptionController controller,
+        RealtimeTranscriptionUpdate update
+    )
+    {
+        var method = typeof(RealtimeTranscriptionController).GetMethod(
+            "CanProcessOrderedRealtimeUpdate",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+        return Assert.IsType<bool>(method!.Invoke(controller, new object[] { update }));
+    }
+
     private static async Task InvokeProcessTranscriptionAsync(
         RealtimeTranscriptionController controller,
         string text,

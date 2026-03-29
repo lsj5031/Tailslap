@@ -67,6 +67,42 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
+    [DllImport("user32.dll")]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [DllImport("user32.dll")]
+    private static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+    private const int INPUT_KEYBOARD = 1;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_SCANCODE = 0x0008;
+    private const uint MAPVK_VK_TO_VSC = 0x0;
+    private const uint VK_BACK = 0x08;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public int type;
+        public INPUTUNION U;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct INPUTUNION
+    {
+        [FieldOffset(0)]
+        public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
     private sealed class PendingOrderedRealtimeUpdate
     {
         public required RealtimeTranscriptionUpdate Update { get; set; }
@@ -440,7 +476,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private bool CanProcessOrderedRealtimeUpdate(RealtimeTranscriptionUpdate update)
     {
         return string.IsNullOrEmpty(update.PreviousItemId)
-            || _completedOrderedRealtimeItems.Contains(update.PreviousItemId);
+            || _completedOrderedRealtimeItems.Contains(update.PreviousItemId)
+            || !_orderedRealtimeSequences.ContainsKey(update.PreviousItemId)
+                && !_pendingOrderedRealtimeUpdates.ContainsKey(update.PreviousItemId);
     }
 
     private void ProcessLegacyTranscriptionEvent(string text, bool isFinal)
@@ -649,8 +687,47 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
         try
         {
-            SendKeys.SendWait("{BS " + count + "}");
-            SendKeys.Flush();
+            var scanCode = (ushort)MapVirtualKey(VK_BACK, MAPVK_VK_TO_VSC);
+            if (scanCode == 0)
+            {
+                scanCode = 0x0E;
+            }
+
+            var inputs = new INPUT[count * 2];
+            for (int i = 0; i < count; i++)
+            {
+                int downIndex = i * 2;
+                inputs[downIndex] = new INPUT
+                {
+                    type = INPUT_KEYBOARD,
+                    U = new INPUTUNION
+                    {
+                        ki = new KEYBDINPUT { wScan = scanCode, dwFlags = KEYEVENTF_SCANCODE },
+                    },
+                };
+                inputs[downIndex + 1] = new INPUT
+                {
+                    type = INPUT_KEYBOARD,
+                    U = new INPUTUNION
+                    {
+                        ki = new KEYBDINPUT
+                        {
+                            wScan = scanCode,
+                            dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
+                        },
+                    },
+                };
+            }
+
+            var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+            if (sent != inputs.Length)
+            {
+                Logger.Log(
+                    $"SendBackspace: SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
+                );
+                SendKeys.SendWait("{BS " + count + "}");
+                SendKeys.Flush();
+            }
         }
         catch (Exception ex)
         {

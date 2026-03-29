@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -70,6 +71,20 @@ public sealed class HistoryService : IHistoryService
 
     public void Append(string original, string refined, string model)
     {
+        if (
+            string.IsNullOrWhiteSpace(original)
+            || string.IsNullOrWhiteSpace(refined)
+            || string.IsNullOrWhiteSpace(model)
+        )
+        {
+            try
+            {
+                Logger.Log("Encrypted history append skipped: original/refined/model was empty");
+            }
+            catch { }
+            return;
+        }
+
         try
         {
             Directory.CreateDirectory(Dir);
@@ -121,16 +136,28 @@ public sealed class HistoryService : IHistoryService
                 FileShare.ReadWrite
             );
             using var reader = new StreamReader(stream);
-            string? line;
-            while ((line = reader.ReadLine()) != null)
+            foreach (var entryJson in ReadRawJsonEntries(reader))
             {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
                 try
                 {
-                    var entry = JsonSerializer.Deserialize<HistoryEntry>(line, JsonLOptions);
+                    var entry = JsonSerializer.Deserialize<HistoryEntry>(entryJson, JsonLOptions);
                     if (entry != null)
                     {
+                        if (
+                            string.IsNullOrWhiteSpace(entry.OriginalCiphertext)
+                            || string.IsNullOrWhiteSpace(entry.RefinedCiphertext)
+                        )
+                        {
+                            try
+                            {
+                                Logger.Log(
+                                    "Encrypted history entry skipped: missing ciphertext payload"
+                                );
+                            }
+                            catch { }
+                            continue;
+                        }
+
                         var decryptedOriginal = DecryptString(entry.OriginalCiphertext);
                         var decryptedRefined = DecryptString(entry.RefinedCiphertext);
 
@@ -144,7 +171,7 @@ public sealed class HistoryService : IHistoryService
                     try
                     {
                         Logger.Log(
-                            $"Encrypted history entry parse error (line too long or invalid): {line.Length} chars. Error: {ex.Message}"
+                            $"Encrypted history entry parse error (entry too long or invalid): {entryJson.Length} chars. Error: {ex.Message}"
                         );
                     }
                     catch { }
@@ -172,6 +199,16 @@ public sealed class HistoryService : IHistoryService
 
     public void AppendTranscription(string text, int recordingDurationMs)
     {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            try
+            {
+                Logger.Log("Encrypted transcription history append skipped: text was empty");
+            }
+            catch { }
+            return;
+        }
+
         try
         {
             Directory.CreateDirectory(Dir);
@@ -222,19 +259,28 @@ public sealed class HistoryService : IHistoryService
                 FileShare.ReadWrite
             );
             using var reader = new StreamReader(stream);
-            string? line;
-            while ((line = reader.ReadLine()) != null)
+            foreach (var entryJson in ReadRawJsonEntries(reader))
             {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
                 try
                 {
                     var entry = JsonSerializer.Deserialize<TranscriptionHistoryEntry>(
-                        line,
+                        entryJson,
                         JsonLOptions
                     );
                     if (entry != null)
                     {
+                        if (string.IsNullOrWhiteSpace(entry.TextCiphertext))
+                        {
+                            try
+                            {
+                                Logger.Log(
+                                    "Encrypted transcription history entry skipped: missing ciphertext payload"
+                                );
+                            }
+                            catch { }
+                            continue;
+                        }
+
                         var decryptedText = DecryptString(entry.TextCiphertext);
                         result.Add((entry.Timestamp, decryptedText, entry.RecordingDurationMs));
                     }
@@ -244,7 +290,7 @@ public sealed class HistoryService : IHistoryService
                     try
                     {
                         Logger.Log(
-                            $"Encrypted transcription history parse error (line too long or invalid): {line.Length} chars. Error: {ex.Message}"
+                            $"Encrypted transcription history parse error (entry too long or invalid): {entryJson.Length} chars. Error: {ex.Message}"
                         );
                     }
                     catch { }
@@ -277,8 +323,6 @@ public sealed class HistoryService : IHistoryService
             if (!File.Exists(filePath))
                 return;
 
-            // Read raw lines without decrypting to preserve original ciphertext
-            var allLines = new List<string>();
             using (
                 var stream = new FileStream(
                     filePath,
@@ -289,44 +333,37 @@ public sealed class HistoryService : IHistoryService
             )
             using (var reader = new StreamReader(stream))
             {
-                string? line;
-                while ((line = reader.ReadLine()) != null)
-                {
-                    if (!string.IsNullOrWhiteSpace(line))
-                        allLines.Add(line);
-                }
-            }
+                var allEntries = ReadRawJsonEntries(reader);
 
-            if (allLines.Count <= MaxEntries)
-                return;
+                if (allEntries.Count <= MaxEntries)
+                    return;
 
-            int beforeCount = allLines.Count;
-            // Keep only the last MaxEntries lines (preserving original encrypted data)
-            var trimmedLines = allLines.GetRange(allLines.Count - MaxEntries, MaxEntries);
-            int afterCount = trimmedLines.Count;
+                int beforeCount = allEntries.Count;
+                var trimmedEntries = allEntries.GetRange(allEntries.Count - MaxEntries, MaxEntries);
+                int afterCount = trimmedEntries.Count;
 
-            // Write to temp file first for atomic replacement
-            var tempPath = filePath + ".tmp";
-            using (
-                var writeStream = new FileStream(
-                    tempPath,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.None
+                var tempPath = filePath + ".tmp";
+                using (
+                    var writeStream = new FileStream(
+                        tempPath,
+                        FileMode.Create,
+                        FileAccess.Write,
+                        FileShare.None
+                    )
                 )
-            )
-            using (var writer = new StreamWriter(writeStream))
-            {
-                foreach (var rawLine in trimmedLines)
+                using (var writer = new StreamWriter(writeStream))
                 {
-                    writer.WriteLine(rawLine);
+                    foreach (var rawEntry in trimmedEntries)
+                    {
+                        writer.Write(rawEntry);
+                        writer.WriteLine();
+                    }
                 }
+
+                File.Move(tempPath, filePath, overwrite: true);
+
+                DiagnosticsEventSource.Log.HistoryTrim(historyType, beforeCount, afterCount);
             }
-
-            // Atomic move to replace original file
-            File.Move(tempPath, filePath, overwrite: true);
-
-            DiagnosticsEventSource.Log.HistoryTrim(historyType, beforeCount, afterCount);
         }
         catch (Exception ex)
         {
@@ -339,6 +376,84 @@ public sealed class HistoryService : IHistoryService
                 $"Failed to trim encrypted {historyType} history. File may grow large."
             );
         }
+    }
+
+    private static List<string> ReadRawJsonEntries(StreamReader reader)
+    {
+        var entries = new List<string>();
+        var current = new StringBuilder();
+        bool started = false;
+        bool inString = false;
+        bool isEscaped = false;
+        int depth = 0;
+
+        while (!reader.EndOfStream)
+        {
+            int value = reader.Read();
+            if (value < 0)
+                break;
+
+            char c = (char)value;
+
+            if (!started)
+            {
+                if (char.IsWhiteSpace(c))
+                    continue;
+
+                if (c != '{')
+                    continue;
+
+                started = true;
+                depth = 1;
+                current.Append(c);
+                continue;
+            }
+
+            current.Append(c);
+
+            if (isEscaped)
+            {
+                isEscaped = false;
+                continue;
+            }
+
+            if (c == '\\' && inString)
+            {
+                isEscaped = true;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = !inString;
+                continue;
+            }
+
+            if (inString)
+                continue;
+
+            if (c == '{')
+            {
+                depth++;
+            }
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    entries.Add(current.ToString().Trim());
+                    current.Clear();
+                    started = false;
+                }
+            }
+        }
+
+        if (started && current.Length > 0)
+        {
+            entries.Add(current.ToString().Trim());
+        }
+
+        return entries.Where(entry => !string.IsNullOrWhiteSpace(entry)).ToList();
     }
 
     public void ClearRefinementHistory()
