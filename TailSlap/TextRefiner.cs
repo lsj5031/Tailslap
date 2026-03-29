@@ -11,6 +11,16 @@ using TailSlap;
 public sealed class TextRefiner : ITextRefiner
 {
     private static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(30);
+    private const string ShortOutputRecoveryPrompt = """
+        The previous response was too short and dropped important content.
+
+        Rewrite the full input into polished professional writing while preserving all substantive meaning.
+        Do not summarize, shorten to a fragment, or return only one corrected phrase unless the input itself is that short.
+        Remove filler words and transcription artifacts, fix grammar and punctuation, and improve structure for readability.
+        Return only the complete polished text.
+        """;
+    private const string ShortOutputErrorMessage =
+        "Provider returned an incomplete refinement. Try lowering temperature or using a more reliable model.";
 
     private readonly LlmConfig _cfg;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -18,6 +28,7 @@ public sealed class TextRefiner : ITextRefiner
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         TypeInfoResolver = TailSlapJsonContext.Default,
     };
 
@@ -87,13 +98,8 @@ public sealed class TextRefiner : ITextRefiner
             MaxTokens = _cfg.MaxTokens,
             Messages = new()
             {
-                new()
-                {
-                    Role = "system",
-                    Content =
-                        "You are a concise writing assistant. Improve grammar, clarity, and tone without changing meaning. Preserve formatting and line breaks. Return only the improved text.",
-                },
-                new() { Role = "user", Content = text ?? string.Empty },
+                new() { Role = "system", Content = _cfg.GetEffectiveRefinementPrompt() },
+                new() { Role = "user", Content = BuildRewriteMessage(text ?? string.Empty) },
             },
         };
 
@@ -166,15 +172,43 @@ public sealed class TextRefiner : ITextRefiner
                     throw new Exception($"LLM error {resp.StatusCode}: {errorBody}");
                 }
 
-                var body = await resp
-                    .Content.ReadAsStringAsync(timeoutCts.Token)
-                    .ConfigureAwait(false);
-                var parsed =
-                    JsonSerializer.Deserialize(body, TailSlapJsonContext.Default.ChatResponse)
-                    ?? throw new Exception("Invalid response JSON");
-                if (parsed.Choices is not { Count: > 0 } || parsed.Choices[0].Message is null)
-                    throw new Exception("No choices in response");
-                var result = parsed.Choices[0].Message.Content?.Trim() ?? "";
+                var result = await ReadResultAsync(resp, timeoutCts.Token).ConfigureAwait(false);
+                if (LooksSuspiciouslyShort(text ?? string.Empty, result))
+                {
+                    try
+                    {
+                        Logger.Log(
+                            $"LLM output suspiciously short; retrying with recovery prompt. inputLen={(text ?? string.Empty).Length}, outputLen={result.Length}"
+                        );
+                    }
+                    catch { }
+
+                    var recovered = await RetryForShortOutputAsync(
+                            http,
+                            endpoint,
+                            text ?? string.Empty,
+                            ct
+                        )
+                        .ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(recovered))
+                    {
+                        result = recovered;
+                    }
+                }
+
+                if (LooksSuspiciouslyShort(text ?? string.Empty, result))
+                {
+                    try
+                    {
+                        Logger.Log(
+                            $"LLM output still suspiciously short after recovery. inputLen={(text ?? string.Empty).Length}, outputLen={result.Length}"
+                        );
+                    }
+                    catch { }
+
+                    throw new InvalidOperationException(ShortOutputErrorMessage);
+                }
+
                 try
                 {
                     Logger.Log(
@@ -214,6 +248,108 @@ public sealed class TextRefiner : ITextRefiner
         DiagnosticsEventSource.Log.RefinementFailed(finalError, null);
         NotificationService.ShowError(finalError);
         throw new Exception(finalError);
+    }
+
+    private async Task<string> RetryForShortOutputAsync(
+        HttpClient http,
+        string endpoint,
+        string text,
+        CancellationToken ct
+    )
+    {
+        var retryRequest = new ChatRequest
+        {
+            Model = _cfg.Model,
+            Temperature = Math.Min(_cfg.Temperature, 0.2),
+            MaxTokens = _cfg.MaxTokens,
+            Messages = new()
+            {
+                new() { Role = "system", Content = ShortOutputRecoveryPrompt },
+                new() { Role = "user", Content = BuildRewriteMessage(text) },
+            },
+        };
+
+        var json = JsonSerializer.Serialize(retryRequest, JsonOpts);
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+
+        if (!string.IsNullOrWhiteSpace(_cfg.ApiKey))
+            request.Headers.Authorization = new("Bearer", _cfg.ApiKey.Trim());
+        if (!string.IsNullOrWhiteSpace(_cfg.HttpReferer))
+            request.Headers.TryAddWithoutValidation("Referer", _cfg.HttpReferer);
+        if (!string.IsNullOrWhiteSpace(_cfg.XTitle))
+            request.Headers.TryAddWithoutValidation("X-Title", _cfg.XTitle);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(DefaultRequestTimeout);
+
+        using var resp = await http.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                timeoutCts.Token
+            )
+            .ConfigureAwait(false);
+        try
+        {
+            Logger.Log($"LLM recovery response status: {(int)resp.StatusCode} {resp.StatusCode}");
+        }
+        catch { }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            return string.Empty;
+        }
+
+        return await ReadResultAsync(resp, timeoutCts.Token).ConfigureAwait(false);
+    }
+
+    private static bool LooksSuspiciouslyShort(string input, string output)
+    {
+        if (string.IsNullOrWhiteSpace(input) || string.IsNullOrWhiteSpace(output))
+            return false;
+
+        var trimmedInput = input.Trim();
+        var trimmedOutput = output.Trim();
+
+        if (trimmedInput.Length < 60)
+            return false;
+
+        if (trimmedOutput.Length >= 20)
+            return false;
+
+        return trimmedOutput.Length * 8 < trimmedInput.Length;
+    }
+
+    private static async Task<string> ReadResultAsync(
+        HttpResponseMessage resp,
+        CancellationToken ct
+    )
+    {
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var parsed =
+            JsonSerializer.Deserialize(body, TailSlapJsonContext.Default.ChatResponse)
+            ?? throw new Exception("Invalid response JSON");
+        if (parsed.Choices is not { Count: > 0 } || parsed.Choices[0].Message is null)
+            throw new Exception("No choices in response");
+        return parsed.Choices[0].Message.Content?.Trim() ?? "";
+    }
+
+    private static string BuildRewriteMessage(string text)
+    {
+        return """
+                Rewrite the full text between the <source_text> tags below.
+                Preserve all substantive meaning, but clean up dictation artifacts and improve readability.
+                Return only the rewritten text, not instructions or commentary.
+
+                <source_text>
+                """
+            + text
+            + """
+
+                </source_text>
+                """;
     }
 
     private string GetUserFriendlyError(System.Net.HttpStatusCode statusCode, string errorBody)

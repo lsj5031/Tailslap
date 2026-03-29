@@ -46,6 +46,7 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
     "Model": "llama3.1",
     "Temperature": 0.2,
     "MaxTokens": null,
+    "RefinementPrompt": "You are an expert writing assistant that turns rough dictated text into polished professional writing.\n\nPreserve the original meaning, intent, and factual content.\nRemove filler words, false starts, repetitions, self-corrections, and obvious speech-to-text artifacts.\nFix grammar, punctuation, capitalization, and obvious transcription mistakes.\nMake the result concise, well-structured, elegant, and easy to read.\nKeep the tone natural and professional.\nPreserve useful formatting and line breaks. If the input is one long spoken block, you may introduce clear paragraph breaks or lists when that improves readability.\nDo not add new facts, requests, promises, greetings, sign-offs, or commentary that were not implied by the input.\nDo not over-edit for style; stay close to the original wording unless a change improves clarity.\nReturn only the final polished text.",
     "ApiKeyEncrypted": null,
     "HttpReferer": null,
     "XTitle": null
@@ -73,6 +74,7 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
 - **Llm.BaseUrl**: LLM API endpoint (OpenAI-compatible)
 - **Llm.Model**: Model name
 - **Llm.Temperature**: Creativity (0.0-1.0)
+- **Llm.RefinementPrompt**: The system prompt used to polish dictated text
 - **Llm.ApiKey**: API key (set via code, will be encrypted)
 - **Transcriber.UseWebRtcVad**: Use ML-based WebRTC VAD for smarter speech detection (default: true)
 - **Transcriber.WebRtcVadSensitivity**: VAD sensitivity (0=Low, 1=Medium, 2=High, 3=VeryHigh)

@@ -16,6 +16,7 @@ public sealed class SettingsForm : Form
     private TextBox _model;
     private TextBox _temperature;
     private TextBox _maxTokens;
+    private TextBox _refinementPrompt;
     private TextBox _apiKey;
     private TextBox _referer;
     private TextBox _xTitle;
@@ -130,13 +131,13 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 11,
+            RowCount = 12,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        llm.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(110)));
+        llm.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(130)));
         llm.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 11; i++)
+        for (int i = 0; i < 12; i++)
             llm.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _enabled = new CheckBox
         {
@@ -235,6 +236,27 @@ public sealed class SettingsForm : Form
             5
         );
         llm.Controls.Add(_apiKey, 1, 5);
+        _refinementPrompt = new TextBox
+        {
+            Text = _cfg.Llm.GetEffectiveRefinementPrompt(),
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ScrollBars = ScrollBars.Vertical,
+            AcceptsReturn = true,
+            Height = DpiHelper.Scale(150),
+        };
+        llm.Controls.Add(
+            new Label
+            {
+                Text = "Prompt",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.TopLeft,
+            },
+            0,
+            6
+        );
+        llm.Controls.Add(_refinementPrompt, 1, 6);
         _referer = new TextBox
         {
             Text = _cfg.Llm.HttpReferer ?? string.Empty,
@@ -249,9 +271,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            6
+            7
         );
-        llm.Controls.Add(_referer, 1, 6);
+        llm.Controls.Add(_referer, 1, 7);
         _xTitle = new TextBox { Text = _cfg.Llm.XTitle ?? string.Empty, Dock = DockStyle.Fill };
         llm.Controls.Add(
             new Label
@@ -262,9 +284,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            7
+            8
         );
-        llm.Controls.Add(_xTitle, 1, 7);
+        llm.Controls.Add(_xTitle, 1, 8);
         _llmHotkey = new TextBox
         {
             ReadOnly = true,
@@ -280,9 +302,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            8
+            9
         );
-        llm.Controls.Add(_llmHotkey, 1, 8);
+        llm.Controls.Add(_llmHotkey, 1, 9);
         _captureLlmHotkeyButton = new Button
         {
             Text = "Change Hotkey",
@@ -290,7 +312,7 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _captureLlmHotkeyButton.Click += CaptureLlmHotkey;
-        llm.Controls.Add(_captureLlmHotkeyButton, 1, 9);
+        llm.Controls.Add(_captureLlmHotkeyButton, 1, 10);
         _testConnectionButton = new Button
         {
             Text = "Test LLM Connection",
@@ -307,9 +329,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            10
+            11
         );
-        llm.Controls.Add(_testConnectionButton, 1, 10);
+        llm.Controls.Add(_testConnectionButton, 1, 11);
 
         // Add validation label and buttons
         _validationLabel = new Label
@@ -767,6 +789,9 @@ public sealed class SettingsForm : Form
             _cfg.Llm.Temperature = t;
         var mt = _maxTokens.Text.Trim();
         _cfg.Llm.MaxTokens = string.IsNullOrEmpty(mt) ? null : (int?)int.Parse(mt);
+        _cfg.Llm.RefinementPrompt = string.IsNullOrWhiteSpace(_refinementPrompt.Text)
+            ? LlmConfig.DefaultRefinementPrompt
+            : _refinementPrompt.Text.Trim();
         // Only update LLM API key if user actually entered something (preserve existing if blank)
 
         var k = _apiKey.Text.Trim();
@@ -955,6 +980,9 @@ public sealed class SettingsForm : Form
                 MaxTokens = string.IsNullOrWhiteSpace(_maxTokens.Text)
                     ? null
                     : (int?)int.Parse(_maxTokens.Text),
+                RefinementPrompt = string.IsNullOrWhiteSpace(_refinementPrompt.Text)
+                    ? LlmConfig.DefaultRefinementPrompt
+                    : _refinementPrompt.Text.Trim(),
                 ApiKey = string.IsNullOrWhiteSpace(_apiKey.Text.Trim())
                     ? _cfg.Llm.ApiKey
                     : _apiKey.Text.Trim(),
@@ -1116,6 +1144,7 @@ public sealed class SettingsForm : Form
             _model.Text = defaultCfg.Llm.Model;
             _temperature.Text = defaultCfg.Llm.Temperature.ToString("0.##");
             _maxTokens.Text = defaultCfg.Llm.MaxTokens?.ToString() ?? "";
+            _refinementPrompt.Text = defaultCfg.Llm.GetEffectiveRefinementPrompt();
             _apiKey.Text = "";
             _referer.Text = defaultCfg.Llm.HttpReferer ?? "";
             _xTitle.Text = defaultCfg.Llm.XTitle ?? "";
