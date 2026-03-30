@@ -188,8 +188,8 @@ public sealed class KeyboardHook : IDisposable
         if (_hookId != IntPtr.Zero)
         {
             Uninstall();
-            Install();
         }
+        Install();
 
         try
         {
