@@ -99,7 +99,13 @@ internal static class Program
         services.AddSingleton<INotificationService, NotificationServiceAdapter>();
         services.AddSingleton<ILoggerService, LoggerServiceAdapter>();
         services.AddSingleton<IAutoStartService, AutoStartServiceAdapter>();
-        services.AddSingleton<ITranscriptionController, TranscriptionController>();
+        services.AddSingleton<ITypelessController, TypelessController>();
+        services.AddSingleton<KeyboardHook>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigService>();
+            var cfg = config.CreateValidatedCopy();
+            return new KeyboardHook(cfg.TranscriberHotkey);
+        });
         services.AddSingleton<IRealtimeTranscriptionController, RealtimeTranscriptionController>();
 
         services.AddTransient<MainForm>();
