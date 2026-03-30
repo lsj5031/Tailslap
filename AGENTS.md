@@ -15,7 +15,37 @@ This document contains internal development information for TailSlap contributor
 - **Tray-only UI**: Hidden main form, runs as system tray icon with context menu
 - **Dependency Injection**: Microsoft.Extensions.DependencyInjection for service management and composition
 - **HttpClientFactory**: Centralized HTTP client with connection pooling, automatic decompression, configurable timeouts
-- **Core Services** (all interface-driven):
+
+## Operating Modes
+
+TailSlap has three hotkey-activated modes, each with a distinct workflow and hotkey registration mechanism:
+
+### 1. Refinement Mode (Ctrl+Alt+R default, user-customizable)
+- **Trigger**: Single-press via Win32 `RegisterHotKey` → `WM_HOTKEY` → `TriggerRefine()`
+- **Flow**: Reads selected text from the focused app via `ClipboardHelper` → sends to LLM via `TextRefiner` → types refined result back via `TextTyper`
+- **Controller**: `IRefinementController` / `RefinementController`
+- **Config**: `config.json` → `hotkey` + `llm` sections
+
+### 2. Typeless / Push-to-Talk Transcription (Ctrl+Shift+' default, user-customizable)
+- **Trigger**: Hold-to-record via low-level keyboard hook (`KeyboardHook`, WH_KEYBOARD_LL); press to start recording, release to stop and transcribe
+- **Flow**: `KeyboardHook.OnKeyDown` → `TypelessController.HandleKeyDownAsync()` → records WAV via `AudioRecorder` → on key-up, streams audio to transcription endpoint via `RemoteTranscriber` → SSE chunks typed incrementally via `TextTyper` → saved to transcription history
+- **State machine**: `Idle → Recording → Processing → Idle` (events: `OnStarted`, `OnProcessingStarted`, `OnCompleted`)
+- **Minimum recording**: 500ms; shorter recordings are discarded with a warning
+- **Safety**: Max recording duration of 60s enforced by `KeyboardHook.ForceStop()`; auto-repeat suppression prevents duplicate recordings
+- **Controller**: `ITypelessController` / `TypelessController`
+- **Config**: `config.json` → `transcriberHotkey` + `transcriber` sections
+- **Tray animation**: Fast (50ms) during recording, slow (200ms) during transcription
+
+### 3. Realtime Streaming Transcription (Ctrl+Alt+Y default, user-customizable)
+- **Trigger**: Single-press via Win32 `RegisterHotKey` → `WM_HOTKEY` → `TriggerStreamingTranscribe()`
+- **Flow**: Opens WebSocket to realtime transcription endpoint → streams audio bidirectionally → receives partial/final transcripts in real-time
+- **Controller**: `IRealtimeTranscriptionController` / `RealtimeTranscriptionController`
+- **Config**: `config.json` → `streamingTranscriberHotkey` + `transcriber` sections
+
+## Core Services
+
+All interface-driven, registered via DI:
+
    - `ITextRefiner` / `TextRefiner`: OpenAI-compatible LLM HTTP client with retry logic (2 attempts, 1s backoff)
    - `ITextRefinerFactory`: Factory for creating TextRefiner instances
    - `IRemoteTranscriber` / `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio); supports SSE streaming (Requires [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
@@ -36,6 +66,7 @@ This document contains internal development information for TailSlap contributor
    - `TextTyper`: Hybrid text delivery via clipboard paste and SendKeys fallback
    - `ClipboardHelper`: Clipboard read/capture with multiple fallback methods (WM_COPY, Ctrl+C, Ctrl+Insert)
    - `IAudioRecorderFactory`: Factory for creating AudioRecorder instances
+
 - **UI Forms**:
    - `MainForm`: Main application form (hidden), wired via DI
    - `HotkeyCaptureForm`: Interactive dialog for capturing new hotkey combinations

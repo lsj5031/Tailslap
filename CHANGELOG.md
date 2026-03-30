@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Typeless (push-to-talk) transcription mode**: Hold-to-record hotkey (default Ctrl+Shift+') that captures audio via a low-level keyboard hook, transcribes with SSE streaming, and types the result into the focused application incrementally. Includes state-aware tray animation (fast during recording, slow during transcription), auto-repeat suppression, 500ms minimum recording guard, and 60s max recording safety net.
+
 ### Changed
 - **State-aware tray animation**: Tray icon animation now uses distinct speeds for different states: fast (50ms) during push-to-talk recording, medium (75ms) during refinement/streaming, and slow (200ms) during transcription. The tooltip text also updates to reflect the current state ("Recording...", "Transcribing...", "Processing...").
 
