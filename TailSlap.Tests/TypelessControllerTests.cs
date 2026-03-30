@@ -9,6 +9,20 @@ using Xunit;
 
 namespace TailSlap.Tests;
 
+/// <summary>
+/// Testable subclass that overrides SendKeys-dependent methods to avoid
+/// hangs in headless CI environments where no message pump exists.
+/// </summary>
+file sealed class TestableTextTyper : TextTyper
+{
+    public TestableTextTyper(IClipboardService clip, int clipboardThreshold = 5)
+        : base(clip, clipboardThreshold) { }
+
+    internal override void SendBackspace(int count) { }
+
+    internal override void TypeTextDirectly(string text) { }
+}
+
 public class TypelessControllerTests
 {
     private static Mock<IConfigService> CreateMockConfigService(bool transcriberEnabled = true)
@@ -199,7 +213,7 @@ public class TypelessControllerTests
         historyMock ??= new Mock<IHistoryService>();
         refinerFactoryMock ??= new Mock<ITextRefinerFactory>();
         recordFunc ??= CreateRecordFunc();
-        textTyper ??= new TextTyper(clipboardMock.Object);
+        textTyper ??= new TestableTextTyper(clipboardMock.Object);
 
         var clipboardHelper = new ClipboardHelper(clipboardMock.Object);
 
@@ -228,7 +242,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
-                new TextTyper(new Mock<IClipboardService>().Object),
+                new TestableTextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -245,7 +259,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
-                new TextTyper(new Mock<IClipboardService>().Object),
+                new TestableTextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -262,7 +276,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
-                new TextTyper(new Mock<IClipboardService>().Object),
+                new TestableTextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -279,7 +293,7 @@ public class TypelessControllerTests
                 null!,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
-                new TextTyper(new Mock<IClipboardService>().Object),
+                new TestableTextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -296,7 +310,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 null!,
                 new Mock<ITextRefinerFactory>().Object,
-                new TextTyper(new Mock<IClipboardService>().Object),
+                new TestableTextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -313,7 +327,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 null!,
-                new TextTyper(new Mock<IClipboardService>().Object),
+                new TestableTextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -330,7 +344,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
-                new TextTyper(new Mock<IClipboardService>().Object),
+                new TestableTextTyper(new Mock<IClipboardService>().Object),
                 null!
             )
         );
