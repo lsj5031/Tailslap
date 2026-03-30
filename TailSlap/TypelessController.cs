@@ -64,6 +64,7 @@ public sealed class TypelessController : ITypelessController
     }
 
     public event Action? OnStarted;
+    public event Action? OnProcessingStarted;
     public event Action? OnCompleted;
 
     /// <summary>
@@ -276,6 +277,8 @@ public sealed class TypelessController : ITypelessController
             Logger.Log("TypelessController: Starting transcription");
         }
         catch { }
+
+        OnProcessingStarted?.Invoke();
 
         string tempWavPath = _tempWavPath!;
 

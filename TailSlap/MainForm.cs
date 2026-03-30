@@ -30,6 +30,8 @@ public class MainForm : Form
     private long _lastPulseUpdateMs;
     private int _pulseDots;
     private const int AnimationIntervalMs = 75;
+    private const int RecordingAnimIntervalMs = 50;
+    private const int TranscribingAnimIntervalMs = 200;
     private const int TooltipPulseIntervalMs = 300;
     private const int TooltipPulseMaxDots = 3;
     private const int WM_HOTKEY = 0x0312;
@@ -114,6 +116,7 @@ public class MainForm : Form
         _refinementController.OnStarted += StartAnim;
         _refinementController.OnCompleted += StopAnim;
         _typelessController.OnStarted += StartTypelessAnim;
+        _typelessController.OnProcessingStarted += SwitchToTranscribingAnim;
         _typelessController.OnCompleted += StopAnim;
         _realtimeTranscriptionController.OnStarted += StartAnim;
         _realtimeTranscriptionController.OnStopped += StopAnim;
@@ -1025,6 +1028,7 @@ public class MainForm : Form
         _frame = 0;
         _lastPulseUpdateMs = 0;
         _pulseDots = 0;
+        _animTimer.Interval = AnimationIntervalMs;
         TrySetTrayText("TailSlap - Processing");
         _animTimer.Start();
     }
@@ -1039,9 +1043,23 @@ public class MainForm : Form
         _frame = 0;
         _lastPulseUpdateMs = 0;
         _pulseDots = 0;
+        _animTimer.Interval = RecordingAnimIntervalMs;
         TrySetTrayText("TailSlap - Recording");
         _animTimer.Start();
-        NotificationService.ShowInfo("🎤 Recording... Release hotkey to transcribe.");
+        NotificationService.ShowInfo("Recording... Release hotkey to transcribe.");
+    }
+
+    private void SwitchToTranscribingAnim()
+    {
+        try
+        {
+            Logger.Log("Typeless animation: switching to transcribing");
+        }
+        catch { }
+        _lastPulseUpdateMs = 0;
+        _pulseDots = 0;
+        _animTimer.Interval = TranscribingAnimIntervalMs;
+        TrySetTrayText("TailSlap - Transcribing");
     }
 
     private void StopAnim()
@@ -1053,6 +1071,7 @@ public class MainForm : Form
         catch { }
         _animTimer.Stop();
         _frame = 0;
+        _animTimer.Interval = AnimationIntervalMs;
         _tray.Icon = _idleIcon;
         TrySetTrayText("TailSlap");
     }

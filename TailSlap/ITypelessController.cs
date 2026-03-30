@@ -30,6 +30,9 @@ public interface ITypelessController
     /// <summary>Fired when recording starts (key-down accepted).</summary>
     event Action? OnStarted;
 
+    /// <summary>Fired when recording ends and transcription begins.</summary>
+    event Action? OnProcessingStarted;
+
     /// <summary>Fired when the full cycle completes (back to Idle).</summary>
     event Action? OnCompleted;
 }
