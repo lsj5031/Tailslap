@@ -786,6 +786,198 @@ public sealed class AudioRecorder : IDisposable
         }
     }
 
+    private static WAVEFORMATEX CreatePcm16WaveFormat()
+    {
+        return new WAVEFORMATEX
+        {
+            wFormatTag = WAVE_FORMAT_PCM,
+            nChannels = 1,
+            nSamplesPerSec = 16000,
+            nAvgBytesPerSec = 32000,
+            nBlockAlign = 2,
+            wBitsPerSample = 16,
+            cbSize = 0,
+        };
+    }
+
+    private int GetSelectedDeviceId()
+    {
+        return _preferredDeviceIndex >= 0 ? _preferredDeviceIndex : WAVE_MAPPER;
+    }
+
+    private void OpenStreamingCaptureDevice(string caller)
+    {
+        int numDevices = waveInGetNumDevs();
+        if (numDevices == 0)
+        {
+            throw new InvalidOperationException("No audio input device found.");
+        }
+
+        var wfx = CreatePcm16WaveFormat();
+        int deviceId = GetSelectedDeviceId();
+        Logger.Log($"{caller}: Opening device {deviceId}");
+
+        int result = waveInOpen(
+            out _hWaveIn,
+            deviceId,
+            ref wfx,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            CALLBACK_NULL
+        );
+        if (result != 0)
+        {
+            Logger.Log($"{caller}: waveInOpen FAILED with error {result}");
+            _hWaveIn?.SetHandleAsInvalid();
+            throw new InvalidOperationException(
+                $"Failed to open waveIn device (deviceId={deviceId}, numDevices={numDevices}): error {result}"
+            );
+        }
+
+        for (int i = 0; i < BUFFER_COUNT; i++)
+        {
+            _buffers[i] = new byte[BUFFER_SIZE];
+            if (_bufferHandles[i].IsAllocated)
+            {
+                _bufferHandles[i].Free();
+            }
+
+            _bufferHandles[i] = GCHandle.Alloc(_buffers[i], GCHandleType.Pinned);
+
+            _waveHeaders[i] = new WAVEHDR
+            {
+                lpData = _bufferHandles[i].AddrOfPinnedObject(),
+                dwBufferLength = (uint)BUFFER_SIZE,
+                dwBytesRecorded = 0,
+                dwUser = IntPtr.Zero,
+                dwFlags = 0,
+                dwLoops = 0,
+            };
+
+            result = waveInPrepareHeader(
+                _hWaveIn,
+                ref _waveHeaders[i],
+                Marshal.SizeOf(typeof(WAVEHDR))
+            );
+            if (result != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to prepare wave header {i}: error {result}"
+                );
+            }
+
+            result = waveInAddBuffer(
+                _hWaveIn,
+                ref _waveHeaders[i],
+                Marshal.SizeOf(typeof(WAVEHDR))
+            );
+            if (result != 0)
+            {
+                throw new InvalidOperationException($"Failed to add buffer {i}: error {result}");
+            }
+        }
+
+        _waveInResetIssued = false;
+        _isRecording = true;
+
+        Logger.Log($"{caller}: Starting recording");
+        result = waveInStart(_hWaveIn);
+        if (result != 0)
+        {
+            Logger.Log($"{caller}: waveInStart FAILED with error {result}");
+            throw new InvalidOperationException($"Failed to start recording: error {result}");
+        }
+
+        Logger.Log($"{caller}: Recording started successfully");
+    }
+
+    private void ReleaseStreamingCaptureDevice(string caller)
+    {
+        if (_hWaveIn != null && !_hWaveIn.IsInvalid)
+        {
+            try
+            {
+                int stopResult = waveInStop(_hWaveIn);
+                if (stopResult != 0)
+                {
+                    Logger.Log($"{caller}: waveInStop returned error {stopResult}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"{caller}: Exception stopping waveIn device: {ex.Message}");
+            }
+
+            try
+            {
+                if (!_waveInResetIssued)
+                {
+                    ResetWaveIn(caller);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"{caller}: Exception resetting waveIn device: {ex.Message}");
+            }
+
+            for (int i = 0; i < BUFFER_COUNT; i++)
+            {
+                if (_bufferHandles[i].IsAllocated && (_waveHeaders[i].dwFlags & WHDR_PREPARED) != 0)
+                {
+                    try
+                    {
+                        int unprepResult = waveInUnprepareHeader(
+                            _hWaveIn,
+                            ref _waveHeaders[i],
+                            Marshal.SizeOf(typeof(WAVEHDR))
+                        );
+                        if (unprepResult != 0)
+                        {
+                            Logger.Log(
+                                $"{caller}: waveInUnprepareHeader[{i}] returned error {unprepResult}"
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"{caller}: Exception unpreparing header {i}: {ex.Message}");
+                    }
+                }
+            }
+
+            Logger.Log($"{caller}: Closing handle");
+            _hWaveIn.Dispose();
+            _hWaveIn = null;
+        }
+
+        for (int i = 0; i < BUFFER_COUNT; i++)
+        {
+            if (_bufferHandles[i].IsAllocated)
+            {
+                try
+                {
+                    _bufferHandles[i].Free();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"{caller}: Exception freeing buffer handle {i}: {ex.Message}");
+                }
+            }
+
+            _buffers[i] = Array.Empty<byte>();
+            _waveHeaders[i] = default;
+        }
+    }
+
+    private void ReopenStreamingCaptureDevice()
+    {
+        Logger.Log("AudioRecorder.StreamingRecovery: Reopening capture device");
+        ReleaseStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen");
+        OpenStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen");
+        _lastBufferTime = DateTime.Now;
+        Logger.Log("AudioRecorder: Streaming recovery reopened capture device successfully");
+    }
+
     public async Task StartStreamingAsync(
         CancellationToken ct = default,
         bool enableVAD = false,
@@ -819,86 +1011,7 @@ public sealed class AudioRecorder : IDisposable
 
         try
         {
-            var wfx = new WAVEFORMATEX
-            {
-                wFormatTag = WAVE_FORMAT_PCM,
-                nChannels = 1,
-                nSamplesPerSec = 16000,
-                nAvgBytesPerSec = 32000,
-                nBlockAlign = 2,
-                wBitsPerSample = 16,
-                cbSize = 0,
-            };
-
-            int deviceId = _preferredDeviceIndex >= 0 ? _preferredDeviceIndex : WAVE_MAPPER;
-            Logger.Log($"AudioRecorder.StartStreamingAsync: Opening device {deviceId}");
-            int result = waveInOpen(
-                out _hWaveIn,
-                deviceId,
-                ref wfx,
-                IntPtr.Zero,
-                IntPtr.Zero,
-                CALLBACK_NULL
-            );
-            if (result != 0)
-            {
-                Logger.Log(
-                    $"AudioRecorder.StartStreamingAsync: waveInOpen FAILED with error {result}"
-                );
-                _hWaveIn?.SetHandleAsInvalid();
-                throw new InvalidOperationException(
-                    $"Failed to open waveIn device (deviceId={deviceId}, numDevices={numDevices}): error {result}"
-                );
-            }
-
-            for (int i = 0; i < BUFFER_COUNT; i++)
-            {
-                _buffers[i] = new byte[BUFFER_SIZE];
-                _bufferHandles[i] = GCHandle.Alloc(_buffers[i], GCHandleType.Pinned);
-
-                _waveHeaders[i] = new WAVEHDR
-                {
-                    lpData = _bufferHandles[i].AddrOfPinnedObject(),
-                    dwBufferLength = (uint)BUFFER_SIZE,
-                    dwBytesRecorded = 0,
-                    dwUser = IntPtr.Zero,
-                    dwFlags = 0,
-                    dwLoops = 0,
-                };
-
-                result = waveInPrepareHeader(
-                    _hWaveIn,
-                    ref _waveHeaders[i],
-                    Marshal.SizeOf(typeof(WAVEHDR))
-                );
-                if (result != 0)
-                    throw new InvalidOperationException(
-                        $"Failed to prepare wave header {i}: error {result}"
-                    );
-
-                result = waveInAddBuffer(
-                    _hWaveIn,
-                    ref _waveHeaders[i],
-                    Marshal.SizeOf(typeof(WAVEHDR))
-                );
-                if (result != 0)
-                    throw new InvalidOperationException(
-                        $"Failed to add buffer {i}: error {result}"
-                    );
-            }
-
-            _isRecording = true;
-
-            Logger.Log("AudioRecorder.StartStreamingAsync: Starting recording");
-            result = waveInStart(_hWaveIn);
-            if (result != 0)
-            {
-                Logger.Log(
-                    $"AudioRecorder.StartStreamingAsync: waveInStart FAILED with error {result}"
-                );
-                throw new InvalidOperationException($"Failed to start recording: error {result}");
-            }
-            Logger.Log("AudioRecorder.StartStreamingAsync: Recording started successfully");
+            OpenStreamingCaptureDevice("AudioRecorder.StartStreamingAsync");
 
             while (_isRecording && !ct.IsCancellationRequested)
             {
@@ -1194,9 +1307,11 @@ public sealed class AudioRecorder : IDisposable
 
             if (!IsAllBuffersReturned())
             {
-                throw new InvalidOperationException(
-                    "Streaming recovery timed out waiting for audio buffers to return."
+                Logger.Log(
+                    "AudioRecorder.StreamingRecovery: Timed out waiting for buffers; reopening capture device"
                 );
+                ReopenStreamingCaptureDevice();
+                return;
             }
 
             for (int i = 0; i < BUFFER_COUNT; i++)
@@ -1266,7 +1381,20 @@ public sealed class AudioRecorder : IDisposable
         catch (Exception ex)
         {
             Logger.Log($"AudioRecorder.StreamingRecovery: Exception - {ex.Message}");
-            throw;
+            Logger.Log("AudioRecorder.StreamingRecovery: Falling back to capture device reopen");
+
+            try
+            {
+                ReopenStreamingCaptureDevice();
+            }
+            catch (Exception reopenEx)
+            {
+                Logger.Log($"AudioRecorder.StreamingRecovery: Reopen failed - {reopenEx.Message}");
+                throw new InvalidOperationException(
+                    "Streaming recovery failed after attempting to reopen the audio device.",
+                    reopenEx
+                );
+            }
         }
     }
 
