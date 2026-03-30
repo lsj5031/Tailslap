@@ -11,7 +11,7 @@
 ## Features
 
 - **Text Refinement**: Process and enhance selected text with a hotkey (`Ctrl+Alt+R`)
-- **Audio Transcription**: Record and transcribe audio from your microphone (`Ctrl+Alt+T`)
+- **Push-to-Talk Transcription**: Hold a hotkey to record audio, release to transcribe and type the result into your active application (`Ctrl+Shift+'`)
 - **Real-time Streaming**: Type words as they are spoken with WebSocket streaming (`Ctrl+Alt+Y`)
   - **Streaming Mode**: Real-time transcription via WebSocket connection
   - **Voice Activity Detection**: Auto-stop recording after silence (configurable threshold)
@@ -19,7 +19,7 @@
 - **Clipboard Integration**: Automatically paste refined text back into your applications
 - **Customizable Hotkeys**: Configure three hotkeys via Settings menu:
   - Text Refinement: `Ctrl+Alt+R` (default)
-  - Audio Transcription: `Ctrl+Alt+T` (default) 
+  - Push-to-Talk Transcription: `Ctrl+Shift+'` (default)
   - Real-time Streaming: `Ctrl+Alt+Y` (default)
 - **Encrypted History**: View and manage your refinement and transcription history (secured with DPAPI)
 - **System Tray Integration**: Runs quietly in the background
@@ -49,10 +49,12 @@
 2. Press the configured hotkey (default: `Ctrl+Alt+R`)
 3. The text will be processed and automatically pasted back (if enabled)
 
-### Audio Transcription
-1. Press the transcription hotkey (default: `Ctrl+Alt+T`)
-2. Record audio from your microphone
-3. The audio will be transcribed and available in your history
+### Push-to-Talk Transcription
+1. Press and hold the transcription hotkey (default: `Ctrl+Shift+'`)
+2. Speak into your microphone -- the tray icon animates fast to indicate active recording
+3. Release the hotkey to stop recording and start transcription
+4. Transcribed text is typed incrementally into your active application as SSE chunks arrive (tray icon animates slowly during transcription)
+5. Results are saved to encrypted transcription history
 
 ### Real-time Streaming Transcription
 1. Press the streaming hotkey (default: `Ctrl+Alt+Y`)
@@ -71,7 +73,7 @@
 
 Right-click the TailSlap icon in the system tray to access:
 - **Refine Now**: Process the currently selected text immediately (via clipboard)
-- **Transcribe Now**: Start audio recording for transcription
+- **Enable Transcription**: Toggle the push-to-talk transcription hotkey on/off
 - **Settings...**: Configure LLM endpoint, model, temperature, transcription settings, and hotkeys
 - **Open Logs...**: View application logs for debugging
 - **Encrypted Refinement History...**: View and clear your refinement history
@@ -111,7 +113,7 @@ You can edit this file directly or use the Settings dialog in the system tray me
 
 #### Hotkey Configuration
 - `Hotkey`: Text refinement hotkey (default: `Ctrl+Alt+R`)
-- `TranscriberHotkey`: Audio transcription hotkey (default: `Ctrl+Alt+T`)
+- `TranscriberHotkey`: Push-to-talk transcription hotkey (default: `Ctrl+Shift+'`)
 - `StreamingTranscriberHotkey`: Real-time streaming hotkey (default: `Ctrl+Alt+Y`)
 
 #### General Settings
@@ -137,7 +139,12 @@ TailSlap uses a smooth 8-frame animated icon during text processing:
 |---------|---------|---------|---------|---------|---------|---------|---------|
 | ![Frame1](TailSlap/Icons/1.png) | ![Frame2](TailSlap/Icons/2.png) | ![Frame3](TailSlap/Icons/3.png) | ![Frame4](TailSlap/Icons/4.png) | ![Frame5](TailSlap/Icons/5.png) | ![Frame6](TailSlap/Icons/6.png) | ![Frame7](TailSlap/Icons/7.png) | ![Frame8](TailSlap/Icons/8.png) |
 
-The animation cycles through all 8 frames at 75ms intervals with pulsing tray text ("TailSlap - Processing...") during LLM requests to give you smooth visual feedback. Tooltip pulses every 300ms with up to 3 dots.
+The animation speed changes based on the active state:
+- **Recording** (push-to-talk): Fast at 50ms intervals with "Recording..." tooltip
+- **Transcribing**: Slow at 200ms intervals with "Transcribing..." tooltip
+- **Refining / Streaming**: Medium at 75ms intervals with "Processing..." tooltip
+
+Tooltip text pulses every 300ms with up to 3 dots for visual feedback.
 
 ## Building from Source
 
