@@ -12,7 +12,7 @@ namespace TailSlap;
 /// clipboard/SendKeys approach. Supports backspace corrections via common-prefix
 /// algorithm and foreground window monitoring.
 /// </summary>
-public sealed class TextTyper
+public class TextTyper
 {
     private readonly IClipboardService _clip;
     private readonly int _clipboardThreshold;
@@ -496,7 +496,7 @@ public sealed class TextTyper
 
     #region Private Implementation
 
-    private void SendBackspace(int count)
+    internal virtual void SendBackspace(int count)
     {
         if (count <= 0)
             return;
@@ -571,7 +571,7 @@ public sealed class TextTyper
         }
     }
 
-    private static void TypeTextDirectly(string text)
+    internal virtual void TypeTextDirectly(string text)
     {
         if (string.IsNullOrEmpty(text))
             return;

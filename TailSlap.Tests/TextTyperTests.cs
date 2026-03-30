@@ -8,18 +8,38 @@ using Xunit;
 
 public class TextTyperTests
 {
+    /// <summary>
+    /// Testable subclass that overrides SendKeys-dependent methods to avoid
+    /// failures in headless test environments where no message pump exists.
+    /// </summary>
+    private sealed class TestableTextTyper : TextTyper
+    {
+        public TestableTextTyper(IClipboardService clip, int clipboardThreshold = 5)
+            : base(clip, clipboardThreshold) { }
+
+        internal override void SendBackspace(int count)
+        {
+            // No-op in tests — avoid actual keystroke sending
+        }
+
+        internal override void TypeTextDirectly(string text)
+        {
+            // No-op in tests — avoid SendKeys.SendWait which requires a message pump
+        }
+    }
+
     private static Mock<IClipboardService> CreateMockClipboardService()
     {
         return new Mock<IClipboardService>();
     }
 
-    private static TextTyper CreateTextTyper(
+    private static TestableTextTyper CreateTextTyper(
         Mock<IClipboardService>? mockClip = null,
         int clipboardThreshold = 5
     )
     {
         mockClip ??= CreateMockClipboardService();
-        return new TextTyper(mockClip.Object, clipboardThreshold);
+        return new TestableTextTyper(mockClip.Object, clipboardThreshold);
     }
 
     #region Constructor Tests
