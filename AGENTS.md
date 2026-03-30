@@ -29,6 +29,13 @@ This document contains internal development information for TailSlap contributor
    - `Logger`: File logging to `%APPDATA%\TailSlap\app.log` (no sensitive data logged - SHA256 fingerprints only); Span<T> optimized
    - `NotificationService`: Balloon tips for user feedback (success/warning/error)
    - `DiagnosticsEventSource`: EventSource for ETW-based diagnostics and performance monitoring (14 events across 7 categories)
+   - `ITypelessController` / `TypelessController`: Push-to-talk transcription state machine (Idle → Recording → Processing → Idle); events: `OnStarted`, `OnProcessingStarted`, `OnCompleted`
+   - `IRefinementController`: Text refinement workflow controller
+   - `IRealtimeTranscriptionController` / `RealtimeTranscriptionController`: WebSocket-based real-time streaming transcription controller
+   - `KeyboardHook`: Low-level keyboard hook (WH_KEYBOARD_LL) for push-to-talk hotkey detection; auto-repeat suppression, max recording duration safety net
+   - `TextTyper`: Hybrid text delivery via clipboard paste and SendKeys fallback
+   - `ClipboardHelper`: Clipboard read/capture with multiple fallback methods (WM_COPY, Ctrl+C, Ctrl+Insert)
+   - `IAudioRecorderFactory`: Factory for creating AudioRecorder instances
 - **UI Forms**:
    - `MainForm`: Main application form (hidden), wired via DI
    - `HotkeyCaptureForm`: Interactive dialog for capturing new hotkey combinations
@@ -41,8 +48,9 @@ This document contains internal development information for TailSlap contributor
    - `WebRtcVadService`: ML-based voice activity detection using Google's WebRTC VAD (GMM-based) via WebRtcVadSharp
 - **Serialization**: `TailSlapJsonContext` (System.Text.Json source-generated context for AOT-friendly, reflection-free serialization)
 - **Single-instance mutex** prevents multiple app instances
-- **Global hotkey registration** (default Ctrl+Alt+R, user-customizable)
-- **Animated tray icon** (8-frame PNG animation with pulsing text) during refinement
+- **Global hotkey registration** (default Ctrl+Alt+R, user-customizable) via Win32 `RegisterHotKey`
+- **Low-level keyboard hook** (WH_KEYBOARD_LL) for push-to-talk hotkey via `KeyboardHook`
+- **Animated tray icon** (8-frame PNG animation with pulsing text) with state-aware speeds: fast (50ms) during recording, medium (75ms) during refinement/streaming, slow (200ms) during transcription
 - **DPI-aware icon loading** (scales icons based on display DPI)
 
 ## Security & Encryption

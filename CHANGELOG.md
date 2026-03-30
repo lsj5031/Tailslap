@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **State-aware tray animation**: Tray icon animation now uses distinct speeds for different states: fast (50ms) during push-to-talk recording, medium (75ms) during refinement/streaming, and slow (200ms) during transcription. The tooltip text also updates to reflect the current state ("Recording...", "Transcribing...", "Processing...").
+
+### Fixed
+- **KeyboardHook not installing on startup**: Fixed `KeyboardHook.Reconfigure()` not calling `Install()` when the hook hadn't been previously installed, causing the push-to-talk hotkey to be completely unresponsive after app launch or restart.
+
 ## [2.0.9] - 2026-03-29
 
 ### Changed
