@@ -1,0 +1,7 @@
+{
+  "featureId": "keyboard-hook",
+  "status": "pass",
+  "issues": [],
+  "sharedStateObservations": [],
+  "summary": "KeyboardHook correctly implements hotkey matching, auto-repeat suppression, modifier-release handling, reconfiguration, and max-duration force-stop. Tests cover the state transitions and safety-net behavior."
+}
