@@ -169,14 +169,12 @@ public class MainForm : Form
             {
                 try
                 {
-                    Process.Start(
-                        "notepad",
-                        Path.Combine(
-                            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                            "TailSlap",
-                            "app.log"
-                        )
+                    var logPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                        "TailSlap",
+                        "app.log"
                     );
+                    Process.Start(new ProcessStartInfo(logPath) { UseShellExecute = true });
                 }
                 catch
                 {
