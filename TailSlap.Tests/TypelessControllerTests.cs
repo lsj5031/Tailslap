@@ -188,7 +188,8 @@ public class TypelessControllerTests
         Mock<IRemoteTranscriberFactory>? transcriberFactoryMock = null,
         Mock<IHistoryService>? historyMock = null,
         Mock<ITextRefinerFactory>? refinerFactoryMock = null,
-        Func<AppConfig, string, CancellationToken, Task<RecordingStats>>? recordFunc = null
+        Func<AppConfig, string, CancellationToken, Task<RecordingStats>>? recordFunc = null,
+        TextTyper? textTyper = null
     )
     {
         configMock ??= CreateMockConfigService();
@@ -198,6 +199,7 @@ public class TypelessControllerTests
         historyMock ??= new Mock<IHistoryService>();
         refinerFactoryMock ??= new Mock<ITextRefinerFactory>();
         recordFunc ??= CreateRecordFunc();
+        textTyper ??= new TextTyper(clipboardMock.Object);
 
         var clipboardHelper = new ClipboardHelper(clipboardMock.Object);
 
@@ -208,6 +210,7 @@ public class TypelessControllerTests
             recorderFactoryMock.Object,
             historyMock.Object,
             refinerFactoryMock.Object,
+            textTyper,
             recordFunc
         );
     }
@@ -225,6 +228,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
+                new TextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -241,6 +245,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
+                new TextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -257,6 +262,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
+                new TextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -273,6 +279,7 @@ public class TypelessControllerTests
                 null!,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
+                new TextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -289,6 +296,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 null!,
                 new Mock<ITextRefinerFactory>().Object,
+                new TextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -305,6 +313,7 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 null!,
+                new TextTyper(new Mock<IClipboardService>().Object),
                 CreateRecordFunc()
             )
         );
@@ -321,7 +330,25 @@ public class TypelessControllerTests
                 new Mock<IAudioRecorderFactory>().Object,
                 new Mock<IHistoryService>().Object,
                 new Mock<ITextRefinerFactory>().Object,
+                new TextTyper(new Mock<IClipboardService>().Object),
                 null!
+            )
+        );
+    }
+
+    [Fact]
+    public void Constructor_NullTextTyper_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new TypelessController(
+                CreateMockConfigService().Object,
+                new ClipboardHelper(new Mock<IClipboardService>().Object),
+                new Mock<IRemoteTranscriberFactory>().Object,
+                new Mock<IAudioRecorderFactory>().Object,
+                new Mock<IHistoryService>().Object,
+                new Mock<ITextRefinerFactory>().Object,
+                null!,
+                CreateRecordFunc()
             )
         );
     }
@@ -490,10 +517,14 @@ public class TypelessControllerTests
     }
 
     [Fact]
-    public async Task HandleKeyUp_WhitespaceResult_NoPasteNoHistory()
+    public async Task HandleKeyUp_WhitespaceResult_NoHistoryEntry()
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "   ", "\n\n");
         var mockClipboard = new Mock<IClipboardService>();
+        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard
+            .Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>()))
+            .Returns(Task.FromResult(true));
         var mockHistory = new Mock<IHistoryService>();
 
         var controller = CreateController(
@@ -505,7 +536,8 @@ public class TypelessControllerTests
         await controller.HandleKeyDownAsync();
         await controller.HandleKeyUpAsync();
 
-        mockClipboard.Verify(c => c.SetText(It.IsAny<string>()), Times.Never);
+        // TextTyper types each chunk as it arrives, so clipboard IS called for whitespace chunks.
+        // But history should NOT be saved for whitespace-only results.
         mockHistory.Verify(
             h => h.AppendTranscription(It.IsAny<string>(), It.IsAny<int>()),
             Times.Never

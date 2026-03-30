@@ -18,6 +18,7 @@ public sealed class TypelessController : ITypelessController
     private readonly IAudioRecorderFactory _audioRecorderFactory;
     private readonly IHistoryService _history;
     private readonly ITextRefinerFactory _textRefinerFactory;
+    private readonly TextTyper _textTyper;
 
     /// <summary>
     /// Recording delegate — can be overridden in tests to avoid needing a real AudioRecorder.
@@ -74,7 +75,8 @@ public sealed class TypelessController : ITypelessController
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
         IHistoryService history,
-        ITextRefinerFactory textRefinerFactory
+        ITextRefinerFactory textRefinerFactory,
+        TextTyper textTyper
     )
         : this(
             config,
@@ -83,6 +85,7 @@ public sealed class TypelessController : ITypelessController
             audioRecorderFactory,
             history,
             textRefinerFactory,
+            textTyper,
             DefaultRecordAsync
         ) { }
 
@@ -96,6 +99,7 @@ public sealed class TypelessController : ITypelessController
         IAudioRecorderFactory audioRecorderFactory,
         IHistoryService history,
         ITextRefinerFactory textRefinerFactory,
+        TextTyper textTyper,
         Func<AppConfig, string, CancellationToken, Task<RecordingStats>> recordFunc
     )
     {
@@ -110,6 +114,7 @@ public sealed class TypelessController : ITypelessController
         _history = history ?? throw new ArgumentNullException(nameof(history));
         _textRefinerFactory =
             textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
         _recordFunc = recordFunc ?? throw new ArgumentNullException(nameof(recordFunc));
     }
 
@@ -186,6 +191,9 @@ public sealed class TypelessController : ITypelessController
         {
             _state = ControllerState.Recording;
         }
+
+        // Reset the TextTyper baseline for this new transcription session
+        _textTyper.ResetBaseline();
 
         _tempWavPath = Path.Combine(
             Path.GetTempPath(),
@@ -377,6 +385,24 @@ public sealed class TypelessController : ITypelessController
                     );
                 }
                 catch { }
+
+                // Type the accumulated text into the focused application
+                try
+                {
+                    await _textTyper
+                        .TypeAsync(fullText.ToString(), autoPaste: cfg.Transcriber.AutoPaste)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception typeEx)
+                {
+                    try
+                    {
+                        Logger.Log(
+                            $"TypelessController: Failed to type SSE chunk: {typeEx.Message}"
+                        );
+                    }
+                    catch { }
+                }
             }
         }
         catch (Exception ex)

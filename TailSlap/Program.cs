@@ -99,6 +99,7 @@ internal static class Program
         services.AddSingleton<INotificationService, NotificationServiceAdapter>();
         services.AddSingleton<ILoggerService, LoggerServiceAdapter>();
         services.AddSingleton<IAutoStartService, AutoStartServiceAdapter>();
+        services.AddSingleton<TextTyper>();
         services.AddSingleton<ITypelessController, TypelessController>();
         services.AddSingleton<KeyboardHook>(sp =>
         {
