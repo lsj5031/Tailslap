@@ -1,10 +1,20 @@
 using System;
 using System.Drawing;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 public sealed class SettingsForm : Form
 {
+    private enum HotkeyTarget
+    {
+        Llm,
+        Transcriber,
+        Typeless,
+    }
+
+    private const int HotkeyProbeId = 0x4A17;
+
     private readonly AppConfig _cfg;
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
@@ -56,6 +66,12 @@ public sealed class SettingsForm : Form
     private TextBox? _wsSendTimeout;
     private TextBox? _wsHeartbeatInterval;
     private TextBox? _wsHeartbeatTimeout;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
     public SettingsForm(
         AppConfig cfg,
@@ -426,18 +442,19 @@ public sealed class SettingsForm : Form
         ok.Click += (_, __) => ApplyChanges();
 
         // Add real-time validation
-        _baseUrl.TextChanged += ValidateInput;
-        _temperature.TextChanged += ValidateInput;
-        _maxTokens.TextChanged += ValidateInput;
-        _model.TextChanged += ValidateInput;
+        _baseUrl.TextChanged += RefreshValidationState;
+        _temperature.TextChanged += RefreshValidationState;
+        _maxTokens.TextChanged += RefreshValidationState;
+        _model.TextChanged += RefreshValidationState;
         _apiKey.TextChanged += (_, _) => _llmTestResultLabel.Text = "";
         _baseUrl.TextChanged += (_, _) => _llmTestResultLabel.Text = "";
-        _transcriberBaseUrl!.TextChanged += ValidateTranscriberInput;
-        _transcriberModel!.TextChanged += ValidateTranscriberInput;
-        _transcriberTimeout!.TextChanged += ValidateTranscriberInput;
-        _transcriberAutoEnhanceThreshold!.TextChanged += ValidateTranscriberInput;
+        _transcriberBaseUrl!.TextChanged += RefreshValidationState;
+        _transcriberModel!.TextChanged += RefreshValidationState;
+        _transcriberTimeout!.TextChanged += RefreshValidationState;
+        _transcriberAutoEnhanceThreshold!.TextChanged += RefreshValidationState;
         _transcriberBaseUrl!.TextChanged += (_, _) => _transcriberTestResultLabel!.Text = "";
         _transcriberApiKey!.TextChanged += (_, _) => _transcriberTestResultLabel!.Text = "";
+        RefreshValidationState(null, EventArgs.Empty);
     }
 
     private TableLayoutPanel CreateTranscriberTab()
@@ -929,11 +946,11 @@ public sealed class SettingsForm : Form
         transcriber.Controls.Add(_wsHeartbeatTimeout, 1, 24);
 
         // Add validation handlers
-        _wsConnectionTimeout.TextChanged += ValidateTranscriberInput;
-        _wsReceiveTimeout.TextChanged += ValidateTranscriberInput;
-        _wsSendTimeout.TextChanged += ValidateTranscriberInput;
-        _wsHeartbeatInterval.TextChanged += ValidateTranscriberInput;
-        _wsHeartbeatTimeout.TextChanged += ValidateTranscriberInput;
+        _wsConnectionTimeout.TextChanged += RefreshValidationState;
+        _wsReceiveTimeout.TextChanged += RefreshValidationState;
+        _wsSendTimeout.TextChanged += RefreshValidationState;
+        _wsHeartbeatInterval.TextChanged += RefreshValidationState;
+        _wsHeartbeatTimeout.TextChanged += RefreshValidationState;
 
         _realtimeProviderDropdown = new ComboBox
         {
@@ -1117,11 +1134,34 @@ public sealed class SettingsForm : Form
             : "custom";
     }
 
-    private void ValidateInput(object? sender, EventArgs e)
+    private void RefreshValidationState(object? sender, EventArgs e)
+    {
+        var errors = GetAllValidationErrors();
+        _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
+        _validationLabel.ForeColor = errors.Count > 0 ? Color.Red : Color.Green;
+    }
+
+    private bool ValidateAllInput()
+    {
+        var errors = GetAllValidationErrors();
+        _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
+        _validationLabel.ForeColor = errors.Count > 0 ? Color.Red : Color.Green;
+        return errors.Count == 0;
+    }
+
+    private System.Collections.Generic.List<string> GetAllValidationErrors()
+    {
+        var errors = new System.Collections.Generic.List<string>();
+        errors.AddRange(GetLlmValidationErrors());
+        errors.AddRange(GetTranscriberValidationErrors());
+        errors.AddRange(GetHotkeyValidationErrors());
+        return errors;
+    }
+
+    private System.Collections.Generic.List<string> GetLlmValidationErrors()
     {
         var errors = new System.Collections.Generic.List<string>();
 
-        // Validate URL
         if (!string.IsNullOrWhiteSpace(_baseUrl.Text))
         {
             if (
@@ -1133,7 +1173,6 @@ public sealed class SettingsForm : Form
             }
         }
 
-        // Validate temperature
         if (!string.IsNullOrWhiteSpace(_temperature.Text))
         {
             if (!double.TryParse(_temperature.Text, out var temp) || temp < 0 || temp > 2)
@@ -1142,7 +1181,6 @@ public sealed class SettingsForm : Form
             }
         }
 
-        // Validate max tokens
         if (!string.IsNullOrWhiteSpace(_maxTokens.Text))
         {
             if (!int.TryParse(_maxTokens.Text, out var tokens) || tokens <= 0 || tokens > 32768)
@@ -1151,21 +1189,18 @@ public sealed class SettingsForm : Form
             }
         }
 
-        // Validate model name
         if (string.IsNullOrWhiteSpace(_model.Text))
         {
             errors.Add("Model name is required");
         }
 
-        _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
-        _validationLabel.ForeColor = errors.Count > 0 ? Color.Red : Color.Green;
+        return errors;
     }
 
-    private void ValidateTranscriberInput(object? sender, EventArgs e)
+    private System.Collections.Generic.List<string> GetTranscriberValidationErrors()
     {
         var errors = new System.Collections.Generic.List<string>();
 
-        // Validate URL
         if (!string.IsNullOrWhiteSpace(_transcriberBaseUrl!.Text))
         {
             if (
@@ -1177,7 +1212,6 @@ public sealed class SettingsForm : Form
             }
         }
 
-        // Validate timeout
         if (!string.IsNullOrWhiteSpace(_transcriberTimeout!.Text))
         {
             if (
@@ -1190,13 +1224,11 @@ public sealed class SettingsForm : Form
             }
         }
 
-        // Validate model name
         if (string.IsNullOrWhiteSpace(_transcriberModel!.Text))
         {
             errors.Add("Model name is required for transcriber");
         }
 
-        // Validate auto-enhance threshold
         if (!string.IsNullOrWhiteSpace(_transcriberAutoEnhanceThreshold!.Text))
         {
             if (
@@ -1209,7 +1241,6 @@ public sealed class SettingsForm : Form
             }
         }
 
-        // Validate WebSocket timeout settings
         if (!string.IsNullOrWhiteSpace(_wsConnectionTimeout!.Text))
         {
             if (
@@ -1270,16 +1301,47 @@ public sealed class SettingsForm : Form
             }
         }
 
-        _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
-        _validationLabel.ForeColor = errors.Count > 0 ? Color.Red : Color.Green;
+        return errors;
     }
 
-    private bool ValidateAllInput()
+    private System.Collections.Generic.List<string> GetHotkeyValidationErrors()
     {
-        ValidateInput(null, EventArgs.Empty!);
-        ValidateTranscriberInput(null, EventArgs.Empty!);
-        return string.IsNullOrEmpty(_validationLabel.Text)
-            || _validationLabel.ForeColor == Color.Green;
+        var errors = new System.Collections.Generic.List<string>();
+
+        AddHotkeyValidationError(errors, HotkeyTarget.Llm, _cfg.Hotkey, "LLM hotkey");
+        AddHotkeyValidationError(
+            errors,
+            HotkeyTarget.Transcriber,
+            _cfg.TranscriberHotkey,
+            "Transcriber hotkey"
+        );
+        AddHotkeyValidationError(
+            errors,
+            HotkeyTarget.Typeless,
+            _cfg.TypelessHotkey,
+            "Push-to-talk hotkey"
+        );
+
+        return errors;
+    }
+
+    private void AddHotkeyValidationError(
+        System.Collections.Generic.List<string> errors,
+        HotkeyTarget target,
+        HotkeyConfig hotkey,
+        string displayName
+    )
+    {
+        if (hotkey.Modifiers == 0 || hotkey.Key == 0)
+        {
+            return;
+        }
+
+        var validationError = ValidateCapturedHotkey(target, hotkey.Modifiers, hotkey.Key);
+        if (!string.IsNullOrWhiteSpace(validationError))
+        {
+            errors.Add($"{displayName}: {validationError}");
+        }
     }
 
     private async void TestConnection(object? sender, EventArgs e)
@@ -1382,12 +1444,13 @@ public sealed class SettingsForm : Form
 
     private void CaptureTranscriberHotkey(object? sender, EventArgs e)
     {
-        using var cap = new HotkeyCaptureForm();
-        if (cap.ShowDialog() != DialogResult.OK)
+        using var cap = CreateHotkeyCaptureDialog(HotkeyTarget.Transcriber);
+        if (cap.ShowDialog(this) != DialogResult.OK)
             return;
         _cfg.TranscriberHotkey.Modifiers = cap.Modifiers;
         _cfg.TranscriberHotkey.Key = cap.Key;
         _transcriberHotkey!.Text = GetHotkeyDisplay(_cfg.TranscriberHotkey);
+        RefreshValidationState(null, EventArgs.Empty);
         Logger.Log(
             $"Transcriber hotkey captured: mods={cap.Modifiers}, key={cap.Key}, display={cap.Display}"
         );
@@ -1395,12 +1458,13 @@ public sealed class SettingsForm : Form
 
     private void CaptureTypelessHotkey(object? sender, EventArgs e)
     {
-        using var cap = new HotkeyCaptureForm();
-        if (cap.ShowDialog() != DialogResult.OK)
+        using var cap = CreateHotkeyCaptureDialog(HotkeyTarget.Typeless);
+        if (cap.ShowDialog(this) != DialogResult.OK)
             return;
         _cfg.TypelessHotkey.Modifiers = cap.Modifiers;
         _cfg.TypelessHotkey.Key = cap.Key;
         _typelessHotkey!.Text = GetHotkeyDisplay(_cfg.TypelessHotkey);
+        RefreshValidationState(null, EventArgs.Empty);
         Logger.Log(
             $"Typeless hotkey captured: mods={cap.Modifiers}, key={cap.Key}, display={cap.Display}"
         );
@@ -1408,15 +1472,97 @@ public sealed class SettingsForm : Form
 
     private void CaptureLlmHotkey(object? sender, EventArgs e)
     {
-        using var cap = new HotkeyCaptureForm();
-        if (cap.ShowDialog() != DialogResult.OK)
+        using var cap = CreateHotkeyCaptureDialog(HotkeyTarget.Llm);
+        if (cap.ShowDialog(this) != DialogResult.OK)
             return;
         _cfg.Hotkey.Modifiers = cap.Modifiers;
         _cfg.Hotkey.Key = cap.Key;
         _llmHotkey.Text = GetHotkeyDisplay(_cfg.Hotkey);
+        RefreshValidationState(null, EventArgs.Empty);
         Logger.Log(
             $"LLM hotkey captured: mods={cap.Modifiers}, key={cap.Key}, display={cap.Display}"
         );
+    }
+
+    private HotkeyCaptureForm CreateHotkeyCaptureDialog(HotkeyTarget target)
+    {
+        return new HotkeyCaptureForm(
+            validator: (mods, key) => ValidateCapturedHotkey(target, mods, key)
+        );
+    }
+
+    private string? ValidateCapturedHotkey(HotkeyTarget target, uint mods, uint key)
+    {
+        if (key == 0 || mods == 0)
+        {
+            return "Hotkey must include at least one modifier and one non-modifier key.";
+        }
+
+        var duplicateConflict = FindDuplicateHotkeyConflict(target, mods, key);
+        if (!string.IsNullOrWhiteSpace(duplicateConflict))
+        {
+            return duplicateConflict;
+        }
+
+        if (target == HotkeyTarget.Typeless)
+        {
+            return null;
+        }
+
+        return CanRegisterHotkey(mods, key, out var registrationError) ? null : registrationError;
+    }
+
+    private string? FindDuplicateHotkeyConflict(HotkeyTarget target, uint mods, uint key)
+    {
+        if (target != HotkeyTarget.Llm && HotkeyMatches(_cfg.Hotkey, mods, key))
+        {
+            return "Already used by the LLM hotkey.";
+        }
+
+        if (target != HotkeyTarget.Transcriber && HotkeyMatches(_cfg.TranscriberHotkey, mods, key))
+        {
+            return "Already used by the transcription hotkey.";
+        }
+
+        if (target != HotkeyTarget.Typeless && HotkeyMatches(_cfg.TypelessHotkey, mods, key))
+        {
+            return "Already used by the push-to-talk hotkey.";
+        }
+
+        if (HotkeyMatches(_cfg.StreamingTranscriberHotkey, mods, key))
+        {
+            return "Already used by the realtime streaming hotkey.";
+        }
+
+        return null;
+    }
+
+    private static bool HotkeyMatches(HotkeyConfig hotkey, uint mods, uint key)
+    {
+        return hotkey.Modifiers == mods && hotkey.Key == key;
+    }
+
+    private bool CanRegisterHotkey(uint mods, uint key, out string errorMessage)
+    {
+        errorMessage = string.Empty;
+
+        if (!IsHandleCreated)
+        {
+            return true;
+        }
+
+        if (RegisterHotKey(Handle, HotkeyProbeId, mods, key))
+        {
+            UnregisterHotKey(Handle, HotkeyProbeId);
+            return true;
+        }
+
+        var lastError = Marshal.GetLastWin32Error();
+        errorMessage =
+            lastError == 1409
+                ? "Already registered by another application."
+                : $"Windows rejected this hotkey (error {lastError}).";
+        return false;
     }
 
     private static string GetHotkeyDisplay(HotkeyConfig hotkey)
@@ -1532,6 +1678,13 @@ public sealed class SettingsForm : Form
             _cfg.TypelessHotkey.Modifiers = defaultCfg.TypelessHotkey.Modifiers;
             _cfg.TypelessHotkey.Key = defaultCfg.TypelessHotkey.Key;
             _typelessHotkey!.Text = GetHotkeyDisplay(defaultCfg.TypelessHotkey);
+
+            _cfg.StreamingTranscriberHotkey.Modifiers = defaultCfg
+                .StreamingTranscriberHotkey
+                .Modifiers;
+            _cfg.StreamingTranscriberHotkey.Key = defaultCfg.StreamingTranscriberHotkey.Key;
+
+            RefreshValidationState(null, EventArgs.Empty);
 
             NotificationService.ShowInfo("Settings reset to defaults.");
         }

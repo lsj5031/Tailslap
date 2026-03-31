@@ -1005,6 +1005,12 @@ public class MainForm : Form
     {
         if (m.Msg == WM_HOTKEY)
         {
+            if (_isSettingsOpen)
+            {
+                Logger.Log("WM_HOTKEY ignored because Settings is open");
+                return;
+            }
+
             var hotkeyId = m.WParam.ToInt32();
             Logger.Log($"WM_HOTKEY received with ID: {hotkeyId}");
 
@@ -1253,7 +1259,7 @@ public class MainForm : Form
         catch { }
     }
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
     [DllImport("user32.dll")]
@@ -1289,13 +1295,16 @@ public class MainForm : Form
             if ((mods & 0x0008) != 0)
                 modNames += "Win+";
 
-            NotificationService.ShowError(
-                $"Failed to register hotkey: {modNames}{keyName}. It may be in use by another application."
-            );
+            var lastError = Marshal.GetLastWin32Error();
+            var message =
+                lastError == 1409
+                    ? $"Failed to register hotkey: {modNames}{keyName}. It is already registered by another application."
+                    : $"Failed to register hotkey: {modNames}{keyName}. Windows error {lastError}.";
+            NotificationService.ShowError(message);
         }
     }
 
-    private void ApplyAllHotkeyRegistrations()
+    private void UnregisterAppHotkeys()
     {
         try
         {
@@ -1312,6 +1321,22 @@ public class MainForm : Form
             UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
         }
         catch { }
+    }
+
+    private void SuspendHotkeysForSettings()
+    {
+        UnregisterAppHotkeys();
+
+        try
+        {
+            _keyboardHook.Uninstall();
+        }
+        catch { }
+    }
+
+    private void ApplyAllHotkeyRegistrations()
+    {
+        UnregisterAppHotkeys();
 
         _currentMods = _currentConfig.Hotkey.Modifiers;
         _currentVk = _currentConfig.Hotkey.Key;
@@ -1349,6 +1374,7 @@ public class MainForm : Form
     private void ShowSettings(AppConfig cfg)
     {
         _isSettingsOpen = true;
+        SuspendHotkeysForSettings();
         try
         {
             var clone = cfg.Clone();
@@ -1371,14 +1397,13 @@ public class MainForm : Form
                 if (_transcriberToggleItem != null)
                     _transcriberToggleItem.Checked = _currentConfig.Transcriber.Enabled;
 
-                ApplyAllHotkeyRegistrations();
-
                 NotificationService.ShowSuccess("Settings saved.");
             }
         }
         finally
         {
             _isSettingsOpen = false;
+            ApplyAllHotkeyRegistrations();
         }
     }
 }

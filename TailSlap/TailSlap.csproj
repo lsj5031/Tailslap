@@ -5,10 +5,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>3.0.1</Version>
-    <AssemblyVersion>3.0.1.0</AssemblyVersion>
-    <FileVersion>3.0.1.0</FileVersion>
-    <InformationalVersion>3.0.1</InformationalVersion>
+    <Version>3.0.2</Version>
+    <AssemblyVersion>3.0.2.0</AssemblyVersion>
+    <FileVersion>3.0.2.0</FileVersion>
+    <InformationalVersion>3.0.2</InformationalVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationIcon>Icons\favicon.ico</ApplicationIcon>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

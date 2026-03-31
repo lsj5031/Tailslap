@@ -5,6 +5,7 @@ using System.Windows.Forms;
 
 public sealed class HotkeyCaptureForm : Form
 {
+    private readonly Func<uint, uint, string?>? _validator;
     private readonly Label _prompt;
     private readonly TextBox _display;
     private readonly Label _hint;
@@ -16,8 +17,9 @@ public sealed class HotkeyCaptureForm : Form
     public uint Key { get; private set; }
     public string Display { get; private set; } = string.Empty;
 
-    public HotkeyCaptureForm()
+    public HotkeyCaptureForm(Func<uint, uint, string?>? validator = null, string? promptText = null)
     {
+        _validator = validator;
         Text = "Set Global Hotkey";
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -52,8 +54,9 @@ public sealed class HotkeyCaptureForm : Form
         _prompt = new Label
         {
             Text =
-                "Press a keyboard shortcut to use as your global hotkey.\r\n"
-                + "Must include Ctrl, Alt, Shift, or Win plus a non-modifier key (e.g., Ctrl+Alt+R, Win+T)",
+                promptText
+                ?? "Press a keyboard shortcut to use as your global hotkey.\r\n"
+                    + "Must include Ctrl, Alt, Shift, or Win plus a non-modifier key (e.g., Ctrl+Alt+R, Win+T)",
             AutoSize = true,
             MaximumSize = new Size(DpiHelper.Scale(720), 0),
             Dock = DockStyle.Fill,
@@ -176,22 +179,35 @@ public sealed class HotkeyCaptureForm : Form
         Display = BuildDisplay(e.Control, e.Alt, e.Shift, winDown, e.KeyCode);
         _display.Text = Display;
 
-        if (mods != 0 && Key != 0)
+        if (mods == 0 || Key == 0)
         {
-            _display.BackColor = Color.LightGreen;
-            _hint.Text = "✓ Valid hotkey! Click OK to save.";
-            _hint.ForeColor = Color.Green;
-            _ok.Enabled = true;
+            SetValidationState(
+                isValid: false,
+                hint: "Must include Ctrl, Alt, Shift, or Win and a non-modifier key."
+            );
         }
         else
         {
-            _display.BackColor = Color.LightCoral;
-            _hint.Text = "⚠ Must include Ctrl, Alt, Shift, or Win and a non-modifier key.";
-            _hint.ForeColor = Color.Red;
-            _ok.Enabled = false;
+            var validationError = _validator?.Invoke(mods, Key);
+            if (string.IsNullOrWhiteSpace(validationError))
+            {
+                SetValidationState(isValid: true, hint: "Available hotkey. Click OK to save.");
+            }
+            else
+            {
+                SetValidationState(isValid: false, hint: validationError);
+            }
         }
 
         e.SuppressKeyPress = true;
+    }
+
+    private void SetValidationState(bool isValid, string hint)
+    {
+        _display.BackColor = isValid ? Color.LightGreen : Color.LightCoral;
+        _hint.Text = isValid ? $"✓ {hint}" : $"⚠ {hint}";
+        _hint.ForeColor = isValid ? Color.Green : Color.Red;
+        _ok.Enabled = isValid;
     }
 
     private static string BuildDisplay(bool ctrl, bool alt, bool shift, bool win, Keys key)
