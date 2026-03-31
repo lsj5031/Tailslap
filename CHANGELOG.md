@@ -5,6 +5,18 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.2] - 2026-04-01
+
+### Changed
+- **Hotkey setup validation**: Hotkey capture now validates conflicts live in Settings, showing green only for available shortcuts and red when the combination is already used by TailSlap or another application.
+- **Paste delivery reliability**: Clipboard paste now marshals back onto the UI thread when needed and tries `WM_PASTE` against focused native edit controls before keyboard-driven fallbacks.
+- **Direct typing reliability**: Incremental typing paths now prefer Unicode `SendInput` before falling back to `SendKeys`, improving punctuation and non-ASCII text delivery.
+
+### Fixed
+- **Hotkey capture side effects**: Pressing an existing TailSlap shortcut while the Settings dialog is open no longer triggers refine/transcribe actions instead of just capturing the key combination.
+- **Hotkey conflict messaging**: Registration failures now report whether Windows says the shortcut is already owned by another application.
+- **Streaming text entry compatibility**: Realtime and typeless text insertion now degrade more gracefully when clipboard paste is unavailable.
+
 ## [3.0.1] - 2026-03-31
 
 ### Changed

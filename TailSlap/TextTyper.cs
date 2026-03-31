@@ -35,6 +35,7 @@ public class TextTyper
     private const int INPUT_KEYBOARD = 1;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_SCANCODE = 0x0008;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
     private const uint MAPVK_VK_TO_VSC = 0x0;
     private const uint VK_BACK = 0x08;
 
@@ -576,9 +577,60 @@ public class TextTyper
         if (string.IsNullOrEmpty(text))
             return;
 
-        var escaped = EscapeForSendKeys(text);
-        SendKeys.SendWait(escaped);
-        SendKeys.Flush();
+        var inputs = BuildUnicodeInputs(text);
+        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        if (sent != inputs.Length)
+        {
+            try
+            {
+                Logger.Log(
+                    $"TextTyper: Unicode SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
+                );
+            }
+            catch { }
+
+            var escaped = EscapeForSendKeys(text);
+            SendKeys.SendWait(escaped);
+            SendKeys.Flush();
+        }
+    }
+
+    private static INPUT[] BuildUnicodeInputs(string text)
+    {
+        var inputs = new INPUT[text.Length * 2];
+        int inputIndex = 0;
+
+        foreach (char c in text)
+        {
+            inputs[inputIndex++] = new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                U = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = 0,
+                        wScan = c,
+                        dwFlags = KEYEVENTF_UNICODE,
+                    },
+                },
+            };
+            inputs[inputIndex++] = new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                U = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = 0,
+                        wScan = c,
+                        dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                    },
+                },
+            };
+        }
+
+        return inputs;
     }
 
     #endregion

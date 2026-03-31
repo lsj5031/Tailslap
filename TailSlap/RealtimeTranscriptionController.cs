@@ -77,6 +77,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private const int INPUT_KEYBOARD = 1;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_SCANCODE = 0x0008;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
     private const uint MAPVK_VK_TO_VSC = 0x0;
     private const uint VK_BACK = 0x08;
 
@@ -751,6 +752,17 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
         try
         {
+            var inputs = BuildUnicodeInputs(text);
+            var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+            if (sent == inputs.Length)
+            {
+                return;
+            }
+
+            Logger.Log(
+                $"TypeTextDirectly: Unicode SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
+            );
+
             var escaped = new System.Text.StringBuilder();
             foreach (char c in text)
             {
@@ -787,6 +799,44 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         {
             Logger.Log($"TypeTextDirectly failed: {ex.Message}");
         }
+    }
+
+    private static INPUT[] BuildUnicodeInputs(string text)
+    {
+        var inputs = new INPUT[text.Length * 2];
+        int inputIndex = 0;
+
+        foreach (char c in text)
+        {
+            inputs[inputIndex++] = new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                U = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = 0,
+                        wScan = c,
+                        dwFlags = KEYEVENTF_UNICODE,
+                    },
+                },
+            };
+            inputs[inputIndex++] = new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                U = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = 0,
+                        wScan = c,
+                        dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
+                    },
+                },
+            };
+        }
+
+        return inputs;
     }
 
     private async void HandleRealtimeError(string error)

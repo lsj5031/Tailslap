@@ -1,6 +1,6 @@
-# TailSlap - Text Refinement Tool
+# TailSlap - AI Text Refinement and Transcription
 
-A Windows system tray application that refines text using AI-powered LLM services.
+A Windows system tray application for text refinement, toggle transcription, push-to-talk dictation, and realtime streaming transcription.
 
 ## Features
 
@@ -9,7 +9,10 @@ A Windows system tray application that refines text using AI-powered LLM service
   - `Ctrl+Alt+R`: Refine selected text
   - `Ctrl+Alt+T`: Toggle transcription (press to start recording, press again to stop)
   - `Ctrl+Win` hold: Push-to-talk transcription (hold to record, release to transcribe)
+  - `Ctrl+Alt+Y`: Realtime streaming transcription
 - **Audio Transcription**: Record microphone input and transcribe to text with optional LLM auto-enhancement
+- **Safer Hotkey Capture**: Settings validates hotkeys live, turning green for available shortcuts and red for conflicts
+- **Reliable Text Delivery**: TailSlap can use focused-control `WM_PASTE`, standard paste shortcuts, or Unicode `SendInput` depending on the target app
 - **Encrypted History**: Securely stores refinement and transcription history
 - **Auto-Paste**: Automatically pastes refined text back (toggleable)
 - **Animation**: Visual feedback during LLM processing
@@ -58,11 +61,13 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
     "Model": "glm-nano-2512",
     "TimeoutSeconds": 30,
     "AutoPaste": true,
+    "StreamResults": false,
     "EnableVAD": false,
     "SilenceThresholdMs": 1000,
     "PreferredMicrophoneIndex": -1,
     "UseWebRtcVad": true,
-    "WebRtcVadSensitivity": 2
+    "WebRtcVadSensitivity": 2,
+    "RealtimeProvider": "custom"
   }
 }
 ```
@@ -72,8 +77,10 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
 - **AutoPaste**: Automatically paste refined text after processing
 - **Hotkey.Modifiers**: Modifier keys (3 = Ctrl+Alt, 5 = Ctrl+Shift, 10 = Ctrl+Win)
 - **Hotkey.Key**: Key code (82 = R, 84 = T, 0 = modifier-only/hold)
+- **TranscriberHotkey**: Toggle transcription hotkey (default: `Ctrl+Alt+T`)
 - **TypelessHotkey.Modifiers**: Push-to-talk modifier keys (default: 10 = Ctrl+Win)
 - **TypelessHotkey.Key**: Push-to-talk key (default: 0 = modifier-only/hold)
+- **StreamingTranscriberHotkey**: Realtime streaming hotkey (default: `Ctrl+Alt+Y`)
 - **Llm.BaseUrl**: LLM API endpoint (OpenAI-compatible)
 - **Llm.Model**: Model name
 - **Llm.Temperature**: Creativity (0.0-1.0)
@@ -81,6 +88,7 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
 - **Llm.ApiKey**: API key (set via code, will be encrypted)
 - **Transcriber.UseWebRtcVad**: Use ML-based WebRTC VAD for smarter speech detection (default: true)
 - **Transcriber.WebRtcVadSensitivity**: VAD sensitivity (0=Low, 1=Medium, 2=High, 3=VeryHigh)
+- **Transcriber.RealtimeProvider**: `custom` or `openai` for realtime transcription
 
 ### Supported LLM Providers
 
@@ -103,6 +111,13 @@ Please use the **Settings...** menu in the system tray, which will automatically
 4. Refined text will be copied to clipboard
 5. If Auto-Paste is enabled, it will be pasted automatically
 
+### Hotkey Setup
+
+- Open **Settings...** from the tray menu, then click **Change Hotkey** for the mode you want to update.
+- The capture dialog turns **green** when the shortcut is available.
+- The capture dialog turns **red** when the shortcut conflicts with another TailSlap mode or another app already using that global hotkey.
+- TailSlap suspends its own hotkeys while the Settings dialog is open, so pressing an existing shortcut there will not accidentally trigger refinement or transcription.
+
 ## Tray Menu
 
 Right-click the tray icon for options:
@@ -116,7 +131,7 @@ Right-click the tray icon for options:
 
 ## Logs
 
-Application logs are stored in: `%APPDATA%\TailSlap\app.log`
+Application logs are stored in: `%APPDATA%\TailSlap\logs\app.jsonl`
 
 ## Building from Source
 
@@ -134,12 +149,13 @@ Output: `bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
 ### Hotkey not working
 - Check if another application is using the same hotkey
 - Try changing the hotkey via the tray menu
+- In the hotkey capture dialog, green means available and red means the shortcut is conflicting
 
 ### LLM request failed
 - Verify the LLM service is running (for local Ollama)
 - Check the BaseUrl in config.json
 - Check API key is set (for LLM providers)
-- Review app.log for detailed errors
+- Review `%APPDATA%\\TailSlap\\logs\\app.jsonl` for detailed errors
 
 ### Icon not appearing
 - Check system tray overflow area (hidden icons)

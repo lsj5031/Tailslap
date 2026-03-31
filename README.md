@@ -18,6 +18,8 @@
   - **Voice Activity Detection**: Auto-stop recording after silence (configurable threshold)
   - **Audio Format**: 16-bit mono, 16kHz WAV with optimized buffer management
 - **Clipboard Integration**: Automatically paste refined text back into your applications
+- **Safer Hotkey Setup**: The hotkey capture dialog turns green only for available shortcuts and red when the combination conflicts with another TailSlap mode or another app
+- **Reliable Text Delivery**: TailSlap can paste via focused-control `WM_PASTE`, clipboard shortcuts, or Unicode `SendInput` depending on what the target app accepts
 - **Customizable Hotkeys**: Configure four hotkeys via Settings menu:
   - Text Refinement: `Ctrl+Alt+R` (default)
   - Toggle Transcription: `Ctrl+Alt+T` (default)
@@ -94,6 +96,13 @@ Right-click the TailSlap icon in the system tray to access:
 - **Start with Windows**: Toggle automatic startup with Windows
 - **Quit**: Exit the application
 
+### Hotkey Capture Feedback
+
+When you change a hotkey in Settings:
+- TailSlap temporarily suspends its own active hotkeys so pressing an existing shortcut does not accidentally trigger refine, transcription, or streaming.
+- The capture box turns **green** when the shortcut is available.
+- The capture box turns **red** when the shortcut conflicts with another TailSlap hotkey or a global hotkey already registered by another application.
+
 ## Configuration
 
 Configuration is stored in a JSON file located at:
@@ -144,6 +153,16 @@ You can edit this file directly or use the Settings dialog in the system tray me
 
 Application logs are stored at:
 `%APPDATA%\TailSlap\logs\app.jsonl`
+
+## Troubleshooting
+
+### Hotkey stays red in Settings
+- Pick a different combination if the dialog says the shortcut is already used by TailSlap or another application.
+- Modifier-only hold hotkeys are supported only for push-to-talk; the other modes require at least one non-modifier key.
+
+### Text was not pasted or typed into the target app
+- TailSlap will automatically try focused-control paste, standard paste shortcuts, and direct Unicode typing depending on the app.
+- If all delivery methods fail, the text is still left on the clipboard so you can paste it manually.
 
 ## Animation
 

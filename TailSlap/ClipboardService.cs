@@ -109,6 +109,7 @@ public sealed class ClipboardService : IClipboardService
     private const uint COINIT_MULTITHREADED = 0x0;
 
     private const uint WM_COPY = 0x0301;
+    private const uint WM_PASTE = 0x0302;
     private const uint WM_GETTEXT = 0x000D;
     private const uint WM_GETTEXTLENGTH = 0x000E;
     private const uint EM_GETSEL = 0x00B0;
@@ -1152,7 +1153,35 @@ public sealed class ClipboardService : IClipboardService
         return false;
     }
 
-    public async System.Threading.Tasks.Task<bool> PasteAsync()
+    public System.Threading.Tasks.Task<bool> PasteAsync()
+    {
+        var currentContext = SynchronizationContext.Current;
+        bool hasUiContext = _uiContext != null;
+        bool needsMarshal = hasUiContext && currentContext != _uiContext;
+
+        try
+        {
+            Logger.Log(
+                $"PasteAsync: hasUiContext={hasUiContext}, currentContext={currentContext?.GetType().Name ?? "null"}, needsMarshal={needsMarshal}, ThreadId={Thread.CurrentThread.ManagedThreadId}"
+            );
+        }
+        catch { }
+
+        if (needsMarshal)
+        {
+            try
+            {
+                Logger.Log("PasteAsync: Marshaling to UI thread");
+            }
+            catch { }
+
+            return RunOnUiContextAsync(PasteAsyncCore);
+        }
+
+        return PasteAsyncCore();
+    }
+
+    private async System.Threading.Tasks.Task<bool> PasteAsyncCore()
     {
         try
         {
@@ -1209,8 +1238,11 @@ public sealed class ClipboardService : IClipboardService
 
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync()
     {
-        // Try multiple paste methods in order: Ctrl+V (most universal), Shift+Insert (terminals), SendInput (fallback)
-        string[] methods = { "Ctrl+V", "Shift+Insert", "SendInput Ctrl+V" };
+        // Try multiple paste methods in order:
+        // 1. WM_PASTE to focused native edit controls
+        // 2. Ctrl+V / Shift+Insert keyboard-driven paste for custom controls and terminals
+        // 3. SendInput Ctrl+V as the lowest-level fallback
+        string[] methods = { "WM_PASTE", "Ctrl+V", "Shift+Insert", "SendInput Ctrl+V" };
 
         LogPasteDiagnostic("PasteWithMultipleMethods");
 
@@ -1223,6 +1255,7 @@ public sealed class ClipboardService : IClipboardService
 
                 bool success = method switch
                 {
+                    "WM_PASTE" => await TryPasteWindowMessageAsync(),
                     "Ctrl+V" => await TryPasteCtrlVAsync(),
                     "Shift+Insert" => await TryPasteShiftInsertAsync(),
                     "SendInput Ctrl+V" => await TryPasteSendInputAsync(),
@@ -1249,6 +1282,53 @@ public sealed class ClipboardService : IClipboardService
         }
 
         return false;
+    }
+
+    private async System.Threading.Tasks.Task<bool> TryPasteWindowMessageAsync()
+    {
+        try
+        {
+            var foregroundWindow = GetForegroundWindow();
+            if (foregroundWindow == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            var targetWindow = ResolveFocusHwnd(foregroundWindow);
+            if (targetWindow == IntPtr.Zero)
+            {
+                targetWindow = foregroundWindow;
+            }
+
+            if (!SupportsWindowMessagePaste(targetWindow))
+            {
+                try
+                {
+                    Logger.Log(
+                        $"TryPasteWindowMessageAsync: Skipping unsupported target {DescribeWindow(targetWindow)}"
+                    );
+                }
+                catch { }
+                return false;
+            }
+
+            try
+            {
+                Logger.Log(
+                    $"TryPasteWindowMessageAsync: Sending WM_PASTE to {DescribeWindow(targetWindow)}"
+                );
+            }
+            catch { }
+
+            NormalizeInputState();
+            SendMessage(targetWindow, WM_PASTE, IntPtr.Zero, IntPtr.Zero);
+            await Task.Delay(75).ConfigureAwait(true);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async System.Threading.Tasks.Task<bool> TryPasteCtrlVAsync()
@@ -1297,6 +1377,34 @@ public sealed class ClipboardService : IClipboardService
             );
             await Task.Delay(75).ConfigureAwait(true);
             return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool SupportsWindowMessagePaste(IntPtr hWnd)
+    {
+        try
+        {
+            var className = new StringBuilder(128);
+            if (GetClassName(hWnd, className, className.Capacity) <= 0)
+            {
+                return false;
+            }
+
+            var cls = className.ToString();
+            if (string.IsNullOrWhiteSpace(cls))
+            {
+                return false;
+            }
+
+            return cls.Equals("Edit", StringComparison.OrdinalIgnoreCase)
+                || cls.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase)
+                || cls.StartsWith("RICHEDIT", StringComparison.OrdinalIgnoreCase)
+                || cls.StartsWith("WindowsForms10.EDIT", StringComparison.OrdinalIgnoreCase)
+                || cls.StartsWith("Scintilla", StringComparison.OrdinalIgnoreCase);
         }
         catch
         {
@@ -2384,6 +2492,38 @@ public sealed class ClipboardService : IClipboardService
         th.IsBackground = true;
         th.SetApartmentState(ApartmentState.STA); // Use STA for clipboard operations (required for System.Windows.Forms.Clipboard)
         th.Start();
+        return tcs.Task;
+    }
+
+    private static System.Threading.Tasks.Task<T> RunOnUiContextAsync<T>(
+        Func<System.Threading.Tasks.Task<T>> func
+    )
+    {
+        if (_uiContext == null || SynchronizationContext.Current == _uiContext)
+        {
+            return func();
+        }
+
+        var tcs = new System.Threading.Tasks.TaskCompletionSource<T>(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        _uiContext.Post(
+            async _ =>
+            {
+                try
+                {
+                    var result = await func().ConfigureAwait(true);
+                    tcs.TrySetResult(result);
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            },
+            null
+        );
+
         return tcs.Task;
     }
 
