@@ -1,8 +1,0 @@
-commands:
-  install: dotnet restore
-  build: dotnet build -c Release
-  test: dotnet test TailSlap.Tests -c Release --no-build
-  typecheck: dotnet build -c Release
-  lint: dotnet build -c Release
-
-services: {}

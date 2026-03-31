@@ -229,16 +229,29 @@ public sealed class KeyboardHook : IDisposable
         Uninstall();
     }
 
+    /// <summary>
+    /// Whether the configured hotkey is modifier-only (Key == 0), meaning it triggers
+    /// when the modifier combination is fully held rather than requiring a primary key.
+    /// </summary>
+    internal bool IsModifierOnlyHotkey => _config.Key == 0;
+
     #region Internal methods (testable via reflection)
 
     /// <summary>
     /// Processes a key-down event. Fires OnKeyDown if the configured hotkey combination
     /// matches and auto-repeat is suppressed.
+    /// For modifier-only hotkeys (Key == 0), triggers when all configured modifiers are held.
     /// </summary>
     internal void ProcessKeyDown(uint currentModifiers, uint vk)
     {
         if (_disposed)
             return;
+
+        if (IsModifierOnlyHotkey)
+        {
+            ProcessModifierOnlyKeyDown(currentModifiers);
+            return;
+        }
 
         // Check if this key matches our configured hotkey
         if (!MatchesConfig(currentModifiers, vk))
@@ -265,13 +278,50 @@ public sealed class KeyboardHook : IDisposable
     }
 
     /// <summary>
+    /// Handles key-down for modifier-only hotkeys. Fires OnKeyDown when all configured
+    /// modifiers are simultaneously held.
+    /// </summary>
+    private void ProcessModifierOnlyKeyDown(uint currentModifiers)
+    {
+        // Check if all configured modifiers are now held
+        if ((currentModifiers & _config.Modifiers) != _config.Modifiers)
+            return;
+
+        // Auto-repeat suppression
+        if (_primaryKeyHeld)
+            return;
+
+        _primaryKeyHeld = true;
+        _isRecordingActive = true;
+        _lastKnownModifiers = currentModifiers;
+        _keyDownTimestamp = DateTime.UtcNow;
+
+        StartMaxDurationTimer();
+
+        try
+        {
+            Logger.Log("KeyboardHook: modifier-only hotkey activated");
+        }
+        catch { }
+
+        OnKeyDown?.Invoke();
+    }
+
+    /// <summary>
     /// Processes a key-up event. Fires OnKeyUp if the primary key of the configured
     /// hotkey is released (regardless of current modifier state).
+    /// For modifier-only hotkeys, delegates to modifier change handling.
     /// </summary>
     internal void ProcessKeyUp(uint vk)
     {
         if (_disposed)
             return;
+
+        if (IsModifierOnlyHotkey)
+        {
+            // For modifier-only hotkeys, key-up of non-modifiers is not relevant
+            return;
+        }
 
         // Only fire key-up for our configured primary key
         if (vk != _config.Key)
@@ -296,12 +346,36 @@ public sealed class KeyboardHook : IDisposable
 
     /// <summary>
     /// Updates the tracked modifier state. Called when modifier keys change
-    /// (pressed or released). Does NOT affect recording state — recording continues
+    /// (pressed or released).
+    /// For modifier-only hotkeys (Key == 0), fires OnKeyUp when any required modifier is released.
+    /// For standard hotkeys, does NOT affect recording state — recording continues
     /// even if all modifiers are released before the primary key.
     /// </summary>
     internal void ProcessModifierChange(uint currentModifiers)
     {
         _lastKnownModifiers = currentModifiers;
+
+        // For modifier-only hotkeys, releasing any required modifier triggers key-up
+        if (IsModifierOnlyHotkey && _primaryKeyHeld)
+        {
+            bool anyRequiredReleased = (_config.Modifiers & currentModifiers) != _config.Modifiers;
+            if (anyRequiredReleased)
+            {
+                _primaryKeyHeld = false;
+                _isRecordingActive = false;
+                StopMaxDurationTimer();
+
+                try
+                {
+                    Logger.Log(
+                        "KeyboardHook: modifier-only hotkey deactivated (modifier released)"
+                    );
+                }
+                catch { }
+
+                OnKeyUp?.Invoke();
+            }
+        }
     }
 
     /// <summary>

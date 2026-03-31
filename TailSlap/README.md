@@ -7,8 +7,9 @@ A Windows system tray application that refines text using AI-powered LLM service
 - **System Tray Application**: Runs minimized in the system tray
 - **Global Hotkeys**:
   - `Ctrl+Alt+R`: Refine selected text
-  - `Ctrl+Alt+T`: Record and transcribe audio
-- **Audio Transcription**: Record microphone input and transcribe to text
+  - `Ctrl+Alt+T`: Toggle transcription (press to start recording, press again to stop)
+  - `Ctrl+Win` hold: Push-to-talk transcription (hold to record, release to transcribe)
+- **Audio Transcription**: Record microphone input and transcribe to text with optional LLM auto-enhancement
 - **Encrypted History**: Securely stores refinement and transcription history
 - **Auto-Paste**: Automatically pastes refined text back (toggleable)
 - **Animation**: Visual feedback during LLM processing
@@ -69,8 +70,10 @@ Configuration is stored in: `%APPDATA%\TailSlap\config.json`
 ### Configuration Options
 
 - **AutoPaste**: Automatically paste refined text after processing
-- **Hotkey.Modifiers**: Modifier keys (3 = Ctrl+Alt, 5 = Ctrl+Shift, 6 = Alt+Shift)
-- **Hotkey.Key**: Key code (82 = R, 84 = T, etc.)
+- **Hotkey.Modifiers**: Modifier keys (3 = Ctrl+Alt, 5 = Ctrl+Shift, 10 = Ctrl+Win)
+- **Hotkey.Key**: Key code (82 = R, 84 = T, 0 = modifier-only/hold)
+- **TypelessHotkey.Modifiers**: Push-to-talk modifier keys (default: 10 = Ctrl+Win)
+- **TypelessHotkey.Key**: Push-to-talk key (default: 0 = modifier-only/hold)
 - **Llm.BaseUrl**: LLM API endpoint (OpenAI-compatible)
 - **Llm.Model**: Model name
 - **Llm.Temperature**: Creativity (0.0-1.0)
@@ -104,7 +107,7 @@ Please use the **Settings...** menu in the system tray, which will automatically
 
 Right-click the tray icon for options:
 - **Refine Now**: Manually trigger refinement
-- **Transcribe Now**: Start audio transcription
+- **Transcribe Now**: Start toggle-based audio transcription
 - **Settings...**: Configure hotkeys, models, and API keys
 - **Encrypted Refinement History...**: View refinement history
 - **Encrypted Transcription History...**: View transcription history

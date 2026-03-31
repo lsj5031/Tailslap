@@ -11,6 +11,7 @@ public sealed class AppConfig
     public HotkeyConfig Hotkey { get; set; } = new() { Modifiers = 0x0003, Key = (uint)Keys.R }; // Ctrl+Alt+R for LLM
     public HotkeyConfig TranscriberHotkey { get; set; } =
         new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber
+    public HotkeyConfig TypelessHotkey { get; set; } = new() { Modifiers = 0x000A, Key = 0 }; // Ctrl+Win hold for Typeless/Push-to-Talk
     public HotkeyConfig StreamingTranscriberHotkey { get; set; } =
         new() { Modifiers = 0x0003, Key = (uint)Keys.Y }; // Ctrl+Alt+Y for Streaming Transcriber
     public LlmConfig Llm { get; set; } = new();
@@ -24,6 +25,7 @@ public sealed class AppConfig
             UseClipboardFallback = UseClipboardFallback,
             Hotkey = Hotkey.Clone(),
             TranscriberHotkey = TranscriberHotkey.Clone(),
+            TypelessHotkey = TypelessHotkey.Clone(),
             StreamingTranscriberHotkey = StreamingTranscriberHotkey.Clone(),
             Llm = Llm.Clone(),
             Transcriber = Transcriber.Clone(),
@@ -582,6 +584,13 @@ public sealed class ConfigService : IConfigService, IDisposable
         {
             cfg.TranscriberHotkey.Modifiers = 0x0003; // CTRL + ALT
             cfg.TranscriberHotkey.Key = (uint)Keys.T;
+        }
+
+        // Default typeless hotkey to Ctrl+Win hold
+        if (cfg.TypelessHotkey.Modifiers == 0 && cfg.TypelessHotkey.Key == 0)
+        {
+            cfg.TypelessHotkey.Modifiers = 0x000A; // CTRL + WIN
+            cfg.TypelessHotkey.Key = 0;
         }
 
         return cfg;

@@ -101,11 +101,12 @@ internal static class Program
         services.AddSingleton<IAutoStartService, AutoStartServiceAdapter>();
         services.AddSingleton<TextTyper>();
         services.AddSingleton<ITypelessController, TypelessController>();
+        services.AddSingleton<ITranscriptionController, TranscriptionController>();
         services.AddSingleton<KeyboardHook>(sp =>
         {
             var config = sp.GetRequiredService<IConfigService>();
             var cfg = config.CreateValidatedCopy();
-            return new KeyboardHook(cfg.TranscriberHotkey);
+            return new KeyboardHook(cfg.TypelessHotkey);
         });
         services.AddSingleton<IRealtimeTranscriptionController, RealtimeTranscriptionController>();
 

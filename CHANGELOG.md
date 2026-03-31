@@ -5,6 +5,18 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-03-31
+
+### Added
+- **Toggle Transcription Mode**: Restored press-to-start/press-to-stop transcription on `Ctrl+Alt+T` (via Win32 `RegisterHotKey`). Press once to start recording, press again to stop and transcribe. Includes optional LLM auto-enhancement for longer transcriptions. Uses `ClipboardHelper` for result delivery.
+- **Typeless / Push-to-Talk Mode**: Moved push-to-talk recording to a new `Ctrl+Win` hold-to-record hotkey (via `KeyboardHook` WH_KEYBOARD_LL). Hold both modifiers to record, release either to stop and transcribe with SSE streaming via `TextTyper`.
+- **Modifier-only hotkey support**: `KeyboardHook` now supports `HotkeyConfig.Key == 0`, meaning no primary key is required — the hook fires when the configured modifier combination is fully held and stops when any required modifier is released.
+- **Push-to-Talk Hotkey setting**: Added `TypelessHotkey` configuration property and Settings UI capture field for customizing the push-to-talk hotkey independently from the toggle transcription hotkey.
+
+### Changed
+- **Four operating modes**: TailSlap now has four distinct modes: Refinement (Ctrl+Alt+R), Toggle Transcription (Ctrl+Alt+T), Typeless Push-to-Talk (Ctrl+Win hold), and Realtime Streaming (Ctrl+Alt+Y).
+- **KeyboardHook uses TypelessHotkey**: The keyboard hook is now configured from `TypelessHotkey` instead of `TranscriberHotkey`, separating the toggle and push-to-talk hotkey mechanisms.
+
 ## [2.1.0] - 2026-03-31
 
 ### Added

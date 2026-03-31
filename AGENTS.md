@@ -18,7 +18,7 @@ This document contains internal development information for TailSlap contributor
 
 ## Operating Modes
 
-TailSlap has three hotkey-activated modes, each with a distinct workflow and hotkey registration mechanism:
+TailSlap has four hotkey-activated modes, each with a distinct workflow and hotkey registration mechanism:
 
 ### 1. Refinement Mode (Ctrl+Alt+R default, user-customizable)
 - **Trigger**: Single-press via Win32 `RegisterHotKey` → `WM_HOTKEY` → `TriggerRefine()`
@@ -26,17 +26,25 @@ TailSlap has three hotkey-activated modes, each with a distinct workflow and hot
 - **Controller**: `IRefinementController` / `RefinementController`
 - **Config**: `config.json` → `hotkey` + `llm` sections
 
-### 2. Typeless / Push-to-Talk Transcription (Ctrl+Shift+' default, user-customizable)
-- **Trigger**: Hold-to-record via low-level keyboard hook (`KeyboardHook`, WH_KEYBOARD_LL); press to start recording, release to stop and transcribe
-- **Flow**: `KeyboardHook.OnKeyDown` → `TypelessController.HandleKeyDownAsync()` → records WAV via `AudioRecorder` → on key-up, streams audio to transcription endpoint via `RemoteTranscriber` → SSE chunks typed incrementally via `TextTyper` → saved to transcription history
+### 2. Toggle Transcription (Ctrl+Alt+T default, user-customizable)
+- **Trigger**: Single-press via Win32 `RegisterHotKey` → `WM_HOTKEY` → `TriggerTranscribe()` (toggle: press to start, press again to stop)
+- **Flow**: `TranscriptionController.TriggerTranscribeAsync()` → records WAV via `AudioRecorder` → on second press, stops recording → transcribes via `RemoteTranscriber` → optional LLM auto-enhancement → pastes result via `ClipboardHelper`
+- **Controller**: `ITranscriptionController` / `TranscriptionController`
+- **Config**: `config.json` → `transcriberHotkey` + `transcriber` sections
+- **Auto-enhancement**: If enabled and transcription exceeds character threshold, enhances with LLM refinement
+
+### 3. Typeless / Push-to-Talk Transcription (Ctrl+Win hold default, user-customizable)
+- **Trigger**: Hold-to-record via low-level keyboard hook (`KeyboardHook`, WH_KEYBOARD_LL); hold modifiers to start recording, release to stop and transcribe
+- **Flow**: `KeyboardHook.OnKeyDown` → `TypelessController.HandleKeyDownAsync()` → records WAV via `AudioRecorder` → on modifier release, streams audio to transcription endpoint via `RemoteTranscriber` → SSE chunks typed incrementally via `TextTyper` → saved to transcription history
 - **State machine**: `Idle → Recording → Processing → Idle` (events: `OnStarted`, `OnProcessingStarted`, `OnCompleted`)
 - **Minimum recording**: 500ms; shorter recordings are discarded with a warning
 - **Safety**: Max recording duration of 60s enforced by `KeyboardHook.ForceStop()`; auto-repeat suppression prevents duplicate recordings
 - **Controller**: `ITypelessController` / `TypelessController`
-- **Config**: `config.json` → `transcriberHotkey` + `transcriber` sections
+- **Config**: `config.json` → `typelessHotkey` + `transcriber` sections
 - **Tray animation**: Fast (50ms) during recording, slow (200ms) during transcription
+- **Modifier-only hotkey**: Supports `Key == 0` meaning no primary key required — fires on modifier combination only
 
-### 3. Realtime Streaming Transcription (Ctrl+Alt+Y default, user-customizable)
+### 4. Realtime Streaming Transcription (Ctrl+Alt+Y default, user-customizable)
 - **Trigger**: Single-press via Win32 `RegisterHotKey` → `WM_HOTKEY` → `TriggerStreamingTranscribe()`
 - **Flow**: Opens WebSocket to realtime transcription endpoint → streams audio bidirectionally → receives partial/final transcripts in real-time
 - **Controller**: `IRealtimeTranscriptionController` / `RealtimeTranscriptionController`
@@ -60,6 +68,7 @@ All interface-driven, registered via DI:
    - `NotificationService`: Balloon tips for user feedback (success/warning/error)
    - `DiagnosticsEventSource`: EventSource for ETW-based diagnostics and performance monitoring (14 events across 7 categories)
    - `ITypelessController` / `TypelessController`: Push-to-talk transcription state machine (Idle → Recording → Processing → Idle); events: `OnStarted`, `OnProcessingStarted`, `OnCompleted`
+   - `ITranscriptionController` / `TranscriptionController`: Toggle-based transcription (press to start recording, press again to stop and transcribe); includes auto-enhancement via LLM
    - `IRefinementController`: Text refinement workflow controller
    - `IRealtimeTranscriptionController` / `RealtimeTranscriptionController`: WebSocket-based real-time streaming transcription controller
    - `KeyboardHook`: Low-level keyboard hook (WH_KEYBOARD_LL) for push-to-talk hotkey detection; auto-repeat suppression, max recording duration safety net

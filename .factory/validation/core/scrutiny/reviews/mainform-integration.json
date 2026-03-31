@@ -1,7 +1,0 @@
-{
-  "featureId": "mainform-integration",
-  "status": "pass",
-  "issues": [],
-  "sharedStateObservations": [],
-  "summary": "MainForm integrates KeyboardHook and TypelessController events, updates tray animation text for recording/transcribing states, preserves refinement and streaming hotkeys, and defers hook reconfiguration during active typeless work."
-}

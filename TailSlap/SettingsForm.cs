@@ -39,6 +39,8 @@ public sealed class SettingsForm : Form
     private Button? _captureTranscriberHotkeyButton;
     private Button? _testTranscriberConnectionButton;
     private Button? _detectMicrophonesButton;
+    private TextBox? _typelessHotkey;
+    private Button? _captureTypelessHotkeyButton;
     private CheckBox? _transcriberEnableVAD;
     private TextBox? _transcriberSilenceThreshold;
     private ComboBox? _transcriberVadSensitivity;
@@ -756,6 +758,35 @@ public sealed class SettingsForm : Form
         );
         transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 16);
 
+        // Push-to-Talk (Typeless) Hotkey
+        _typelessHotkey = new TextBox
+        {
+            ReadOnly = true,
+            Text = GetHotkeyDisplay(_cfg.TypelessHotkey),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Push-to-Talk Hotkey",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            17
+        );
+        transcriber.Controls.Add(_typelessHotkey, 1, 17);
+
+        _captureTypelessHotkeyButton = new Button
+        {
+            Text = "Change Hotkey",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        _captureTypelessHotkeyButton!.Click += CaptureTypelessHotkey;
+        transcriber.Controls.Add(_captureTypelessHotkeyButton, 1, 18);
+
         // WebSocket Timeout Settings Section
         transcriber.Controls.Add(
             new Label
@@ -767,9 +798,9 @@ public sealed class SettingsForm : Form
                 Font = new Font(this.Font, FontStyle.Bold),
             },
             0,
-            17
+            19
         );
-        transcriber.Controls.Add(new Label(), 1, 17);
+        transcriber.Controls.Add(new Label(), 1, 19);
 
         _wsConnectionTimeout = new TextBox
         {
@@ -785,9 +816,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            18
+            20
         );
-        transcriber.Controls.Add(_wsConnectionTimeout, 1, 18);
+        transcriber.Controls.Add(_wsConnectionTimeout, 1, 20);
 
         _wsReceiveTimeout = new TextBox
         {
@@ -803,9 +834,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            19
+            21
         );
-        transcriber.Controls.Add(_wsReceiveTimeout, 1, 19);
+        transcriber.Controls.Add(_wsReceiveTimeout, 1, 21);
 
         _wsSendTimeout = new TextBox
         {
@@ -821,9 +852,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            20
+            22
         );
-        transcriber.Controls.Add(_wsSendTimeout, 1, 20);
+        transcriber.Controls.Add(_wsSendTimeout, 1, 22);
 
         _wsHeartbeatInterval = new TextBox
         {
@@ -839,9 +870,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            21
+            23
         );
-        transcriber.Controls.Add(_wsHeartbeatInterval, 1, 21);
+        transcriber.Controls.Add(_wsHeartbeatInterval, 1, 23);
 
         _wsHeartbeatTimeout = new TextBox
         {
@@ -857,9 +888,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            22
+            24
         );
-        transcriber.Controls.Add(_wsHeartbeatTimeout, 1, 22);
+        transcriber.Controls.Add(_wsHeartbeatTimeout, 1, 24);
 
         // Add validation handlers
         _wsConnectionTimeout.TextChanged += ValidateTranscriberInput;
@@ -890,9 +921,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            23
+            25
         );
-        transcriber.Controls.Add(_realtimeProviderDropdown, 1, 23);
+        transcriber.Controls.Add(_realtimeProviderDropdown, 1, 25);
 
         return transcriber;
     }
@@ -1322,6 +1353,19 @@ public sealed class SettingsForm : Form
         );
     }
 
+    private void CaptureTypelessHotkey(object? sender, EventArgs e)
+    {
+        using var cap = new HotkeyCaptureForm();
+        if (cap.ShowDialog() != DialogResult.OK)
+            return;
+        _cfg.TypelessHotkey.Modifiers = cap.Modifiers;
+        _cfg.TypelessHotkey.Key = cap.Key;
+        _typelessHotkey!.Text = GetHotkeyDisplay(_cfg.TypelessHotkey);
+        Logger.Log(
+            $"Typeless hotkey captured: mods={cap.Modifiers}, key={cap.Key}, display={cap.Display}"
+        );
+    }
+
     private void CaptureLlmHotkey(object? sender, EventArgs e)
     {
         using var cap = new HotkeyCaptureForm();
@@ -1350,6 +1394,13 @@ public sealed class SettingsForm : Form
             parts.Add("SHIFT");
         if ((hotkey.Modifiers & 0x0008) != 0)
             parts.Add("WIN");
+
+        // Modifier-only hotkey (Key == 0): display as "CTRL+WIN (hold)" etc.
+        if (hotkey.Key == 0)
+        {
+            parts.Add("(hold)");
+            return string.Join("+", parts);
+        }
 
         var keyName = ((Keys)hotkey.Key).ToString();
         if (keyName.StartsWith("D") && keyName.Length == 2 && char.IsDigit(keyName[1]))
@@ -1437,6 +1488,10 @@ public sealed class SettingsForm : Form
             _cfg.TranscriberHotkey.Modifiers = defaultCfg.TranscriberHotkey.Modifiers;
             _cfg.TranscriberHotkey.Key = defaultCfg.TranscriberHotkey.Key;
             _transcriberHotkey!.Text = GetHotkeyDisplay(defaultCfg.TranscriberHotkey);
+
+            _cfg.TypelessHotkey.Modifiers = defaultCfg.TypelessHotkey.Modifiers;
+            _cfg.TypelessHotkey.Key = defaultCfg.TypelessHotkey.Key;
+            _typelessHotkey!.Text = GetHotkeyDisplay(defaultCfg.TypelessHotkey);
 
             NotificationService.ShowInfo("Settings reset to defaults.");
         }

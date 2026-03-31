@@ -36,6 +36,7 @@ public class MainForm : Form
     private const int TooltipPulseMaxDots = 3;
     private const int WM_HOTKEY = 0x0312;
     private const int REFINEMENT_HOTKEY_ID = 1;
+    private const int TRANSCRIBER_HOTKEY_ID = 2;
     private const int STREAMING_TRANSCRIBER_HOTKEY_ID = 3;
 
     private readonly IConfigService _config;
@@ -45,6 +46,7 @@ public class MainForm : Form
     private readonly IHistoryService _history;
     private readonly IRefinementController _refinementController;
     private readonly ITypelessController _typelessController;
+    private readonly ITranscriptionController _transcriptionController;
     private readonly KeyboardHook _keyboardHook;
     private readonly IRealtimeTranscriptionController _realtimeTranscriptionController;
     private readonly IAutoStartService _autoStartService;
@@ -52,6 +54,8 @@ public class MainForm : Form
 
     private uint _currentMods;
     private uint _currentVk;
+    private uint _transcriberMods;
+    private uint _transcriberVk;
     private uint _streamingTranscriberMods;
     private uint _streamingTranscriberVk;
     private AppConfig _currentConfig;
@@ -69,6 +73,7 @@ public class MainForm : Form
         IHistoryService history,
         IRefinementController refinementController,
         ITypelessController typelessController,
+        ITranscriptionController transcriptionController,
         KeyboardHook keyboardHook,
         IRealtimeTranscriptionController realtimeTranscriptionController,
         IAutoStartService autoStartService,
@@ -87,6 +92,9 @@ public class MainForm : Form
             refinementController ?? throw new ArgumentNullException(nameof(refinementController));
         _typelessController =
             typelessController ?? throw new ArgumentNullException(nameof(typelessController));
+        _transcriptionController =
+            transcriptionController
+            ?? throw new ArgumentNullException(nameof(transcriptionController));
         _keyboardHook = keyboardHook ?? throw new ArgumentNullException(nameof(keyboardHook));
         _realtimeTranscriptionController =
             realtimeTranscriptionController
@@ -118,6 +126,8 @@ public class MainForm : Form
         _typelessController.OnStarted += StartTypelessAnim;
         _typelessController.OnProcessingStarted += SwitchToTranscribingAnim;
         _typelessController.OnCompleted += StopAnim;
+        _transcriptionController.OnStarted += StartAnim;
+        _transcriptionController.OnCompleted += StopAnim;
         _realtimeTranscriptionController.OnStarted += StartAnim;
         _realtimeTranscriptionController.OnStopped += StopAnim;
 
@@ -133,6 +143,7 @@ public class MainForm : Form
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
+        _menu.Items.Add("Transcribe Now", null, (_, __) => TriggerTranscribe());
         _menu.Items.Add(new ToolStripSeparator());
 
         // Quick toggles
@@ -282,10 +293,12 @@ public class MainForm : Form
 
         _currentMods = _currentConfig.Hotkey.Modifiers;
         _currentVk = _currentConfig.Hotkey.Key;
+        _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+        _transcriberVk = _currentConfig.TranscriberHotkey.Key;
         _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
         _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
         Logger.Log(
-            $"MainForm initialized. Refinement hotkey mods={_currentMods}, key={_currentVk}. Typeless hotkey mods={_currentConfig.TranscriberHotkey.Modifiers}, key={_currentConfig.TranscriberHotkey.Key}. Streaming hotkey mods={_streamingTranscriberMods}, key={_streamingTranscriberVk}"
+            $"MainForm initialized. Refinement hotkey mods={_currentMods}, key={_currentVk}. Transcriber hotkey mods={_transcriberMods}, key={_transcriberVk}. Typeless hotkey mods={_currentConfig.TypelessHotkey.Modifiers}, key={_currentConfig.TypelessHotkey.Key}. Streaming hotkey mods={_streamingTranscriberMods}, key={_streamingTranscriberVk}"
         );
 
         _config.ConfigChanged += () =>
@@ -926,6 +939,11 @@ public class MainForm : Form
         catch { }
         try
         {
+            UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+        }
+        catch { }
+        try
+        {
             UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
         }
         catch { }
@@ -960,6 +978,10 @@ public class MainForm : Form
             {
                 TriggerRefine();
             }
+            else if (hotkeyId == TRANSCRIBER_HOTKEY_ID)
+            {
+                TriggerTranscribe();
+            }
             else if (hotkeyId == STREAMING_TRANSCRIBER_HOTKEY_ID)
             {
                 TriggerStreamingTranscribe();
@@ -979,6 +1001,11 @@ public class MainForm : Form
     private void TriggerRefine()
     {
         SafeFireAndForget(_refinementController.TriggerRefineAsync());
+    }
+
+    private void TriggerTranscribe()
+    {
+        SafeFireAndForget(_transcriptionController.TriggerTranscribeAsync());
     }
 
     private void TriggerStreamingTranscribe()
@@ -1127,6 +1154,11 @@ public class MainForm : Form
         catch { }
         try
         {
+            UnregisterHotKey(Handle, TRANSCRIBER_HOTKEY_ID);
+        }
+        catch { }
+        try
+        {
             UnregisterHotKey(Handle, STREAMING_TRANSCRIBER_HOTKEY_ID);
         }
         catch { }
@@ -1135,15 +1167,20 @@ public class MainForm : Form
         _currentVk = _currentConfig.Hotkey.Key;
         RegisterHotkey(_currentMods, _currentVk, REFINEMENT_HOTKEY_ID);
 
+        _transcriberMods = _currentConfig.TranscriberHotkey.Modifiers;
+        _transcriberVk = _currentConfig.TranscriberHotkey.Key;
         _streamingTranscriberMods = _currentConfig.StreamingTranscriberHotkey.Modifiers;
         _streamingTranscriberVk = _currentConfig.StreamingTranscriberHotkey.Key;
 
         if (_currentConfig.Transcriber.Enabled)
         {
-            // Install/reconfigure keyboard hook for typeless mode hotkey
+            // Register toggle transcription hotkey (Ctrl+Alt+T)
+            RegisterHotkey(_transcriberMods, _transcriberVk, TRANSCRIBER_HOTKEY_ID);
+
+            // Install/reconfigure keyboard hook for typeless push-to-talk hotkey
             if (!_typelessController.IsRecording && !_typelessController.IsProcessing)
             {
-                _keyboardHook.Reconfigure(_currentConfig.TranscriberHotkey);
+                _keyboardHook.Reconfigure(_currentConfig.TypelessHotkey);
             }
 
             RegisterHotkey(

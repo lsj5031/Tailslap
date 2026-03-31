@@ -11,15 +11,17 @@
 ## Features
 
 - **Text Refinement**: Process and enhance selected text with a hotkey (`Ctrl+Alt+R`)
-- **Push-to-Talk Transcription**: Hold a hotkey to record audio, release to transcribe and type the result into your active application (`Ctrl+Shift+'`)
+- **Toggle Transcription**: Press a hotkey to start recording, press again to stop and transcribe with optional LLM auto-enhancement (`Ctrl+Alt+T`)
+- **Push-to-Talk Transcription**: Hold `Ctrl+Win` to record audio, release to transcribe and type the result into your active application incrementally
 - **Real-time Streaming**: Type words as they are spoken with WebSocket streaming (`Ctrl+Alt+Y`)
   - **Streaming Mode**: Real-time transcription via WebSocket connection
   - **Voice Activity Detection**: Auto-stop recording after silence (configurable threshold)
   - **Audio Format**: 16-bit mono, 16kHz WAV with optimized buffer management
 - **Clipboard Integration**: Automatically paste refined text back into your applications
-- **Customizable Hotkeys**: Configure three hotkeys via Settings menu:
+- **Customizable Hotkeys**: Configure four hotkeys via Settings menu:
   - Text Refinement: `Ctrl+Alt+R` (default)
-  - Push-to-Talk Transcription: `Ctrl+Shift+'` (default)
+  - Toggle Transcription: `Ctrl+Alt+T` (default)
+  - Push-to-Talk: `Ctrl+Win` hold (default)
   - Real-time Streaming: `Ctrl+Alt+Y` (default)
 - **Encrypted History**: View and manage your refinement and transcription history (secured with DPAPI)
 - **System Tray Integration**: Runs quietly in the background
@@ -50,11 +52,19 @@
 3. The text will be processed and automatically pasted back (if enabled)
 
 ### Push-to-Talk Transcription
-1. Press and hold the transcription hotkey (default: `Ctrl+Shift+'`)
+1. Press and hold the push-to-talk hotkey (default: `Ctrl+Win`)
 2. Speak into your microphone -- the tray icon animates fast to indicate active recording
 3. Release the hotkey to stop recording and start transcription
 4. Transcribed text is typed incrementally into your active application as SSE chunks arrive (tray icon animates slowly during transcription)
 5. Results are saved to encrypted transcription history
+
+### Toggle Transcription
+1. Press the transcription hotkey (default: `Ctrl+Alt+T`) to start recording
+2. Speak into your microphone
+3. Press the hotkey again to stop recording and transcribe
+4. If auto-enhancement is enabled and the transcription is long enough, it will be refined with LLM
+5. Result is pasted into your active application
+6. Results are saved to encrypted transcription history
 
 ### Real-time Streaming Transcription
 1. Press the streaming hotkey (default: `Ctrl+Alt+Y`)
@@ -73,7 +83,8 @@
 
 Right-click the TailSlap icon in the system tray to access:
 - **Refine Now**: Process the currently selected text immediately (via clipboard)
-- **Enable Transcription**: Toggle the push-to-talk transcription hotkey on/off
+- **Transcribe Now**: Start toggle-based audio transcription
+- **Enable Transcription**: Toggle the transcription hotkeys on/off
 - **Settings...**: Configure LLM endpoint, model, temperature, transcription settings, and hotkeys
 - **Open Logs...**: View application logs for debugging
 - **Encrypted Refinement History...**: View and clear your refinement history
@@ -113,7 +124,8 @@ You can edit this file directly or use the Settings dialog in the system tray me
 
 #### Hotkey Configuration
 - `Hotkey`: Text refinement hotkey (default: `Ctrl+Alt+R`)
-- `TranscriberHotkey`: Push-to-talk transcription hotkey (default: `Ctrl+Shift+'`)
+- `TranscriberHotkey`: Toggle transcription hotkey (default: `Ctrl+Alt+T`)
+- `TypelessHotkey`: Push-to-talk hotkey (default: `Ctrl+Win` hold, `Key = 0` means modifier-only)
 - `StreamingTranscriberHotkey`: Real-time streaming hotkey (default: `Ctrl+Alt+Y`)
 
 #### General Settings
