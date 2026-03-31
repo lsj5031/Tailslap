@@ -25,6 +25,7 @@ public sealed class SettingsForm : Form
     private Button _testConnectionButton;
     private Button _captureLlmHotkeyButton;
     private Label _validationLabel;
+    private Label _llmTestResultLabel;
 
     // Transcriber controls
     private CheckBox? _transcriberEnabled;
@@ -38,6 +39,7 @@ public sealed class SettingsForm : Form
     private ComboBox? _microphoneDropdown;
     private Button? _captureTranscriberHotkeyButton;
     private Button? _testTranscriberConnectionButton;
+    private Label? _transcriberTestResultLabel;
     private Button? _detectMicrophonesButton;
     private TextBox? _typelessHotkey;
     private Button? _captureTypelessHotkeyButton;
@@ -330,6 +332,21 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _testConnectionButton.Click += TestConnection;
+        _llmTestResultLabel = new Label
+        {
+            Text = "",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        var llmTestRow = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.LeftToRight,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false,
+        };
+        llmTestRow.Controls.Add(_testConnectionButton);
+        llmTestRow.Controls.Add(_llmTestResultLabel);
         llm.Controls.Add(
             new Label
             {
@@ -341,7 +358,7 @@ public sealed class SettingsForm : Form
             0,
             11
         );
-        llm.Controls.Add(_testConnectionButton, 1, 11);
+        llm.Controls.Add(llmTestRow, 1, 11);
 
         // Add validation label and buttons
         _validationLabel = new Label
@@ -413,10 +430,14 @@ public sealed class SettingsForm : Form
         _temperature.TextChanged += ValidateInput;
         _maxTokens.TextChanged += ValidateInput;
         _model.TextChanged += ValidateInput;
+        _apiKey.TextChanged += (_, _) => _llmTestResultLabel.Text = "";
+        _baseUrl.TextChanged += (_, _) => _llmTestResultLabel.Text = "";
         _transcriberBaseUrl!.TextChanged += ValidateTranscriberInput;
         _transcriberModel!.TextChanged += ValidateTranscriberInput;
         _transcriberTimeout!.TextChanged += ValidateTranscriberInput;
         _transcriberAutoEnhanceThreshold!.TextChanged += ValidateTranscriberInput;
+        _transcriberBaseUrl!.TextChanged += (_, _) => _transcriberTestResultLabel!.Text = "";
+        _transcriberApiKey!.TextChanged += (_, _) => _transcriberTestResultLabel!.Text = "";
     }
 
     private TableLayoutPanel CreateTranscriberTab()
@@ -745,6 +766,21 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _testTranscriberConnectionButton!.Click += TestTranscriberConnection;
+        _transcriberTestResultLabel = new Label
+        {
+            Text = "",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+        var transcriberTestRow = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.LeftToRight,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false,
+        };
+        transcriberTestRow.Controls.Add(_testTranscriberConnectionButton);
+        transcriberTestRow.Controls.Add(_transcriberTestResultLabel);
         transcriber.Controls.Add(
             new Label
             {
@@ -756,7 +792,7 @@ public sealed class SettingsForm : Form
             0,
             16
         );
-        transcriber.Controls.Add(_testTranscriberConnectionButton, 1, 16);
+        transcriber.Controls.Add(transcriberTestRow, 1, 16);
 
         // Push-to-Talk (Typeless) Hotkey
         _typelessHotkey = new TextBox
@@ -1252,6 +1288,7 @@ public sealed class SettingsForm : Form
         {
             _testConnectionButton.Enabled = false;
             _testConnectionButton.Text = "Testing...";
+            _llmTestResultLabel.Text = "";
 
             var testConfig = new LlmConfig
             {
@@ -1280,7 +1317,8 @@ public sealed class SettingsForm : Form
                 System.Threading.CancellationToken.None
             );
 
-            NotificationService.ShowSuccess("Connection test successful!");
+            _llmTestResultLabel.Text = "\u2713 OK";
+            _llmTestResultLabel.ForeColor = Color.Green;
         }
         catch (Exception ex)
         {
@@ -1288,14 +1326,15 @@ public sealed class SettingsForm : Form
                 ? _cfg.Llm.ApiKey
                 : _apiKey.Text.Trim();
             var errorMsg = string.IsNullOrWhiteSpace(apiKeyToUse)
-                ? "API key is required. Please enter your API key."
-                : $"Connection test failed: {ex.Message}";
-            NotificationService.ShowError(errorMsg);
+                ? "API key is required"
+                : ex.Message;
+            _llmTestResultLabel.Text = $"\u2717 {errorMsg}";
+            _llmTestResultLabel.ForeColor = Color.Red;
         }
         finally
         {
             _testConnectionButton.Enabled = true;
-            _testConnectionButton.Text = "Test Connection";
+            _testConnectionButton.Text = "Test LLM Connection";
         }
     }
 
@@ -1305,6 +1344,7 @@ public sealed class SettingsForm : Form
         {
             _testTranscriberConnectionButton!.Enabled = false;
             _testTranscriberConnectionButton!.Text = "Testing...";
+            _transcriberTestResultLabel!.Text = "";
 
             var testConfig = new TranscriberConfig
             {
@@ -1320,7 +1360,8 @@ public sealed class SettingsForm : Form
             var testTranscriber = _remoteTranscriberFactory.Create(testConfig);
             await testTranscriber.TestConnectionAsync();
 
-            NotificationService.ShowSuccess("Transcription API connection test successful!");
+            _transcriberTestResultLabel!.Text = "\u2713 OK";
+            _transcriberTestResultLabel!.ForeColor = Color.Green;
         }
         catch (Exception ex)
         {
@@ -1329,9 +1370,8 @@ public sealed class SettingsForm : Form
             {
                 errorMessage += ": " + ex.InnerException.Message;
             }
-            NotificationService.ShowError(
-                $"Transcription API connection test failed: {errorMessage}"
-            );
+            _transcriberTestResultLabel!.Text = $"\u2717 {errorMessage}";
+            _transcriberTestResultLabel!.ForeColor = Color.Red;
         }
         finally
         {
