@@ -5,7 +5,7 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.2.0] - 2026-03-31
+## [3.0.0] - 2026-03-31
 
 ### Added
 - **Toggle Transcription Mode**: Restored press-to-start/press-to-stop transcription on `Ctrl+Alt+T` (via Win32 `RegisterHotKey`). Press once to start recording, press again to stop and transcribe. Includes optional LLM auto-enhancement for longer transcriptions. Uses `ClipboardHelper` for result delivery.
