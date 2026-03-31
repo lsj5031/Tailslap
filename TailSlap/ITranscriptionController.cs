@@ -13,4 +13,7 @@ public interface ITranscriptionController
 
     event Action? OnStarted;
     event Action? OnCompleted;
+
+    /// <summary>Fired with the current RMS audio level during recording.</summary>
+    event Action<float>? OnRmsLevel;
 }

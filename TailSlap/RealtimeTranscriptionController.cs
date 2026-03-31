@@ -63,6 +63,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     public event Action? OnStarted;
     public event Action? OnStopped;
     public event Action<string, bool>? OnTranscription;
+    public event Action<float>? OnRmsLevel;
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
@@ -235,6 +236,14 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             _realtimeRecorder.OnAudioChunk += HandleRealtimeAudioChunk;
             _realtimeRecorder.OnSilenceDetected += HandleRealtimeSilenceDetected;
+            _realtimeRecorder.OnRmsLevel += rms =>
+            {
+                try
+                {
+                    OnRmsLevel?.Invoke(rms);
+                }
+                catch { }
+            };
 
             _streamingTargetWindow = GetForegroundWindow();
             _streamingStartTime = DateTime.UtcNow;

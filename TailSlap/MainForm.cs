@@ -122,7 +122,7 @@ public class MainForm : Form
         _currentConfig = _config.CreateValidatedCopy();
 
         // Wire up controller events for animation
-        _refinementController.OnStarted += StartAnim;
+        _refinementController.OnStarted += StartRefinementAnim;
         _refinementController.OnCompleted += StopAnim;
         _typelessController.OnStarted += StartTypelessAnim;
         _typelessController.OnProcessingStarted += SwitchToTranscribingAnim;
@@ -135,10 +135,34 @@ public class MainForm : Form
             }
             catch { }
         };
-        _transcriptionController.OnStarted += StartAnim;
+        _transcriptionController.OnStarted += StartTranscriptionAnim;
         _transcriptionController.OnCompleted += StopAnim;
-        _realtimeTranscriptionController.OnStarted += StartAnim;
+        _transcriptionController.OnRmsLevel += rms =>
+        {
+            try
+            {
+                _recordingOverlay?.UpdateRms(rms);
+            }
+            catch { }
+        };
+        _realtimeTranscriptionController.OnStarted += StartStreamingAnim;
         _realtimeTranscriptionController.OnStopped += StopAnim;
+        _realtimeTranscriptionController.OnRmsLevel += rms =>
+        {
+            try
+            {
+                _recordingOverlay?.UpdateRms(rms);
+            }
+            catch { }
+        };
+        _realtimeTranscriptionController.OnTranscription += (text, isFinal) =>
+        {
+            try
+            {
+                _recordingOverlay?.UpdateTranscriptionText(text);
+            }
+            catch { }
+        };
 
         // Wire keyboard hook events to TypelessController
         _keyboardHook.OnKeyDown += () =>
@@ -1055,11 +1079,19 @@ public class MainForm : Form
         }
     }
 
-    private void StartAnim()
+    private void EnsureOverlay()
+    {
+        if (_recordingOverlay == null || _recordingOverlay.IsDisposed)
+        {
+            _recordingOverlay = new RecordingOverlayForm();
+        }
+    }
+
+    private void StartRefinementAnim()
     {
         try
         {
-            Logger.Log("Animation START");
+            Logger.Log("Refinement animation START");
         }
         catch { }
         _frame = 0;
@@ -1068,6 +1100,20 @@ public class MainForm : Form
         _animTimer.Interval = AnimationIntervalMs;
         TrySetTrayText("TailSlap - Processing");
         _animTimer.Start();
+
+        try
+        {
+            EnsureOverlay();
+            _recordingOverlay!.ShowOverlay("Refining...", RecordingOverlayForm.OverlayMode.Pulse);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"Overlay show error: {ex.Message}");
+            }
+            catch { }
+        }
     }
 
     private void StartTypelessAnim()
@@ -1084,20 +1130,83 @@ public class MainForm : Form
         TrySetTrayText("TailSlap - Recording");
         _animTimer.Start();
 
-        // Show floating recording overlay
         try
         {
-            if (_recordingOverlay == null || _recordingOverlay.IsDisposed)
-            {
-                _recordingOverlay = new RecordingOverlayForm();
-            }
-            _recordingOverlay.ShowOverlay();
+            EnsureOverlay();
+            _recordingOverlay!.ShowOverlay(
+                "Recording...",
+                RecordingOverlayForm.OverlayMode.Waveform
+            );
         }
         catch (Exception ex)
         {
             try
             {
                 Logger.Log($"Recording overlay show error: {ex.Message}");
+            }
+            catch { }
+        }
+    }
+
+    private void StartTranscriptionAnim()
+    {
+        try
+        {
+            Logger.Log("Transcription animation START");
+        }
+        catch { }
+        _frame = 0;
+        _lastPulseUpdateMs = 0;
+        _pulseDots = 0;
+        _animTimer.Interval = RecordingAnimIntervalMs;
+        TrySetTrayText("TailSlap - Recording");
+        _animTimer.Start();
+
+        try
+        {
+            EnsureOverlay();
+            _recordingOverlay!.ShowOverlay(
+                "Recording...",
+                RecordingOverlayForm.OverlayMode.Waveform
+            );
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"Overlay show error: {ex.Message}");
+            }
+            catch { }
+        }
+    }
+
+    private void StartStreamingAnim()
+    {
+        try
+        {
+            Logger.Log("Streaming animation START");
+        }
+        catch { }
+        _frame = 0;
+        _lastPulseUpdateMs = 0;
+        _pulseDots = 0;
+        _animTimer.Interval = RecordingAnimIntervalMs;
+        TrySetTrayText("TailSlap - Streaming");
+        _animTimer.Start();
+
+        try
+        {
+            EnsureOverlay();
+            _recordingOverlay!.ShowOverlay(
+                "Streaming...",
+                RecordingOverlayForm.OverlayMode.Waveform
+            );
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"Overlay show error: {ex.Message}");
             }
             catch { }
         }

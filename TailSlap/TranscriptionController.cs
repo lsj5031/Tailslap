@@ -24,6 +24,7 @@ public sealed class TranscriptionController : ITranscriptionController
 
     public event Action? OnStarted;
     public event Action? OnCompleted;
+    public event Action<float>? OnRmsLevel;
 
     public TranscriptionController(
         IConfigService config,
@@ -257,6 +258,15 @@ public sealed class TranscriptionController : ITranscriptionController
         {
             recorder.SetWebRtcVadSensitivity((VadSensitivity)cfg.Transcriber.WebRtcVadSensitivity);
         }
+
+        recorder.OnRmsLevel += rms =>
+        {
+            try
+            {
+                OnRmsLevel?.Invoke(rms);
+            }
+            catch { }
+        };
 
         try
         {

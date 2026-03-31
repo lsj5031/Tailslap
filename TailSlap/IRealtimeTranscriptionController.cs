@@ -15,4 +15,7 @@ public interface IRealtimeTranscriptionController
     event Action? OnStarted;
     event Action? OnStopped;
     event Action<string, bool>? OnTranscription;
+
+    /// <summary>Fired with the current RMS audio level during streaming.</summary>
+    event Action<float>? OnRmsLevel;
 }
