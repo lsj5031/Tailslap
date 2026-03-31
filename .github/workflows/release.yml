@@ -24,9 +24,26 @@ jobs:
       run: dotnet restore
       working-directory: ./TailSlap
 
-    - name: Publish Self-Contained
-      run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+    - name: Publish Framework-Dependent
+      run: dotnet publish -c Release --no-restore -o "${{ github.workspace }}\artifacts\framework-dependent"
       working-directory: ./TailSlap
+
+    - name: Publish Self-Contained
+      run: dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true --no-restore -o "${{ github.workspace }}\artifacts\self-contained"
+      working-directory: ./TailSlap
+
+    - name: Package Release Assets
+      run: |
+        New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\release-assets" | Out-Null
+        Compress-Archive `
+          -Path "${{ github.workspace }}\artifacts\framework-dependent\*" `
+          -DestinationPath "${{ github.workspace }}\release-assets\TailSlap-framework-dependent-win-x64.zip" `
+          -Force
+        Copy-Item `
+          -Path "${{ github.workspace }}\artifacts\self-contained\TailSlap.exe" `
+          -Destination "${{ github.workspace }}\release-assets\TailSlap-self-contained-win-x64.exe" `
+          -Force
+      shell: powershell
 
     - name: Extract version from tag
       id: tag_name
@@ -44,17 +61,25 @@ jobs:
           
           See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/master/CHANGELOG.md) for details.
           
+          ### Downloads
+          
+          - `TailSlap-self-contained-win-x64.exe`: Recommended for most users. Runs without installing .NET.
+          - `TailSlap-framework-dependent-win-x64.zip`: Smaller download. Requires the .NET 9 Desktop Runtime to already be installed.
+          
           ### Installation
           
-          1. Download TailSlap.exe
-          2. Run it directly (no installation needed)
+          1. Download the asset that matches your setup.
+          2. If you chose the framework-dependent zip, install the .NET 9 Desktop Runtime first.
+          3. Run `TailSlap.exe`.
           
           ### Requirements
           
           - Windows 10 or later
+          - .NET 9 Desktop Runtime x64 only for the framework-dependent build
           
           See [README.md](https://github.com/${{ github.repository }}/blob/master/README.md) for setup instructions.
         files: |
-          TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
+          release-assets/TailSlap-framework-dependent-win-x64.zip
+          release-assets/TailSlap-self-contained-win-x64.exe
         draft: false
         prerelease: false

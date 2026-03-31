@@ -32,9 +32,12 @@
 
 ## Installation
 
-1. Download TailSlap.exe from the [releases page](https://github.com/lsj5031/Tailslap/releases)
-2. Run the executable directly (no installation needed)
-3. The application will start automatically and appear in your system tray
+1. Download one of these assets from the [releases page](https://github.com/lsj5031/Tailslap/releases):
+   - `TailSlap-self-contained-win-x64.exe`: Recommended for most users. No separate .NET install required.
+   - `TailSlap-framework-dependent-win-x64.zip`: Smaller download, but requires the .NET 9 Desktop Runtime x64.
+2. If you chose the framework-dependent zip, install the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) first.
+3. Run `TailSlap.exe`.
+4. The application will start automatically and appear in your system tray
 
 ### Requirements
 
