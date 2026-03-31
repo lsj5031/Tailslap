@@ -25,14 +25,20 @@ file sealed class TestableTextTyper : TextTyper
 
 public class TypelessControllerTests
 {
-    private static Mock<IConfigService> CreateMockConfigService(bool transcriberEnabled = true)
+    private static Mock<IConfigService> CreateMockConfigService(
+        bool transcriberEnabled = true,
+        bool llmEnabled = true,
+        bool enableAutoEnhance = true,
+        int autoEnhanceThresholdChars = 100,
+        bool autoPaste = true
+    )
     {
         var mockConfig = new Mock<IConfigService>();
         var config = new AppConfig
         {
             Llm = new LlmConfig
             {
-                Enabled = true,
+                Enabled = llmEnabled,
                 BaseUrl = "http://localhost:11434/v1",
                 Model = "llama3.1",
                 Temperature = 0.2,
@@ -43,7 +49,9 @@ public class TypelessControllerTests
                 BaseUrl = "http://localhost:18000/v1",
                 Model = "whisper-1",
                 TimeoutSeconds = 30,
-                AutoPaste = true,
+                AutoPaste = autoPaste,
+                EnableAutoEnhance = enableAutoEnhance,
+                AutoEnhanceThresholdChars = autoEnhanceThresholdChars,
                 EnableVAD = true,
                 SilenceThresholdMs = 2000,
                 PreferredMicrophoneIndex = -1,
@@ -640,6 +648,76 @@ public class TypelessControllerTests
         await controller.HandleKeyUpAsync();
 
         mockHistory.Verify(h => h.AppendTranscription("hello world", 1500), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleKeyUp_LongResult_AutoEnhancesAndAppendsRefinementHistory()
+    {
+        const string rawText =
+            "this is a long raw test result without punctuation and with enough words to trigger enhancement";
+        const string refinedText =
+            "This is a long raw test result, without punctuation, and with enough words to trigger enhancement.";
+
+        var configMock = CreateMockConfigService(autoEnhanceThresholdChars: 20);
+        var mockTranscriberFactory = CreateMockTranscriberFactory(out _, rawText);
+        var mockClipboard = new Mock<IClipboardService>();
+        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
+        var mockHistory = new Mock<IHistoryService>();
+        var mockRefiner = new Mock<ITextRefiner>();
+        mockRefiner
+            .Setup(r => r.RefineAsync(rawText, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(refinedText);
+        var mockRefinerFactory = new Mock<ITextRefinerFactory>();
+        mockRefinerFactory.Setup(f => f.Create(It.IsAny<LlmConfig>())).Returns(mockRefiner.Object);
+
+        var controller = CreateController(
+            configMock: configMock,
+            transcriberFactoryMock: mockTranscriberFactory,
+            clipboardMock: mockClipboard,
+            historyMock: mockHistory,
+            refinerFactoryMock: mockRefinerFactory,
+            textTyper: new TestableTextTyper(mockClipboard.Object, clipboardThreshold: 0)
+        );
+
+        await controller.HandleKeyDownAsync();
+        await controller.HandleKeyUpAsync();
+
+        mockRefiner.Verify(r => r.RefineAsync(rawText, It.IsAny<CancellationToken>()), Times.Once);
+        mockHistory.Verify(h => h.AppendTranscription(rawText, 1500), Times.Once);
+        mockHistory.Verify(h => h.Append(rawText, refinedText, "llama3.1"), Times.Once);
+        mockClipboard.Verify(c => c.SetTextAndPasteAsync(refinedText), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task HandleKeyUp_ShortResult_DoesNotAutoEnhance()
+    {
+        const string rawText = "short result";
+
+        var configMock = CreateMockConfigService(autoEnhanceThresholdChars: 50);
+        var mockTranscriberFactory = CreateMockTranscriberFactory(out _, rawText);
+        var mockClipboard = new Mock<IClipboardService>();
+        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
+        var mockHistory = new Mock<IHistoryService>();
+        var mockRefinerFactory = new Mock<ITextRefinerFactory>();
+
+        var controller = CreateController(
+            configMock: configMock,
+            transcriberFactoryMock: mockTranscriberFactory,
+            clipboardMock: mockClipboard,
+            historyMock: mockHistory,
+            refinerFactoryMock: mockRefinerFactory
+        );
+
+        await controller.HandleKeyDownAsync();
+        await controller.HandleKeyUpAsync();
+
+        mockRefinerFactory.Verify(f => f.Create(It.IsAny<LlmConfig>()), Times.Never);
+        mockHistory.Verify(
+            h => h.Append(rawText, It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never
+        );
     }
 
     [Fact]

@@ -11,10 +11,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Setup .NET 9
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '9.0.x'
 
@@ -34,7 +34,7 @@ jobs:
       run: dotnet test -c Release --no-build --verbosity normal --logger trx --results-directory TestResults
 
     - name: Upload Test Results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       if: always()
       with:
         name: test-results
@@ -46,7 +46,7 @@ jobs:
       working-directory: ./TailSlap
 
     - name: Upload Framework-Dependent Build
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: TailSlap-framework-dependent
         path: TailSlap/bin/Release/net9.0-windows/win-x64/publish/
@@ -56,10 +56,10 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     - name: Setup .NET 9
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '9.0.x'
 
@@ -72,7 +72,7 @@ jobs:
       working-directory: ./TailSlap
 
     - name: Upload Self-Contained Build
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: TailSlap-self-contained
         path: TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe

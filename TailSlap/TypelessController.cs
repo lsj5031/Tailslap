@@ -466,7 +466,68 @@ public sealed class TypelessController : ITypelessController
             return;
         }
 
-        // Save to history
+        var finalText = await MaybeEnhanceTranscriptionAsync(transcriptionText, cfg)
+            .ConfigureAwait(false);
+
+        if (!string.Equals(finalText, transcriptionText, StringComparison.Ordinal))
+        {
+            await ApplyEnhancedTextAsync(finalText, cfg).ConfigureAwait(false);
+        }
+
+        PersistHistoryEntries(transcriptionText, finalText, cfg, durationMs);
+
+        try
+        {
+            Logger.Log(
+                $"TypelessController: Transcription completed, sha256={Hashing.Sha256Hex(finalText)}"
+            );
+        }
+        catch { }
+    }
+
+    private async Task<string> MaybeEnhanceTranscriptionAsync(
+        string transcriptionText,
+        AppConfig cfg
+    )
+    {
+        return await TranscriptionAutoEnhancer
+            .MaybeEnhanceAsync(transcriptionText, cfg, _textRefinerFactory)
+            .ConfigureAwait(false);
+    }
+
+    private async Task ApplyEnhancedTextAsync(string finalText, AppConfig cfg)
+    {
+        try
+        {
+            if (cfg.Transcriber.AutoPaste)
+            {
+                await _textTyper.TypeAsync(finalText, autoPaste: true).ConfigureAwait(false);
+                return;
+            }
+
+            await _clipboardHelper
+                .SetTextAndPasteAsync(finalText, autoPaste: false)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log(
+                    $"TypelessController: Failed to apply enhanced text: {ex.GetType().Name}: {ex.Message}"
+                );
+            }
+            catch { }
+        }
+    }
+
+    private void PersistHistoryEntries(
+        string transcriptionText,
+        string finalText,
+        AppConfig cfg,
+        int durationMs
+    )
+    {
         try
         {
             _history.AppendTranscription(transcriptionText, durationMs);
@@ -483,13 +544,26 @@ public sealed class TypelessController : ITypelessController
             catch { }
         }
 
+        if (string.Equals(transcriptionText, finalText, StringComparison.Ordinal))
+            return;
+
         try
         {
+            _history.Append(transcriptionText, finalText, cfg.Llm.Model);
             Logger.Log(
-                $"TypelessController: Transcription completed, sha256={Hashing.Sha256Hex(transcriptionText)}"
+                $"TypelessController: Enhanced transcription logged to refinement history, len={finalText.Length}, model={cfg.Llm.Model}"
             );
         }
-        catch { }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log(
+                    $"TypelessController: Failed to save enhanced transcription history: {ex.Message}"
+                );
+            }
+            catch { }
+        }
     }
 
     private void CleanupTempFile()

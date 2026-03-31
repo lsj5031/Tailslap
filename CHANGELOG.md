@@ -5,6 +5,12 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.5] - 2026-04-01
+
+### Changed
+- **Typeless auto-enhancement**: Push-to-talk transcription now runs the same post-transcription LLM auto-enhancement gate as standard transcription mode, and if the refined result passes safety checks it replaces the streamed draft in place.
+- **GitHub Actions runtime updates**: CI workflows now use the Node 24-capable major versions of `actions/checkout`, `actions/setup-dotnet`, and `actions/upload-artifact` to avoid GitHub's Node 20 deprecation warnings.
+
 ## [3.0.4] - 2026-04-01
 
 ### Fixed
