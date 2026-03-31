@@ -333,22 +333,8 @@ public class TypelessControllerTests
         );
     }
 
-    [Fact]
-    public void Constructor_NullRecordFunc_ThrowsArgumentNullException()
-    {
-        Assert.Throws<ArgumentNullException>(() =>
-            new TypelessController(
-                CreateMockConfigService().Object,
-                new ClipboardHelper(new Mock<IClipboardService>().Object),
-                new Mock<IRemoteTranscriberFactory>().Object,
-                new Mock<IAudioRecorderFactory>().Object,
-                new Mock<IHistoryService>().Object,
-                new Mock<ITextRefinerFactory>().Object,
-                new TestableTextTyper(new Mock<IClipboardService>().Object),
-                null!
-            )
-        );
-    }
+    // Constructor_NullRecordFunc test removed: the internal constructor now accepts null
+    // because the public constructor sets _recordFunc after chaining.
 
     [Fact]
     public void Constructor_NullTextTyper_ThrowsArgumentNullException()

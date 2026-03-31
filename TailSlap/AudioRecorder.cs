@@ -114,6 +114,12 @@ public sealed class AudioRecorder : IDisposable
     public event Action<ArraySegment<byte>>? OnAudioChunk;
     public event Action? OnSilenceDetected;
 
+    /// <summary>
+    /// Fires with the current RMS audio level (0-32768 range for 16-bit audio)
+    /// whenever a buffer is processed during recording or streaming.
+    /// </summary>
+    public event Action<float>? OnRmsLevel;
+
     // External speech detection (e.g., from server transcription)
     private volatile bool _externalSpeechDetected = false;
     private DateTime _lastExternalSpeechTime = DateTime.MinValue;
@@ -500,6 +506,17 @@ public sealed class AudioRecorder : IDisposable
                         _recordedData.Write(data, 0, data.Length);
 
                         // Check VAD if enabled (only during active recording, not final drain to avoid cutting off end)
+                        // Fire RMS level event for UI visualization
+                        if (data.Length >= 2)
+                        {
+                            float rmsForUi = CalculateRMS(data);
+                            try
+                            {
+                                OnRmsLevel?.Invoke(rmsForUi);
+                            }
+                            catch { }
+                        }
+
                         if (enableVAD && !isFinalDrain && data.Length >= 2)
                         {
                             bool isSpeech = DetectSpeech(data, out float rms);
@@ -1140,6 +1157,17 @@ public sealed class AudioRecorder : IDisposable
                     );
 
                     OnAudioChunk?.Invoke(new ArraySegment<byte>(data));
+
+                    // Fire RMS level event for UI visualization
+                    if (data.Length >= 2)
+                    {
+                        float streamRms = CalculateRMS(data);
+                        try
+                        {
+                            OnRmsLevel?.Invoke(streamRms);
+                        }
+                        catch { }
+                    }
 
                     if (enableVAD && data.Length >= 2)
                     {

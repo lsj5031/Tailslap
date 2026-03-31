@@ -35,4 +35,7 @@ public interface ITypelessController
 
     /// <summary>Fired when the full cycle completes (back to Idle).</summary>
     event Action? OnCompleted;
+
+    /// <summary>Fired with the current RMS audio level during recording.</summary>
+    event Action<float>? OnRmsLevel;
 }

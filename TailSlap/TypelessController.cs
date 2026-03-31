@@ -24,7 +24,7 @@ public sealed class TypelessController : ITypelessController
     /// Recording delegate — can be overridden in tests to avoid needing a real AudioRecorder.
     /// Production code uses DefaultRecordAsync which creates a real AudioRecorder.
     /// </summary>
-    private readonly Func<AppConfig, string, CancellationToken, Task<RecordingStats>> _recordFunc;
+    private readonly Func<AppConfig, string, CancellationToken, Task<RecordingStats>>? _recordFunc;
 
     private readonly object _stateLock = new();
 
@@ -40,6 +40,7 @@ public sealed class TypelessController : ITypelessController
     private string? _tempWavPath;
     private Task? _recordingTask;
     private RecordingStats? _recordingStats;
+    private AudioRecorder? _currentRecorder;
 
     public bool IsRecording
     {
@@ -66,6 +67,7 @@ public sealed class TypelessController : ITypelessController
     public event Action? OnStarted;
     public event Action? OnProcessingStarted;
     public event Action? OnCompleted;
+    public event Action<float>? OnRmsLevel;
 
     /// <summary>
     /// Creates a TypelessController for production use with a real AudioRecorder.
@@ -87,8 +89,11 @@ public sealed class TypelessController : ITypelessController
             history,
             textRefinerFactory,
             textTyper,
-            DefaultRecordAsync
-        ) { }
+            null!
+        )
+    {
+        _recordFunc = DefaultRecordAsync;
+    }
 
     /// <summary>
     /// Creates a TypelessController with a custom recording function (for testing).
@@ -116,39 +121,59 @@ public sealed class TypelessController : ITypelessController
         _textRefinerFactory =
             textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
         _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
-        _recordFunc = recordFunc ?? throw new ArgumentNullException(nameof(recordFunc));
+        _recordFunc = recordFunc; // null for production; set after by public constructor
     }
 
     /// <summary>
     /// Default recording implementation using AudioRecorder.
+    /// Instance method so it can forward RMS events to OnRmsLevel.
     /// </summary>
-    private static async Task<RecordingStats> DefaultRecordAsync(
+    private async Task<RecordingStats> DefaultRecordAsync(
         AppConfig cfg,
         string outputPath,
         CancellationToken ct
     )
     {
         using var recorder = new AudioRecorder(cfg.Transcriber.PreferredMicrophoneIndex);
-        recorder.SetVadThresholds(
-            cfg.Transcriber.VadSilenceThreshold,
-            cfg.Transcriber.VadActivationThreshold,
-            cfg.Transcriber.VadSustainThreshold
-        );
-        recorder.SetUseWebRtcVad(cfg.Transcriber.UseWebRtcVad);
-        if (cfg.Transcriber.UseWebRtcVad)
+        _currentRecorder = recorder;
+        recorder.OnRmsLevel += rms =>
         {
-            recorder.SetWebRtcVadSensitivity((VadSensitivity)cfg.Transcriber.WebRtcVadSensitivity);
-        }
+            try
+            {
+                OnRmsLevel?.Invoke(rms);
+            }
+            catch { }
+        };
 
-        return await recorder
-            .RecordAsync(
-                outputPath,
-                maxDurationMs: 0,
-                ct: ct,
-                enableVAD: cfg.Transcriber.EnableVAD,
-                silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
-            )
-            .ConfigureAwait(false);
+        try
+        {
+            recorder.SetVadThresholds(
+                cfg.Transcriber.VadSilenceThreshold,
+                cfg.Transcriber.VadActivationThreshold,
+                cfg.Transcriber.VadSustainThreshold
+            );
+            recorder.SetUseWebRtcVad(cfg.Transcriber.UseWebRtcVad);
+            if (cfg.Transcriber.UseWebRtcVad)
+            {
+                recorder.SetWebRtcVadSensitivity(
+                    (VadSensitivity)cfg.Transcriber.WebRtcVadSensitivity
+                );
+            }
+
+            return await recorder
+                .RecordAsync(
+                    outputPath,
+                    maxDurationMs: 0,
+                    ct: ct,
+                    enableVAD: cfg.Transcriber.EnableVAD,
+                    silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
+                )
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _currentRecorder = null;
+        }
     }
 
     public Task HandleKeyDownAsync()
@@ -310,11 +335,11 @@ public sealed class TypelessController : ITypelessController
     {
         try
         {
-            _recordingStats = await _recordFunc(
-                    cfg,
-                    _tempWavPath!,
-                    _recordingCts?.Token ?? CancellationToken.None
-                )
+            _recordingStats = await _recordFunc!(
+                cfg,
+                _tempWavPath!,
+                _recordingCts?.Token ?? CancellationToken.None
+            )
                 .ConfigureAwait(false);
 
             try

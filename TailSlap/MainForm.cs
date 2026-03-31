@@ -64,6 +64,7 @@ public class MainForm : Form
     private ToolStripMenuItem? _llmToggleItem;
     private ToolStripMenuItem? _transcriberToggleItem;
     private readonly bool _allowVisible = false; // intentionally always false for tray-only app
+    private RecordingOverlayForm? _recordingOverlay;
 
     public MainForm(
         IConfigService config,
@@ -126,6 +127,14 @@ public class MainForm : Form
         _typelessController.OnStarted += StartTypelessAnim;
         _typelessController.OnProcessingStarted += SwitchToTranscribingAnim;
         _typelessController.OnCompleted += StopAnim;
+        _typelessController.OnRmsLevel += rms =>
+        {
+            try
+            {
+                _recordingOverlay?.UpdateRms(rms);
+            }
+            catch { }
+        };
         _transcriptionController.OnStarted += StartAnim;
         _transcriptionController.OnCompleted += StopAnim;
         _realtimeTranscriptionController.OnStarted += StartAnim;
@@ -194,7 +203,8 @@ public class MainForm : Form
                     var logPath = Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                         "TailSlap",
-                        "app.log"
+                        "logs",
+                        "app.jsonl"
                     );
                     Process.Start(new ProcessStartInfo(logPath) { UseShellExecute = true });
                 }
@@ -1073,7 +1083,24 @@ public class MainForm : Form
         _animTimer.Interval = RecordingAnimIntervalMs;
         TrySetTrayText("TailSlap - Recording");
         _animTimer.Start();
-        NotificationService.ShowInfo("Recording... Release hotkey to transcribe.");
+
+        // Show floating recording overlay
+        try
+        {
+            if (_recordingOverlay == null || _recordingOverlay.IsDisposed)
+            {
+                _recordingOverlay = new RecordingOverlayForm();
+            }
+            _recordingOverlay.ShowOverlay();
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"Recording overlay show error: {ex.Message}");
+            }
+            catch { }
+        }
     }
 
     private void SwitchToTranscribingAnim()
@@ -1087,6 +1114,13 @@ public class MainForm : Form
         _pulseDots = 0;
         _animTimer.Interval = TranscribingAnimIntervalMs;
         TrySetTrayText("TailSlap - Transcribing");
+
+        // Update overlay to transcribing state
+        try
+        {
+            _recordingOverlay?.ShowTranscribing();
+        }
+        catch { }
     }
 
     private void StopAnim()
@@ -1101,6 +1135,13 @@ public class MainForm : Form
         _animTimer.Interval = AnimationIntervalMs;
         _tray.Icon = _idleIcon;
         TrySetTrayText("TailSlap");
+
+        // Hide floating recording overlay
+        try
+        {
+            _recordingOverlay?.HideOverlay();
+        }
+        catch { }
     }
 
     [DllImport("user32.dll")]

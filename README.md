@@ -24,6 +24,7 @@
   - Push-to-Talk: `Ctrl+Win` hold (default)
   - Real-time Streaming: `Ctrl+Alt+Y` (default)
 - **Encrypted History**: View and manage your refinement and transcription history (secured with DPAPI)
+- **Recording Overlay**: Floating capsule overlay with real-time audio waveform bars during push-to-talk recording
 - **System Tray Integration**: Runs quietly in the background
 - **Auto-start Option**: Launch on Windows startup
 
@@ -53,7 +54,7 @@
 
 ### Push-to-Talk Transcription
 1. Press and hold the push-to-talk hotkey (default: `Ctrl+Win`)
-2. Speak into your microphone -- the tray icon animates fast to indicate active recording
+2. Speak into your microphone -- a floating capsule overlay appears at the bottom of the screen with real-time waveform bars driven by your audio level
 3. Release the hotkey to stop recording and start transcription
 4. Transcribed text is typed incrementally into your active application as SSE chunks arrive (tray icon animates slowly during transcription)
 5. Results are saved to encrypted transcription history
@@ -77,14 +78,15 @@
 - **WebSocket Endpoint**: Built automatically from the base API endpoint for the selected realtime provider
 - **Silence Detection**: Configure threshold (default: 2000ms) to auto-stop recording
 - **Microphone Selection**: Choose preferred microphone device in Settings
-- **Buffer Management**: 500ms aggregation for optimal streaming performance
 
 ### System Tray Menu
 
 Right-click the TailSlap icon in the system tray to access:
 - **Refine Now**: Process the currently selected text immediately (via clipboard)
 - **Transcribe Now**: Start toggle-based audio transcription
+- **Enable LLM Refinement**: Toggle LLM post-processing on/off
 - **Enable Transcription**: Toggle the transcription hotkeys on/off
+- **Run Diagnostics...**: Run audio device and connectivity diagnostics
 - **Settings...**: Configure LLM endpoint, model, temperature, transcription settings, and hotkeys
 - **Open Logs...**: View application logs for debugging
 - **Encrypted Refinement History...**: View and clear your refinement history
@@ -141,7 +143,7 @@ You can edit this file directly or use the Settings dialog in the system tray me
 ## Logs
 
 Application logs are stored at:
-`%APPDATA%\TailSlap\app.log`
+`%APPDATA%\TailSlap\logs\app.jsonl`
 
 ## Animation
 
@@ -152,9 +154,10 @@ TailSlap uses a smooth 8-frame animated icon during text processing:
 | ![Frame1](TailSlap/Icons/1.png) | ![Frame2](TailSlap/Icons/2.png) | ![Frame3](TailSlap/Icons/3.png) | ![Frame4](TailSlap/Icons/4.png) | ![Frame5](TailSlap/Icons/5.png) | ![Frame6](TailSlap/Icons/6.png) | ![Frame7](TailSlap/Icons/7.png) | ![Frame8](TailSlap/Icons/8.png) |
 
 The animation speed changes based on the active state:
-- **Recording** (push-to-talk): Fast at 50ms intervals with "Recording..." tooltip
-- **Transcribing**: Slow at 200ms intervals with "Transcribing..." tooltip
-- **Refining / Streaming**: Medium at 75ms intervals with "Processing..." tooltip
+- **Recording** (push-to-talk): Fast at 50ms intervals with "TailSlap - Recording..." tooltip
+- **Transcribing**: Slow at 200ms intervals with "TailSlap - Transcribing..." tooltip
+- **Refining**: Medium at 75ms intervals with "TailSlap - Refining..." tooltip
+- **Streaming**: Medium at 75ms intervals with "TailSlap - Streaming..." tooltip
 
 Tooltip text pulses every 300ms with up to 3 dots for visual feedback.
 
@@ -175,11 +178,12 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 **Output**: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
 
 **Technology Stack**: 
-- .NET 9 with Windows Forms and WPF support
+- .NET 9 with Windows Forms
 - Dependency Injection with Microsoft.Extensions.DependencyInjection
 - HTTP Client Factory with connection pooling and compression
 - Windows DPAPI for encryption
 - WinMM API for audio recording
+- WebRTC VAD for voice activity detection
 - WebSocket client for real-time streaming
 
 See [AGENTS.md](AGENTS.md) for detailed architecture and development guidelines.
@@ -200,7 +204,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 - **Issues**: [GitHub Issues](https://github.com/lsj5031/Tailslap/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/lsj5031/Tailslap/discussions)
-- **Logs**: Check `%APPDATA%\TailSlap\app.log` for debugging
+- **Logs**: Check `%APPDATA%\TailSlap\logs\app.jsonl` for debugging
 
 ## Build Status
 
@@ -210,4 +214,4 @@ All commits and pull requests are automatically built and tested via GitHub Acti
 
 ## Acknowledgments
 
-Built with [.NET 9](https://dotnet.microsoft.com/), [Windows Forms](https://docs.microsoft.com/windows-forms/), and [WPF](https://docs.microsoft.com/wpf/)
+Built with [.NET 9](https://dotnet.microsoft.com/), [Windows Forms](https://docs.microsoft.com/windows-forms/), and [WebRTC VAD](https://github.com/np-quang/WebRtcVadSharp)
