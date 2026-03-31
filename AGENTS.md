@@ -121,3 +121,15 @@ All interface-driven, registered via DI:
 - **Notifications**: Use NotificationService for all user-facing messages (balloon tips)
 - **UI Forms**: Always use `using` statements for form disposal; dialog-based for modality
 - **Dependencies**: Minimal external NuGet—only Microsoft.Extensions.DependencyInjection (included via Microsoft.AspNetCore.App framework reference)
+
+## Local Debug Notes
+
+- Runtime logs for current builds are in `%APPDATA%\TailSlap\logs\app.jsonl`. Prefer that over the legacy `%APPDATA%\TailSlap\app.log` when debugging realtime issues.
+- Safe `jq` filter style for this JSONL schema: use `.msg? | strings` so non-string or missing message fields do not explode the query.
+- Useful realtime log command:
+  `jq -r 'select((.msg? | strings) | test("OpenAIRealtimeTranscriber|RealtimeTranscriber|HandleRealtime|ProcessTranscriptionAsync|AudioRecorder.StartStreamingAsync|VAD\\[|StreamingRecovery")) | [.ts, .source, .msg] | @tsv' "%APPDATA%\\TailSlap\\logs\\app.jsonl"`
+- Current local realtime setup to remember:
+  `transcriber.realtimeProvider = "openai"`
+  `transcriber.baseUrl = "http://localhost:18000/v1/audio/transcriptions"`
+  `transcriber.model = "glm-nano-2512"`
+- In this repo, "OpenAI mode" may therefore mean a local OpenAI-protocol backend rather than the hosted OpenAI API. Always confirm the actual `baseUrl` before debugging.

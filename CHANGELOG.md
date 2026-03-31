@@ -5,6 +5,16 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.3] - 2026-04-01
+
+### Changed
+- **Realtime stop responsiveness**: Pressing the realtime hotkey a second time now uses a much shorter adaptive shutdown wait, so local OpenAI-protocol sessions stop feeling stuck in processing when there is no meaningful tail left to flush.
+- **Realtime debugging notes**: Documented the current JSONL log location, safe `jq` filters, and the local OpenAI-protocol `glm-nano-2512` setup used for troubleshooting.
+
+### Fixed
+- **Custom realtime duplication**: Legacy/custom realtime transcript finalization now avoids retyping earlier text when the server sends cumulative follow-up updates.
+- **Realtime capture stalls**: Streaming audio recovery now re-arms empty completed WinMM buffers and recovers much faster after sustained capture gaps, reducing dropped speech in realtime mode.
+
 ## [3.0.2] - 2026-04-01
 
 ### Changed

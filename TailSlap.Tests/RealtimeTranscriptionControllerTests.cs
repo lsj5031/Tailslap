@@ -196,6 +196,130 @@ public class RealtimeTranscriptionControllerTests
     }
 
     [Fact]
+    public async Task ProcessTranscriptionAsync_LegacyFinal_KeepsBaselinePending()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        mockClip.Setup(c => c.SetTextAndPasteAsync("hello world")).ReturnsAsync(true);
+
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
+
+        await InvokeProcessTranscriptionAsync(controller, "hello world", true, null);
+
+        Assert.Equal(
+            "hello world",
+            GetPrivateField<string>(controller, "_realtimeTranscriptionText")
+        );
+        Assert.Equal("hello world".Length, GetPrivateField<int>(controller, "_lastTypedLength"));
+        Assert.Equal("", GetPrivateField<string>(controller, "_typedText"));
+        Assert.True(GetPrivateField<bool>(controller, "_legacyFinalPending"));
+        Assert.Equal("hello world", GetPrivateField<string>(controller, "_pendingLegacyFinalText"));
+    }
+
+    [Fact]
+    public async Task ProcessLegacyTranscriptionEvent_CumulativeUpdate_DoesNotAppendPreviousText()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        mockClip.Setup(c => c.SetTextAndPasteAsync("hello world")).ReturnsAsync(true);
+        mockClip.Setup(c => c.SetTextAndPasteAsync(" again")).ReturnsAsync(true);
+
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
+
+        await InvokeProcessTranscriptionAsync(controller, "hello world", true, null);
+        await InvokeProcessLegacyTranscriptionEvent(controller, "hello world again", false);
+
+        Assert.Equal(
+            "hello world again",
+            GetPrivateField<string>(controller, "_realtimeTranscriptionText")
+        );
+        Assert.Equal("", GetPrivateField<string>(controller, "_typedText"));
+        Assert.False(GetPrivateField<bool>(controller, "_legacyFinalPending"));
+    }
+
+    [Fact]
+    public async Task ProcessLegacyTranscriptionEvent_NewSegmentAfterFinal_CommitsPreviousText()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        mockClip.Setup(c => c.SetTextAndPasteAsync("hello world")).ReturnsAsync(true);
+        mockClip.Setup(c => c.SetTextAndPasteAsync("next sentence")).ReturnsAsync(true);
+
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
+
+        await InvokeProcessTranscriptionAsync(controller, "hello world", true, null);
+        await InvokeProcessLegacyTranscriptionEvent(controller, "next sentence", false);
+
+        Assert.Equal("hello world", GetPrivateField<string>(controller, "_typedText"));
+        Assert.Equal(
+            "next sentence",
+            GetPrivateField<string>(controller, "_realtimeTranscriptionText")
+        );
+        Assert.Equal("next sentence".Length, GetPrivateField<int>(controller, "_lastTypedLength"));
+        Assert.False(GetPrivateField<bool>(controller, "_legacyFinalPending"));
+    }
+
+    [Fact]
+    public async Task ProcessLegacyTranscriptionEvent_SimilarCorrection_ReusesPendingBaseline()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        const string first = "normal people use administrator access for everything.";
+        const string corrected = "normal people use administrator rights for everything.";
+        mockClip.Setup(c => c.SetTextAndPasteAsync(first)).ReturnsAsync(true);
+        mockClip.Setup(c => c.SetTextAndPasteAsync("rights for everything.")).ReturnsAsync(true);
+
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
+
+        await InvokeProcessTranscriptionAsync(controller, first, true, null);
+        await InvokeProcessLegacyTranscriptionEvent(controller, corrected, false);
+
+        Assert.Equal(corrected, GetPrivateField<string>(controller, "_realtimeTranscriptionText"));
+        Assert.Equal("", GetPrivateField<string>(controller, "_typedText"));
+        Assert.False(GetPrivateField<bool>(controller, "_legacyFinalPending"));
+    }
+
+    [Fact]
     public void CanProcessOrderedRealtimeUpdate_UnknownPreviousItem_DoesNotBlock()
     {
         var mockConfig = CreateMockConfigService();
@@ -277,6 +401,63 @@ public class RealtimeTranscriptionControllerTests
         Assert.False(InvokeCanProcessOrderedRealtimeUpdate(controller, update));
     }
 
+    [Fact]
+    public void DetermineStopWaitTimeoutMs_NoPendingAudioOrText_UsesIdleTimeout()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        Assert.Equal(600, InvokeDetermineStopWaitTimeoutMs(controller, hasRemainingAudio: false));
+    }
+
+    [Fact]
+    public void DetermineStopWaitTimeoutMs_PendingRealtimeText_UsesPendingTimeout()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        SetPrivateField(controller, "_realtimeTranscriptionText", "hello");
+        SetPrivateField(controller, "_lastTypedLength", 5);
+
+        Assert.Equal(2500, InvokeDetermineStopWaitTimeoutMs(controller, hasRemainingAudio: false));
+    }
+
+    [Fact]
+    public void DetermineStopWaitTimeoutMs_RemainingAudio_UsesPendingTimeout()
+    {
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object
+        );
+
+        Assert.Equal(2500, InvokeDetermineStopWaitTimeoutMs(controller, hasRemainingAudio: true));
+    }
+
     private static bool InvokeCanProcessOrderedRealtimeUpdate(
         RealtimeTranscriptionController controller,
         RealtimeTranscriptionUpdate update
@@ -311,6 +492,44 @@ public class RealtimeTranscriptionControllerTests
 
         Assert.NotNull(task);
         await task!;
+    }
+
+    private static int InvokeDetermineStopWaitTimeoutMs(
+        RealtimeTranscriptionController controller,
+        bool hasRemainingAudio
+    )
+    {
+        var method = typeof(RealtimeTranscriptionController).GetMethod(
+            "DetermineStopWaitTimeoutMs",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+        return Assert.IsType<int>(method!.Invoke(controller, new object[] { hasRemainingAudio }));
+    }
+
+    private static async Task InvokeProcessLegacyTranscriptionEvent(
+        RealtimeTranscriptionController controller,
+        string text,
+        bool isFinal
+    )
+    {
+        var method = typeof(RealtimeTranscriptionController).GetMethod(
+            "ProcessLegacyTranscriptionEvent",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+
+        method!.Invoke(controller, new object[] { text, isFinal });
+
+        var gateField = typeof(RealtimeTranscriptionController).GetField(
+            "_transcriptionLock",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(gateField);
+
+        var gate = Assert.IsType<System.Threading.SemaphoreSlim>(gateField!.GetValue(controller));
+        await gate.WaitAsync();
+        gate.Release();
     }
 
     private static T GetPrivateField<T>(object target, string fieldName)

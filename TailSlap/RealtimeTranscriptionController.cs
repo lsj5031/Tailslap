@@ -28,6 +28,8 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private readonly SemaphoreSlim _transcriptionLock = new(1, 1);
     private readonly MemoryStream _streamingBuffer = new();
     private const int SEND_BUFFER_SIZE = 16000;
+    private const int STOP_WAIT_IDLE_TIMEOUT_MS = 600;
+    private const int STOP_WAIT_PENDING_TIMEOUT_MS = 2500;
     private IntPtr _streamingTargetWindow = IntPtr.Zero;
     private int _cleanupInProgress = 0;
     private DateTime _streamingStartTime = DateTime.MinValue;
@@ -37,6 +39,8 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private volatile bool _allowRealtimeInterimWhileStopping;
     private string _lastReceivedRealtimeText = "";
     private string? _currentRealtimeItemId;
+    private bool _legacyFinalPending;
+    private string _pendingLegacyFinalText = "";
     private readonly Dictionary<
         string,
         PendingOrderedRealtimeUpdate
@@ -191,6 +195,8 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         _lastTypedLength = 0;
         _lastReceivedRealtimeText = "";
         _currentRealtimeItemId = null;
+        _legacyFinalPending = false;
+        _pendingLegacyFinalText = "";
         _allowRealtimeTextUpdates = true;
         _allowRealtimeInterimWhileStopping = false;
         _pendingOrderedRealtimeUpdates.Clear();
@@ -325,10 +331,16 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
                 await _realtimeTranscriber.StopAsync();
 
+                int stopWaitTimeoutMs = DetermineStopWaitTimeoutMs(remainingData != null);
+
                 Logger.Log(
-                    "StopAsync: Waiting for server to close connection or send final message..."
+                    $"StopAsync: Waiting up to {stopWaitTimeoutMs}ms for server to close connection or send final message..."
                 );
-                await Task.WhenAny(serverClosedTcs.Task, finalMessageTcs.Task, Task.Delay(10000));
+                await Task.WhenAny(
+                    serverClosedTcs.Task,
+                    finalMessageTcs.Task,
+                    Task.Delay(stopWaitTimeoutMs)
+                );
 
                 // If the server delivered a final transcript, let any in-flight text processing
                 // finish before cleanup cancels the processing token and resets state.
@@ -351,6 +363,18 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
         _transcriberCts?.Cancel();
         await CleanupAsync();
+    }
+
+    private int DetermineStopWaitTimeoutMs(bool hasRemainingAudio)
+    {
+        bool hasPendingRealtimeText =
+            !string.IsNullOrEmpty(_realtimeTranscriptionText)
+            || !string.IsNullOrEmpty(_currentRealtimeItemId)
+            || _lastTypedLength > 0;
+
+        return hasRemainingAudio || hasPendingRealtimeText
+            ? STOP_WAIT_PENDING_TIMEOUT_MS
+            : STOP_WAIT_IDLE_TIMEOUT_MS;
     }
 
     private void HandleRealtimeAudioChunk(ArraySegment<byte> chunk)
@@ -499,10 +523,98 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             return;
         }
 
+        ResolvePendingLegacyFinal(text);
         _lastReceivedRealtimeText = text;
 
         var textProcessingToken = _textProcessingCts?.Token ?? CancellationToken.None;
         _ = ProcessTranscriptionAsync(text, isFinal, null, textProcessingToken);
+    }
+
+    private void ResolvePendingLegacyFinal(string nextText)
+    {
+        if (!_legacyFinalPending)
+        {
+            return;
+        }
+
+        if (ShouldTreatLegacyUpdateAsContinuation(_pendingLegacyFinalText, nextText))
+        {
+            Logger.Log(
+                "HandleRealtimeTranscriptionEvent: Continuing prior legacy final as a correction/extension"
+            );
+        }
+        else
+        {
+            Logger.Log(
+                "HandleRealtimeTranscriptionEvent: Starting a new legacy segment after finalizing the previous one"
+            );
+            CommitPendingLegacyFinal();
+        }
+
+        _legacyFinalPending = false;
+        _pendingLegacyFinalText = "";
+    }
+
+    private void CommitPendingLegacyFinal()
+    {
+        if (!string.IsNullOrEmpty(_pendingLegacyFinalText))
+        {
+            _typedText += _pendingLegacyFinalText;
+        }
+
+        _realtimeTranscriptionText = "";
+        _lastTypedLength = 0;
+        _lastReceivedRealtimeText = "";
+    }
+
+    private static bool ShouldTreatLegacyUpdateAsContinuation(
+        string previousFinalText,
+        string nextText
+    )
+    {
+        if (string.IsNullOrEmpty(previousFinalText) || string.IsNullOrEmpty(nextText))
+        {
+            return false;
+        }
+
+        if (string.Equals(previousFinalText, nextText, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (
+            nextText.StartsWith(previousFinalText, StringComparison.Ordinal)
+            || previousFinalText.StartsWith(nextText, StringComparison.Ordinal)
+        )
+        {
+            return true;
+        }
+
+        int minLen = Math.Min(previousFinalText.Length, nextText.Length);
+        int commonPrefixLen = GetCommonPrefixLength(previousFinalText, nextText);
+        if (minLen == 0 || commonPrefixLen == 0)
+        {
+            return false;
+        }
+
+        return commonPrefixLen >= Math.Min(minLen, 12) || commonPrefixLen * 10 >= minLen * 7;
+    }
+
+    private static int GetCommonPrefixLength(string left, string right)
+    {
+        int maxLen = Math.Min(left.Length, right.Length);
+        int commonPrefixLen = 0;
+        for (int i = 0; i < maxLen; i++)
+        {
+            if (left[i] != right[i])
+            {
+                break;
+            }
+
+            commonPrefixLen++;
+        }
+
+        return commonPrefixLen;
     }
 
     private async Task ProcessTranscriptionAsync(
@@ -646,15 +758,20 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             if (isFinal)
             {
                 Logger.Log("ProcessTranscriptionAsync: Final transcription received");
-                _typedText += text;
-                _lastTypedLength = 0;
-                _realtimeTranscriptionText = "";
-                if (
-                    !string.IsNullOrEmpty(itemId)
-                    && string.Equals(_currentRealtimeItemId, itemId, StringComparison.Ordinal)
-                )
+                if (!string.IsNullOrEmpty(itemId))
                 {
-                    _currentRealtimeItemId = null;
+                    _typedText += text;
+                    _lastTypedLength = 0;
+                    _realtimeTranscriptionText = "";
+                    if (string.Equals(_currentRealtimeItemId, itemId, StringComparison.Ordinal))
+                    {
+                        _currentRealtimeItemId = null;
+                    }
+                }
+                else
+                {
+                    _legacyFinalPending = true;
+                    _pendingLegacyFinalText = text;
                 }
             }
         }
@@ -980,6 +1097,8 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             _lastTypedLength = 0;
             _lastReceivedRealtimeText = "";
             _currentRealtimeItemId = null;
+            _legacyFinalPending = false;
+            _pendingLegacyFinalText = "";
             _pendingOrderedRealtimeUpdates.Clear();
             _orderedRealtimeSequences.Clear();
             _completedOrderedRealtimeItems.Clear();
