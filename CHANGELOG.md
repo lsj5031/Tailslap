@@ -5,6 +5,11 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.6] - 2026-04-01
+
+### Fixed
+- **GitHub Actions Node 24 opt-in**: CI workflows now set `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true`, which suppresses GitHub's temporary Node 20 deprecation warning for JavaScript-based actions while upstream actions finish their Node 24 migration.
+
 ## [3.0.5] - 2026-04-01
 
 ### Changed
