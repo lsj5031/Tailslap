@@ -21,7 +21,7 @@ jobs:
         dotnet-version: '9.0.x'
 
     - name: Restore dependencies
-      run: dotnet restore
+      run: dotnet restore -r win-x64
       working-directory: ./TailSlap
 
     - name: Publish Framework-Dependent
