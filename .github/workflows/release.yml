@@ -44,9 +44,9 @@ jobs:
           -Path "${{ github.workspace }}\artifacts\framework-dependent\*" `
           -DestinationPath "${{ github.workspace }}\release-assets\TailSlap-framework-dependent-win-x64.zip" `
           -Force
-        Copy-Item `
+        Compress-Archive `
           -Path "${{ github.workspace }}\artifacts\self-contained\TailSlap.exe" `
-          -Destination "${{ github.workspace }}\release-assets\TailSlap-self-contained-win-x64.exe" `
+          -DestinationPath "${{ github.workspace }}\release-assets\TailSlap-self-contained-win-x64.zip" `
           -Force
       shell: powershell
 
@@ -69,14 +69,14 @@ jobs:
         
         ### Downloads
         
-        - `TailSlap-self-contained-win-x64.exe`: Recommended for most users. Runs without installing .NET.
+        - `TailSlap-self-contained-win-x64.zip`: Recommended for most users. Runs without installing .NET.
         - `TailSlap-framework-dependent-win-x64.zip`: Smaller download. Requires the .NET 9 Desktop Runtime to already be installed.
         
         ### Installation
         
         1. Download the asset that matches your setup.
         2. If you chose the framework-dependent zip, install the .NET 9 Desktop Runtime first.
-        3. Run `TailSlap.exe`.
+        3. Extract the zip and run `TailSlap.exe`.
         
         ### Requirements
         
@@ -88,7 +88,7 @@ jobs:
 
         gh release create "v$version" `
           "${{ github.workspace }}\release-assets\TailSlap-framework-dependent-win-x64.zip" `
-          "${{ github.workspace }}\release-assets\TailSlap-self-contained-win-x64.exe" `
+          "${{ github.workspace }}\release-assets\TailSlap-self-contained-win-x64.zip" `
           --repo "${{ github.repository }}" `
           --title "TailSlap $version" `
           --notes $body

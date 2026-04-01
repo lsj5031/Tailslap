@@ -5,6 +5,12 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.8] - 2026-04-01
+
+### Changed
+- **Windows release packaging**: Build and release automation now publish both framework-dependent and self-contained Windows artifacts directly from CI so both download variants stay available.
+- **Compressed self-contained download**: GitHub releases now package the self-contained Windows build as a zip instead of uploading the raw `.exe`, reducing download size while still extracting to the same `TailSlap.exe`.
+
 ## [3.0.7] - 2026-04-01
 
 ### Fixed
