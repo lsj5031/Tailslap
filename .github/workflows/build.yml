@@ -44,35 +44,14 @@ jobs:
 
     - name: Kill lingering test processes
       if: always()
-      shell: powershell
+      shell: cmd
       run: |
-        $targets = @(
-          'testhost',
-          'testhost.x86',
-          'vstest.console',
-          'MSBuild',
-          'VBCSCompiler',
-          'dotnet'
-        )
-
-        Write-Host 'Stopping lingering test/build processes before post-job cleanup...'
-
-        $procs = foreach ($target in $targets) {
-          Get-Process -Name $target -ErrorAction SilentlyContinue
-        }
-
-        if (-not $procs) {
-          Write-Host 'No matching lingering processes found.'
-          exit 0
-        }
-
-        $procs |
-          Sort-Object ProcessName, Id |
-          Select-Object ProcessName, Id, Handles, CPU, StartTime |
-          Format-Table -AutoSize
-
-        $procs | Stop-Process -Force
-        Start-Sleep -Seconds 2
+        echo Stopping lingering test host processes before post-job cleanup...
+        taskkill /F /T /IM testhost.exe || ver > nul
+        taskkill /F /T /IM testhost.x86.exe || ver > nul
+        taskkill /F /T /IM vstest.console.exe || ver > nul
+        taskkill /F /T /IM conhost.exe || ver > nul
+        timeout /t 2 /nobreak > nul
 
   build-self-contained:
     runs-on: windows-latest
