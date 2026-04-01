@@ -42,6 +42,35 @@ jobs:
     - name: Run Tests
       run: dotnet test -c Release --no-build --verbosity normal
 
+    - name: Diagnose lingering build processes
+      if: always()
+      shell: powershell
+      run: |
+        $targets = @(
+          'dotnet.exe',
+          'testhost.exe',
+          'testhost.x86.exe',
+          'vstest.console.exe',
+          'MSBuild.exe',
+          'VBCSCompiler.exe',
+          'git.exe'
+        )
+
+        Write-Host 'Checking for lingering build/test processes before post-job cleanup...'
+
+        $procs = Get-CimInstance Win32_Process |
+          Where-Object { $targets -contains $_.Name } |
+          Sort-Object Name, ProcessId
+
+        if (-not $procs) {
+          Write-Host 'No matching lingering processes found.'
+          exit 0
+        }
+
+        $procs |
+          Select-Object Name, ProcessId, ParentProcessId, ThreadCount, HandleCount, ExecutablePath, CommandLine |
+          Format-List
+
   build-self-contained:
     runs-on: windows-latest
     timeout-minutes: 5
