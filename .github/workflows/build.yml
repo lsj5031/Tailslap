@@ -47,29 +47,46 @@ jobs:
       shell: powershell
       run: |
         $targets = @(
-          'dotnet.exe',
-          'testhost.exe',
-          'testhost.x86.exe',
-          'vstest.console.exe',
-          'MSBuild.exe',
-          'VBCSCompiler.exe',
-          'git.exe'
+          'dotnet',
+          'testhost',
+          'testhost.x86',
+          'vstest.console',
+          'MSBuild',
+          'VBCSCompiler',
+          'conhost',
+          'git'
         )
 
         Write-Host 'Checking for lingering build/test processes before post-job cleanup...'
 
-        $procs = Get-CimInstance Win32_Process |
-          Where-Object { $targets -contains $_.Name } |
-          Sort-Object Name, ProcessId
+        $foundAny = $false
 
-        if (-not $procs) {
-          Write-Host 'No matching lingering processes found.'
+        foreach ($target in $targets) {
+          $procs = Get-Process -Name $target -ErrorAction SilentlyContinue
+          if (-not $procs) {
+            continue
+          }
+
+          $foundAny = $true
+          Write-Host "Process snapshot for $target"
+          $procs |
+            Select-Object ProcessName, Id, Handles, CPU, StartTime |
+            Format-Table -AutoSize
+        }
+
+        if (-not $foundAny) {
+          Write-Host 'No matching lingering processes found via Get-Process.'
+        }
+
+        Write-Host 'tasklist snapshot for target names:'
+        cmd /c 'tasklist /FO TABLE /NH | findstr /I "dotnet.exe testhost.exe testhost.x86.exe vstest.console.exe MSBuild.exe VBCSCompiler.exe conhost.exe git.exe"'
+
+        if ($LASTEXITCODE -eq 1) {
+          Write-Host 'No matching processes found in tasklist.'
           exit 0
         }
 
-        $procs |
-          Select-Object Name, ProcessId, ParentProcessId, ThreadCount, HandleCount, ExecutablePath, CommandLine |
-          Format-List
+        exit $LASTEXITCODE
 
   build-self-contained:
     runs-on: windows-latest
