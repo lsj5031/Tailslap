@@ -42,10 +42,6 @@ jobs:
     - name: Run Tests
       run: dotnet test -c Release --no-build --verbosity normal
 
-    - name: Shutdown dotnet build servers
-      if: always()
-      run: dotnet build-server shutdown
-
   build-self-contained:
     runs-on: windows-latest
     timeout-minutes: 5
@@ -74,7 +70,3 @@ jobs:
         name: TailSlap-self-contained
         path: TailSlap/bin/Release/net9.0-windows/win-x64/publish/TailSlap.exe
         if-no-files-found: error
-
-    - name: Shutdown dotnet build servers
-      if: always()
-      run: dotnet build-server shutdown
