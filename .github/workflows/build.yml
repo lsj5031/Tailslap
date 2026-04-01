@@ -42,51 +42,37 @@ jobs:
     - name: Run Tests
       run: dotnet test -c Release --no-build --verbosity normal
 
-    - name: Diagnose lingering build processes
+    - name: Kill lingering test processes
       if: always()
       shell: powershell
       run: |
         $targets = @(
-          'dotnet',
           'testhost',
           'testhost.x86',
           'vstest.console',
           'MSBuild',
           'VBCSCompiler',
-          'conhost',
-          'git'
+          'dotnet'
         )
 
-        Write-Host 'Checking for lingering build/test processes before post-job cleanup...'
+        Write-Host 'Stopping lingering test/build processes before post-job cleanup...'
 
-        $foundAny = $false
-
-        foreach ($target in $targets) {
-          $procs = Get-Process -Name $target -ErrorAction SilentlyContinue
-          if (-not $procs) {
-            continue
-          }
-
-          $foundAny = $true
-          Write-Host "Process snapshot for $target"
-          $procs |
-            Select-Object ProcessName, Id, Handles, CPU, StartTime |
-            Format-Table -AutoSize
+        $procs = foreach ($target in $targets) {
+          Get-Process -Name $target -ErrorAction SilentlyContinue
         }
 
-        if (-not $foundAny) {
-          Write-Host 'No matching lingering processes found via Get-Process.'
-        }
-
-        Write-Host 'tasklist snapshot for target names:'
-        cmd /c 'tasklist /FO TABLE /NH | findstr /I "dotnet.exe testhost.exe testhost.x86.exe vstest.console.exe MSBuild.exe VBCSCompiler.exe conhost.exe git.exe"'
-
-        if ($LASTEXITCODE -eq 1) {
-          Write-Host 'No matching processes found in tasklist.'
+        if (-not $procs) {
+          Write-Host 'No matching lingering processes found.'
           exit 0
         }
 
-        exit $LASTEXITCODE
+        $procs |
+          Sort-Object ProcessName, Id |
+          Select-Object ProcessName, Id, Handles, CPU, StartTime |
+          Format-Table -AutoSize
+
+        $procs | Stop-Process -Force
+        Start-Sleep -Seconds 2
 
   build-self-contained:
     runs-on: windows-latest
