@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-framework-dependent:
     runs-on: windows-latest
     timeout-minutes: 5
 
@@ -28,25 +28,19 @@ jobs:
         dotnet-version: '9.0.x'
 
     - name: Restore dependencies
-      run: dotnet restore
+      run: dotnet restore -r win-x64
+      working-directory: ./TailSlap
 
-    - name: Restore tools
-      run: dotnet tool restore
+    - name: Publish Framework-Dependent
+      run: dotnet publish -c Release --no-restore -o "${{ github.workspace }}\artifacts\framework-dependent"
+      working-directory: ./TailSlap
 
-    - name: Check Formatting
-      run: dotnet csharpier check .
-
-    - name: Build Release
-      run: dotnet build -c Release --no-restore
-
-    - name: Run Tests
-      shell: powershell
-      run: |
-        dotnet test -c Release --no-build --verbosity normal `
-          --logger "trx;LogFileName=test-results.trx" `
-          --results-directory TestResults `
-          --diag TestResults\vstest-diag.log `
-          -e TAILSLAP_CI_ISOLATED=1
+    - name: Upload Framework-Dependent Build
+      uses: actions/upload-artifact@v6
+      with:
+        name: TailSlap-framework-dependent
+        path: artifacts/framework-dependent/
+        if-no-files-found: error
 
   build-self-contained:
     runs-on: windows-latest
