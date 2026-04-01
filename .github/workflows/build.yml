@@ -40,18 +40,13 @@ jobs:
       run: dotnet build -c Release --no-restore
 
     - name: Run Tests
-      run: dotnet test -c Release --no-build --verbosity normal
-
-    - name: Kill lingering test processes
-      if: always()
-      shell: cmd
+      shell: powershell
       run: |
-        echo Stopping lingering test host processes before post-job cleanup...
-        taskkill /F /T /IM testhost.exe || ver > nul
-        taskkill /F /T /IM testhost.x86.exe || ver > nul
-        taskkill /F /T /IM vstest.console.exe || ver > nul
-        taskkill /F /T /IM conhost.exe || ver > nul
-        timeout /t 2 /nobreak > nul
+        dotnet test -c Release --no-build --verbosity normal `
+          --logger "trx;LogFileName=test-results.trx" `
+          --results-directory TestResults `
+          --diag TestResults\vstest-diag.log `
+          -e TAILSLAP_CI_ISOLATED=1
 
   build-self-contained:
     runs-on: windows-latest
