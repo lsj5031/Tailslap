@@ -45,15 +45,11 @@ jobs:
         path: TestResults/*.trx
         if-no-files-found: warn
 
-    - name: Publish Framework-Dependent
-      run: dotnet publish -c Release --no-restore -o "${{ github.workspace }}\artifacts\framework-dependent"
-      working-directory: ./TailSlap
-
     - name: Upload Framework-Dependent Build
       uses: actions/upload-artifact@v6
       with:
         name: TailSlap-framework-dependent
-        path: artifacts/framework-dependent/
+        path: TailSlap/bin/Release/net9.0-windows/win-x64/
         if-no-files-found: error
 
   build-self-contained:
