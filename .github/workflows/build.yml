@@ -35,31 +35,7 @@ jobs:
       run: dotnet build -c Release --no-restore
 
     - name: Run Tests
-      run: dotnet test -c Release --no-build --verbosity normal --logger trx --results-directory TestResults
-
-    - name: Upload Test Results
-      uses: actions/upload-artifact@v6
-      if: always()
-      with:
-        name: test-results
-        path: TestResults/*.trx
-        if-no-files-found: warn
-
-    - name: Package Framework-Dependent Build
-      run: |
-        New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\artifacts" | Out-Null
-        Compress-Archive `
-          -Path "${{ github.workspace }}\TailSlap\bin\Release\net9.0-windows\win-x64\*" `
-          -DestinationPath "${{ github.workspace }}\artifacts\TailSlap-framework-dependent-win-x64.zip" `
-          -Force
-      shell: powershell
-
-    - name: Upload Framework-Dependent Build
-      uses: actions/upload-artifact@v6
-      with:
-        name: TailSlap-framework-dependent
-        path: artifacts/TailSlap-framework-dependent-win-x64.zip
-        if-no-files-found: error
+      run: dotnet test -c Release --no-build --verbosity normal
 
   build-self-contained:
     runs-on: windows-latest
