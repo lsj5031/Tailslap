@@ -45,11 +45,20 @@ jobs:
         path: TestResults/*.trx
         if-no-files-found: warn
 
+    - name: Package Framework-Dependent Build
+      run: |
+        New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\artifacts" | Out-Null
+        Compress-Archive `
+          -Path "${{ github.workspace }}\TailSlap\bin\Release\net9.0-windows\win-x64\*" `
+          -DestinationPath "${{ github.workspace }}\artifacts\TailSlap-framework-dependent-win-x64.zip" `
+          -Force
+      shell: powershell
+
     - name: Upload Framework-Dependent Build
       uses: actions/upload-artifact@v6
       with:
         name: TailSlap-framework-dependent
-        path: TailSlap/bin/Release/net9.0-windows/win-x64/
+        path: artifacts/TailSlap-framework-dependent-win-x64.zip
         if-no-files-found: error
 
   build-self-contained:
