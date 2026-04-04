@@ -317,7 +317,10 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                 }
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            Logger.Log("OpenAIRealtimeTranscriber SendLoop: Task cancelled");
+        }
         catch (Exception ex)
         {
             Logger.Log($"OpenAIRealtimeTranscriber SendLoop error: {ex.Message}");
