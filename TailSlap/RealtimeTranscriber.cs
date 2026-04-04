@@ -262,7 +262,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown
+            Logger.Log("RealtimeTranscriber SendLoop: Task cancelled");
         }
         catch (Exception ex)
         {
@@ -325,7 +325,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown
+            Logger.Log("RealtimeTranscriber HeartbeatLoop: Task cancelled");
         }
         catch (Exception ex)
         {
