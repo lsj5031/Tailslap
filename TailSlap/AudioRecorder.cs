@@ -1105,11 +1105,11 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
     private DateTime _lastBufferTime = DateTime.MinValue;
     private DateTime _lastSpeechTime = DateTime.MinValue;
 
-    private readonly struct StreamingResult
+    private struct StreamingResult
     {
-        public bool SilenceDetected { get; init; }
-        public int ConsecutiveSilenceMs { get; init; }
-        public bool HasDetectedSpeech { get; init; }
+        public bool SilenceDetected { get; set; }
+        public int ConsecutiveSilenceMs { get; set; }
+        public bool HasDetectedSpeech { get; set; }
     }
 
     private async Task<StreamingResult> ProcessStreamingBuffersAsync(
