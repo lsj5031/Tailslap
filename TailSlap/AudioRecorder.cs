@@ -13,7 +13,7 @@ public sealed class RecordingStats
     public bool SilenceDetected { get; set; }
 }
 
-public sealed class AudioRecorder : IDisposable
+public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 {
     // WinMM Constants
     private const int WAVE_MAPPER = -1;
@@ -434,8 +434,8 @@ public sealed class AudioRecorder : IDisposable
         }
         finally
         {
-            Logger.Log("AudioRecorder: Entering finally block, calling Stop()");
-            Stop();
+            Logger.Log("AudioRecorder: Entering finally block, calling StopAsync()");
+            await StopAsync().ConfigureAwait(false);
         }
     }
 
@@ -657,30 +657,26 @@ public sealed class AudioRecorder : IDisposable
         }
     }
 
-    private void Stop()
+    private async Task StopAsync()
     {
         if (Interlocked.Exchange(ref _stopInvoked, 1) == 1)
         {
             return;
         }
 
-        Logger.Log("AudioRecorder.Stop: Starting cleanup");
+        Logger.Log("AudioRecorder.StopAsync: Starting cleanup");
         _isRecording = false;
 
         if (_hWaveIn != null && !_hWaveIn.IsInvalid)
         {
             if (!_waveInResetIssued)
             {
-                Logger.Log("AudioRecorder.Stop: Calling waveInReset");
-                ResetWaveIn("AudioRecorder.Stop");
+                Logger.Log("AudioRecorder.StopAsync: Calling waveInReset");
+                ResetWaveIn("AudioRecorder.StopAsync");
             }
 
             // Let WinMM return ownership of any in-flight buffers before unpreparing them.
-            var waitStart = Environment.TickCount64;
-            while (!IsAllBuffersReturned() && Environment.TickCount64 - waitStart < 1000)
-            {
-                Thread.Sleep(20);
-            }
+            await WaitForAllBuffersReturnedAsync(1000, logOnTimeout: false).ConfigureAwait(false);
 
             // Unprepare headers BEFORE closing the device (requires valid handle)
             for (int i = 0; i < BUFFER_COUNT; i++)
@@ -696,19 +692,19 @@ public sealed class AudioRecorder : IDisposable
                         );
                         if (unprepResult != 0)
                             Logger.Log(
-                                $"AudioRecorder.Stop: waveInUnprepareHeader[{i}] returned error {unprepResult}"
+                                $"AudioRecorder.StopAsync: waveInUnprepareHeader[{i}] returned error {unprepResult}"
                             );
                     }
                     catch (Exception ex)
                     {
                         Logger.Log(
-                            $"AudioRecorder.Stop: Exception unpreparing header {i}: {ex.Message}"
+                            $"AudioRecorder.StopAsync: Exception unpreparing header {i}: {ex.Message}"
                         );
                     }
                 }
             }
 
-            Logger.Log("AudioRecorder.Stop: Closing handle");
+            Logger.Log("AudioRecorder.StopAsync: Closing handle");
             _hWaveIn.Dispose();
             _hWaveIn = null;
         }
@@ -725,12 +721,17 @@ public sealed class AudioRecorder : IDisposable
                 catch (Exception ex)
                 {
                     Logger.Log(
-                        $"AudioRecorder.Stop: Exception freeing buffer handle {i}: {ex.Message}"
+                        $"AudioRecorder.StopAsync: Exception freeing buffer handle {i}: {ex.Message}"
                     );
                 }
             }
         }
-        Logger.Log("AudioRecorder.Stop: Cleanup complete");
+        Logger.Log("AudioRecorder.StopAsync: Cleanup complete");
+    }
+
+    private void Stop()
+    {
+        StopAsync().GetAwaiter().GetResult();
     }
 
     [DllImport("winmm.dll")]
@@ -1033,13 +1034,17 @@ public sealed class AudioRecorder : IDisposable
 
             while (_isRecording && !ct.IsCancellationRequested)
             {
-                bool silenceDetected = ProcessStreamingBuffers(
+                var streamingResult = await ProcessStreamingBuffersAsync(
                     enableVAD,
-                    ref consecutiveSilenceMs,
-                    ref hasDetectedSpeech,
+                    consecutiveSilenceMs,
+                    hasDetectedSpeech,
                     silenceThresholdMs
-                );
-                if (silenceDetected)
+                ).ConfigureAwait(false);
+
+                consecutiveSilenceMs = streamingResult.ConsecutiveSilenceMs;
+                hasDetectedSpeech = streamingResult.HasDetectedSpeech;
+
+                if (streamingResult.SilenceDetected)
                 {
                     Logger.Log(
                         $"AudioRecorder.StartStreamingAsync: Silence detected ({consecutiveSilenceMs}ms >= {silenceThresholdMs}ms), stopping"
@@ -1069,7 +1074,7 @@ public sealed class AudioRecorder : IDisposable
         finally
         {
             Logger.Log("AudioRecorder.StartStreamingAsync: Cleanup");
-            Stop();
+            await StopAsync().ConfigureAwait(false);
         }
     }
 
@@ -1100,13 +1105,26 @@ public sealed class AudioRecorder : IDisposable
     private DateTime _lastBufferTime = DateTime.MinValue;
     private DateTime _lastSpeechTime = DateTime.MinValue;
 
-    private bool ProcessStreamingBuffers(
+    private readonly struct StreamingResult
+    {
+        public bool SilenceDetected { get; init; }
+        public int ConsecutiveSilenceMs { get; init; }
+        public bool HasDetectedSpeech { get; init; }
+    }
+
+    private async Task<StreamingResult> ProcessStreamingBuffersAsync(
         bool enableVAD,
-        ref int consecutiveSilenceMs,
-        ref bool hasDetectedSpeech,
+        int consecutiveSilenceMs,
+        bool hasDetectedSpeech,
         int silenceThresholdMs
     )
     {
+        var result = new StreamingResult
+        {
+            ConsecutiveSilenceMs = consecutiveSilenceMs,
+            HasDetectedSpeech = hasDetectedSpeech,
+            SilenceDetected = false,
+        };
         int buffersProcessedThisCall = 0;
         int buffersCompletedThisCall = 0;
         var now = DateTime.Now;
@@ -1124,7 +1142,7 @@ public sealed class AudioRecorder : IDisposable
             // If we're relying solely on server VAD (local VAD never activated),
             // use a longer timeout to account for server inference latency (~2s per transcription)
             int effectiveThreshold = silenceThresholdMs;
-            if (_externalSpeechDetected && !hasDetectedSpeech)
+            if (_externalSpeechDetected && !result.HasDetectedSpeech)
             {
                 // Server VAD only: add extra buffer for inference latency
                 effectiveThreshold = silenceThresholdMs + 3000; // 3s extra for server latency
@@ -1133,9 +1151,10 @@ public sealed class AudioRecorder : IDisposable
             if (wallClockSilenceMs >= effectiveThreshold)
             {
                 Logger.Log(
-                    $"VAD[Stream]: *** WALL-CLOCK THRESHOLD REACHED *** {wallClockSilenceMs}ms >= {effectiveThreshold}ms (localVAD={hasDetectedSpeech}, serverVAD={_externalSpeechDetected}). Stats: speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed}"
+                    $"VAD[Stream]: *** WALL-CLOCK THRESHOLD REACHED *** {wallClockSilenceMs}ms >= {effectiveThreshold}ms (localVAD={result.HasDetectedSpeech}, serverVAD={_externalSpeechDetected}). Stats: speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed}"
                 );
-                return true;
+                result.SilenceDetected = true;
+                return result;
             }
         }
 
@@ -1181,7 +1200,7 @@ public sealed class AudioRecorder : IDisposable
                         {
                             bool isSpeech = DetectSpeechWithHysteresis(
                                 data,
-                                hasDetectedSpeech,
+                                result.HasDetectedSpeech,
                                 out float rms
                             );
                             int bufferDurationMs = data.Length / BYTES_PER_MS;
@@ -1189,16 +1208,16 @@ public sealed class AudioRecorder : IDisposable
                             // DEBUG: Only log every 20th buffer to reduce noise (1 second of audio)
                             if (_totalBuffersProcessed % 20 == 0)
                             {
-                                string speechState = hasDetectedSpeech ? "ACTIVE" : "WAITING";
+                                string speechState = result.HasDetectedSpeech ? "ACTIVE" : "WAITING";
                                 string vadType = _useWebRtcVad ? "WebRTC" : "RMS";
                                 Logger.Log(
-                                    $"VAD[DEBUG]: buf#{_totalBuffersProcessed} {vadType} speech={isSpeech} RMS={rms:F0} state={speechState} silence={consecutiveSilenceMs}ms"
+                                    $"VAD[DEBUG]: buf#{_totalBuffersProcessed} {vadType} speech={isSpeech} RMS={rms:F0} state={speechState} silence={result.ConsecutiveSilenceMs}ms"
                                 );
                             }
 
                             if (isSpeech)
                             {
-                                if (!hasDetectedSpeech)
+                                if (!result.HasDetectedSpeech)
                                 {
                                     _buffersWithSpeech++;
                                     Logger.Log(
@@ -1208,39 +1227,40 @@ public sealed class AudioRecorder : IDisposable
                                 else
                                 {
                                     _buffersWithSpeech++;
-                                    if (consecutiveSilenceMs > 0)
+                                    if (result.ConsecutiveSilenceMs > 0)
                                     {
                                         Logger.Log(
-                                            $"VAD[Stream]: Speech SUSTAINED (WebRTC={_useWebRtcVad}, RMS={rms:F0}), silence reset from {consecutiveSilenceMs}ms"
+                                            $"VAD[Stream]: Speech SUSTAINED (WebRTC={_useWebRtcVad}, RMS={rms:F0}), silence reset from {result.ConsecutiveSilenceMs}ms"
                                         );
                                     }
                                 }
-                                hasDetectedSpeech = true;
-                                consecutiveSilenceMs = 0;
+                                result.HasDetectedSpeech = true;
+                                result.ConsecutiveSilenceMs = 0;
                                 _lastSpeechTime = now;
                             }
                             else
                             {
                                 _buffersWithSilence++;
                                 // Only accumulate silence if we have actually started speaking at least once
-                                if (hasDetectedSpeech)
+                                if (result.HasDetectedSpeech)
                                 {
-                                    consecutiveSilenceMs += bufferDurationMs;
+                                    result.ConsecutiveSilenceMs += bufferDurationMs;
 
                                     // Log every 500ms of silence accumulation
-                                    if (consecutiveSilenceMs % 500 < bufferDurationMs)
+                                    if (result.ConsecutiveSilenceMs % 500 < bufferDurationMs)
                                     {
                                         Logger.Log(
-                                            $"VAD[Stream]: Silence milestone: {consecutiveSilenceMs}ms / {silenceThresholdMs}ms (WebRTC={_useWebRtcVad})"
+                                            $"VAD[Stream]: Silence milestone: {result.ConsecutiveSilenceMs}ms / {silenceThresholdMs}ms (WebRTC={_useWebRtcVad})"
                                         );
                                     }
 
-                                    if (consecutiveSilenceMs >= silenceThresholdMs)
+                                    if (result.ConsecutiveSilenceMs >= silenceThresholdMs)
                                     {
                                         Logger.Log(
                                             $"VAD[Stream]: *** THRESHOLD REACHED *** Stopping. Stats: speech={_buffersWithSpeech} silent={_buffersWithSilence} total={_totalBuffersProcessed}"
                                         );
-                                        return true;
+                                        result.SilenceDetected = true;
+                                        return result;
                                     }
                                 }
                             }
@@ -1296,7 +1316,7 @@ public sealed class AudioRecorder : IDisposable
 
                 if (gap >= recoveryThresholdMs && recoveryCooldownElapsed)
                 {
-                    AttemptStreamingBufferRecovery(gap);
+                    await AttemptStreamingBufferRecoveryAsync(gap).ConfigureAwait(false);
                 }
             }
         }
@@ -1306,10 +1326,10 @@ public sealed class AudioRecorder : IDisposable
             _lastBufferTime = now;
         }
 
-        return false;
+        return result;
     }
 
-    private void AttemptStreamingBufferRecovery(double gapMs)
+    private async Task AttemptStreamingBufferRecoveryAsync(double gapMs)
     {
         if (!_isRecording || _hWaveIn == null || _hWaveIn.IsInvalid)
         {
@@ -1339,13 +1359,10 @@ public sealed class AudioRecorder : IDisposable
                 );
             }
 
-            var waitStart = Environment.TickCount64;
-            while (!IsAllBuffersReturned() && Environment.TickCount64 - waitStart < 250)
-            {
-                Thread.Sleep(20);
-            }
+            bool buffersReturned = await WaitForAllBuffersReturnedAsync(250, logOnTimeout: false)
+                .ConfigureAwait(false);
 
-            if (!IsAllBuffersReturned())
+            if (!buffersReturned)
             {
                 Logger.Log(
                     "AudioRecorder.StreamingRecovery: Timed out waiting for buffers; reopening capture device"
@@ -1438,6 +1455,11 @@ public sealed class AudioRecorder : IDisposable
         }
     }
 
+    private void AttemptStreamingBufferRecovery(double gapMs)
+    {
+        AttemptStreamingBufferRecoveryAsync(gapMs).GetAwaiter().GetResult();
+    }
+
     public void StopRecording()
     {
         _isRecording = false;
@@ -1452,5 +1474,18 @@ public sealed class AudioRecorder : IDisposable
         _webRtcVad?.Dispose();
         _webRtcVad = null;
         _disposed = true;
+        GC.SuppressFinalize(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+        await StopAsync().ConfigureAwait(false);
+        _recordedData?.Dispose();
+        _webRtcVad?.Dispose();
+        _webRtcVad = null;
+        _disposed = true;
+        GC.SuppressFinalize(this);
     }
 }
