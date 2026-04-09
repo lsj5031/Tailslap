@@ -122,46 +122,60 @@ public class MainForm : Form
         _currentConfig = _config.CreateValidatedCopy();
 
         // Wire up controller events for animation
-        _refinementController.OnStarted += StartRefinementAnim;
-        _refinementController.OnCompleted += StopAnim;
-        _typelessController.OnStarted += StartTypelessAnim;
-        _typelessController.OnProcessingStarted += SwitchToTranscribingAnim;
-        _typelessController.OnCompleted += StopAnim;
+        _refinementController.OnStarted += () => RunOnUiThread(StartRefinementAnim);
+        _refinementController.OnCompleted += () => RunOnUiThread(StopAnim);
+        _typelessController.OnStarted += () => RunOnUiThread(StartTypelessAnim);
+        _typelessController.OnProcessingStarted += () => RunOnUiThread(SwitchToTranscribingAnim);
+        _typelessController.OnCompleted += () => RunOnUiThread(StopAnim);
         _typelessController.OnRmsLevel += rms =>
         {
-            try
+            RunOnUiThread(() =>
             {
-                _recordingOverlay?.UpdateRms(rms);
-            }
-            catch { }
+                try
+                {
+                    _recordingOverlay?.UpdateRms(rms);
+                }
+                catch { }
+            });
         };
-        _transcriptionController.OnStarted += StartTranscriptionAnim;
-        _transcriptionController.OnCompleted += StopAnim;
+        _transcriptionController.OnStarted += () => RunOnUiThread(StartTranscriptionAnim);
+        _transcriptionController.OnProcessingStarted += () =>
+            RunOnUiThread(SwitchToTranscribingAnim);
+        _transcriptionController.OnCompleted += () => RunOnUiThread(StopAnim);
         _transcriptionController.OnRmsLevel += rms =>
         {
-            try
+            RunOnUiThread(() =>
             {
-                _recordingOverlay?.UpdateRms(rms);
-            }
-            catch { }
+                try
+                {
+                    _recordingOverlay?.UpdateRms(rms);
+                }
+                catch { }
+            });
         };
-        _realtimeTranscriptionController.OnStarted += StartStreamingAnim;
-        _realtimeTranscriptionController.OnStopped += StopAnim;
+        _realtimeTranscriptionController.OnStarted += () => RunOnUiThread(StartStreamingAnim);
+        _realtimeTranscriptionController.OnStopped += () => RunOnUiThread(StopAnim);
         _realtimeTranscriptionController.OnRmsLevel += rms =>
         {
-            try
+            RunOnUiThread(() =>
             {
-                _recordingOverlay?.UpdateRms(rms);
-            }
-            catch { }
+                try
+                {
+                    _recordingOverlay?.UpdateRms(rms);
+                }
+                catch { }
+            });
         };
         _realtimeTranscriptionController.OnTranscription += (text, isFinal) =>
         {
-            try
+            RunOnUiThread(() =>
             {
-                _recordingOverlay?.UpdateTranscriptionText(text);
-            }
-            catch { }
+                try
+                {
+                    _recordingOverlay?.UpdateTranscriptionText(text);
+                }
+                catch { }
+            });
         };
 
         // Wire keyboard hook events to TypelessController
@@ -915,9 +929,13 @@ public class MainForm : Form
         string stateText;
         if (_typelessController.IsRecording)
             stateText = "Recording";
+        else if (_transcriptionController.IsRecording)
+            stateText = "Recording";
         else if (_refinementController.IsRefining)
             stateText = "Refining";
         else if (_typelessController.IsProcessing)
+            stateText = "Transcribing";
+        else if (_transcriptionController.IsTranscribing)
             stateText = "Transcribing";
         else if (_realtimeTranscriptionController.IsStreaming)
             stateText = "Streaming";
@@ -935,6 +953,26 @@ public class MainForm : Form
             _tray.Text = text;
         }
         catch { }
+    }
+
+    private void RunOnUiThread(Action action)
+    {
+        if (IsDisposed || Disposing)
+            return;
+
+        try
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(action);
+            }
+            else
+            {
+                action();
+            }
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     protected override void SetVisibleCore(bool value)
@@ -1222,7 +1260,7 @@ public class MainForm : Form
     {
         try
         {
-            Logger.Log("Typeless animation: switching to transcribing");
+            Logger.Log("Animation: switching to transcribing");
         }
         catch { }
         _lastPulseUpdateMs = 0;

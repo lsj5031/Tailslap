@@ -11,6 +11,7 @@ public sealed class SettingsForm : Form
         Llm,
         Transcriber,
         Typeless,
+        Streaming,
     }
 
     private const int HotkeyProbeId = 0x4A17;
@@ -46,8 +47,10 @@ public sealed class SettingsForm : Form
     private TextBox? _transcriberTimeout;
     private TextBox? _transcriberApiKey;
     private TextBox? _transcriberHotkey;
+    private TextBox? _streamingTranscriberHotkey;
     private ComboBox? _microphoneDropdown;
     private Button? _captureTranscriberHotkeyButton;
+    private Button? _captureStreamingTranscriberHotkeyButton;
     private Button? _testTranscriberConnectionButton;
     private Label? _transcriberTestResultLabel;
     private Button? _detectMicrophonesButton;
@@ -464,13 +467,13 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 24,
+            RowCount = 28,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
         transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 24; i++)
+        for (int i = 0; i < 28; i++)
             transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox
@@ -840,6 +843,34 @@ public sealed class SettingsForm : Form
         _captureTypelessHotkeyButton!.Click += CaptureTypelessHotkey;
         transcriber.Controls.Add(_captureTypelessHotkeyButton, 1, 18);
 
+        _streamingTranscriberHotkey = new TextBox
+        {
+            ReadOnly = true,
+            Text = GetHotkeyDisplay(_cfg.StreamingTranscriberHotkey),
+            Dock = DockStyle.Fill,
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Realtime Streaming Hotkey",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            19
+        );
+        transcriber.Controls.Add(_streamingTranscriberHotkey, 1, 19);
+
+        _captureStreamingTranscriberHotkeyButton = new Button
+        {
+            Text = "Change Hotkey",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        _captureStreamingTranscriberHotkeyButton.Click += CaptureStreamingTranscriberHotkey;
+        transcriber.Controls.Add(_captureStreamingTranscriberHotkeyButton, 1, 20);
+
         // WebSocket Timeout Settings Section
         transcriber.Controls.Add(
             new Label
@@ -851,9 +882,9 @@ public sealed class SettingsForm : Form
                 Font = new Font(this.Font, FontStyle.Bold),
             },
             0,
-            19
+            21
         );
-        transcriber.Controls.Add(new Label(), 1, 19);
+        transcriber.Controls.Add(new Label(), 1, 21);
 
         _wsConnectionTimeout = new TextBox
         {
@@ -869,9 +900,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            20
+            22
         );
-        transcriber.Controls.Add(_wsConnectionTimeout, 1, 20);
+        transcriber.Controls.Add(_wsConnectionTimeout, 1, 22);
 
         _wsReceiveTimeout = new TextBox
         {
@@ -887,9 +918,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            21
+            23
         );
-        transcriber.Controls.Add(_wsReceiveTimeout, 1, 21);
+        transcriber.Controls.Add(_wsReceiveTimeout, 1, 23);
 
         _wsSendTimeout = new TextBox
         {
@@ -905,9 +936,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            22
+            24
         );
-        transcriber.Controls.Add(_wsSendTimeout, 1, 22);
+        transcriber.Controls.Add(_wsSendTimeout, 1, 24);
 
         _wsHeartbeatInterval = new TextBox
         {
@@ -923,9 +954,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            23
+            25
         );
-        transcriber.Controls.Add(_wsHeartbeatInterval, 1, 23);
+        transcriber.Controls.Add(_wsHeartbeatInterval, 1, 25);
 
         _wsHeartbeatTimeout = new TextBox
         {
@@ -941,9 +972,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            24
+            26
         );
-        transcriber.Controls.Add(_wsHeartbeatTimeout, 1, 24);
+        transcriber.Controls.Add(_wsHeartbeatTimeout, 1, 26);
 
         // Add validation handlers
         _wsConnectionTimeout.TextChanged += RefreshValidationState;
@@ -974,9 +1005,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            25
+            27
         );
-        transcriber.Controls.Add(_realtimeProviderDropdown, 1, 25);
+        transcriber.Controls.Add(_realtimeProviderDropdown, 1, 27);
 
         return transcriber;
     }
@@ -1321,6 +1352,12 @@ public sealed class SettingsForm : Form
             _cfg.TypelessHotkey,
             "Push-to-talk hotkey"
         );
+        AddHotkeyValidationError(
+            errors,
+            HotkeyTarget.Streaming,
+            _cfg.StreamingTranscriberHotkey,
+            "Realtime streaming hotkey"
+        );
 
         return errors;
     }
@@ -1332,7 +1369,12 @@ public sealed class SettingsForm : Form
         string displayName
     )
     {
-        if (hotkey.Modifiers == 0 || hotkey.Key == 0)
+        if (hotkey.Modifiers == 0)
+        {
+            return;
+        }
+
+        if (hotkey.Key == 0 && target != HotkeyTarget.Typeless)
         {
             return;
         }
@@ -1470,6 +1512,20 @@ public sealed class SettingsForm : Form
         );
     }
 
+    private void CaptureStreamingTranscriberHotkey(object? sender, EventArgs e)
+    {
+        using var cap = CreateHotkeyCaptureDialog(HotkeyTarget.Streaming);
+        if (cap.ShowDialog(this) != DialogResult.OK)
+            return;
+        _cfg.StreamingTranscriberHotkey.Modifiers = cap.Modifiers;
+        _cfg.StreamingTranscriberHotkey.Key = cap.Key;
+        _streamingTranscriberHotkey!.Text = GetHotkeyDisplay(_cfg.StreamingTranscriberHotkey);
+        RefreshValidationState(null, EventArgs.Empty);
+        Logger.Log(
+            $"Streaming hotkey captured: mods={cap.Modifiers}, key={cap.Key}, display={cap.Display}"
+        );
+    }
+
     private void CaptureLlmHotkey(object? sender, EventArgs e)
     {
         using var cap = CreateHotkeyCaptureDialog(HotkeyTarget.Llm);
@@ -1486,14 +1542,26 @@ public sealed class SettingsForm : Form
 
     private HotkeyCaptureForm CreateHotkeyCaptureDialog(HotkeyTarget target)
     {
+        bool allowModifierOnly = target == HotkeyTarget.Typeless;
+        string? promptText = allowModifierOnly
+            ? "Press a hold-to-talk hotkey.\r\nYou can use modifiers only (for example Ctrl+Win) or include a normal key."
+            : null;
+
         return new HotkeyCaptureForm(
-            validator: (mods, key) => ValidateCapturedHotkey(target, mods, key)
+            validator: (mods, key) => ValidateCapturedHotkey(target, mods, key),
+            promptText: promptText,
+            allowModifierOnly: allowModifierOnly
         );
     }
 
     private string? ValidateCapturedHotkey(HotkeyTarget target, uint mods, uint key)
     {
-        if (key == 0 || mods == 0)
+        if (mods == 0)
+        {
+            return "Hotkey must include at least one modifier.";
+        }
+
+        if (key == 0 && target != HotkeyTarget.Typeless)
         {
             return "Hotkey must include at least one modifier and one non-modifier key.";
         }
@@ -1529,7 +1597,10 @@ public sealed class SettingsForm : Form
             return "Already used by the push-to-talk hotkey.";
         }
 
-        if (HotkeyMatches(_cfg.StreamingTranscriberHotkey, mods, key))
+        if (
+            target != HotkeyTarget.Streaming
+            && HotkeyMatches(_cfg.StreamingTranscriberHotkey, mods, key)
+        )
         {
             return "Already used by the realtime streaming hotkey.";
         }
@@ -1683,6 +1754,9 @@ public sealed class SettingsForm : Form
                 .StreamingTranscriberHotkey
                 .Modifiers;
             _cfg.StreamingTranscriberHotkey.Key = defaultCfg.StreamingTranscriberHotkey.Key;
+            _streamingTranscriberHotkey!.Text = GetHotkeyDisplay(
+                defaultCfg.StreamingTranscriberHotkey
+            );
 
             RefreshValidationState(null, EventArgs.Empty);
 

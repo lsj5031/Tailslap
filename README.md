@@ -78,7 +78,7 @@
 3. Automatic silence detection can stop recording when you pause speaking, or you can stop manually
 
 **Advanced Settings:**
-- **Streaming Mode**: Enable WebSocket streaming for real-time feedback (requires WebSocket endpoint)
+- **Stream Results**: For toggle transcription, type post-recording chunks as they arrive from the HTTP streaming endpoint
 - **Realtime Provider**: Choose `custom` for TailSlap's richer streaming protocol or `openai` for OpenAI-compatible `/v1/realtime?intent=transcription`
 - **WebSocket Endpoint**: Built automatically from the base API endpoint for the selected realtime provider
 - **Silence Detection**: Configure threshold (default: 2000ms) to auto-stop recording
@@ -132,7 +132,7 @@ You can edit this file directly or use the Settings dialog in the system tray me
 - `EnableVAD`: Voice Activity Detection (default: `true`)
 - `SilenceThresholdMs`: Silence detection threshold in milliseconds (default: `2000`)
 - `PreferredMicrophoneIndex`: Microphone device selection (default: `-1` for system default)
-- `StreamResults`: Enable WebSocket streaming (default: `false`)
+- `StreamResults`: Stream post-recording transcription chunks into the target app as they arrive (default: `false`)
 - `RealtimeProvider`: `custom` for TailSlap's native protocol or `openai` for OpenAI-compatible realtime transcription (default: `custom`)
 - `WebSocketUrl`: Auto-constructed WebSocket endpoint for the selected streaming provider
 

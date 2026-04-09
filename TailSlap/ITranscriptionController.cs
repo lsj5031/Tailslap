@@ -12,6 +12,7 @@ public interface ITranscriptionController
     void StopRecording();
 
     event Action? OnStarted;
+    event Action? OnProcessingStarted;
     event Action? OnCompleted;
 
     /// <summary>Fired with the current RMS audio level during recording.</summary>

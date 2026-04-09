@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,6 +14,7 @@ public sealed class TranscriptionController : ITranscriptionController
     private readonly IHistoryService _history;
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly ClipboardHelper _clipboardHelper;
+    private readonly TextTyper _textTyper;
 
     private bool _isTranscribing;
     private bool _isRecording;
@@ -22,6 +24,7 @@ public sealed class TranscriptionController : ITranscriptionController
     public bool IsRecording => _isRecording;
 
     public event Action? OnStarted;
+    public event Action? OnProcessingStarted;
     public event Action? OnCompleted;
     public event Action<float>? OnRmsLevel;
 
@@ -31,7 +34,8 @@ public sealed class TranscriptionController : ITranscriptionController
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
         IHistoryService history,
-        ITextRefinerFactory textRefinerFactory
+        ITextRefinerFactory textRefinerFactory,
+        TextTyper textTyper
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -45,6 +49,7 @@ public sealed class TranscriptionController : ITranscriptionController
         _history = history ?? throw new ArgumentNullException(nameof(history));
         _textRefinerFactory =
             textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
     }
 
     public async Task<bool> TriggerTranscribeAsync()
@@ -184,18 +189,33 @@ public sealed class TranscriptionController : ITranscriptionController
                 _isRecording = false;
             }
 
+            OnProcessingStarted?.Invoke();
             NotificationService.ShowInfo("Sending to transcriber...");
 
             // Transcribe audio using remote API
             Logger.Log($"Creating RemoteTranscriber with BaseUrl: {cfg.Transcriber.BaseUrl}");
             var transcriber = _remoteTranscriberFactory.Create(cfg.Transcriber);
 
-            var transcriptionText = await TranscribeRecordedAudioAsync(
-                    transcriber,
-                    audioFilePath,
-                    cfg
-                )
-                .ConfigureAwait(false);
+            string transcriptionText;
+            if (cfg.Transcriber.StreamResults)
+            {
+                _textTyper.ResetBaseline();
+                transcriptionText = await TranscribeRecordedAudioStreamingAsync(
+                        transcriber,
+                        audioFilePath,
+                        cfg
+                    )
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                transcriptionText = await TranscribeRecordedAudioAsync(
+                        transcriber,
+                        audioFilePath,
+                        cfg
+                    )
+                    .ConfigureAwait(false);
+            }
 
             if (string.IsNullOrEmpty(transcriptionText))
                 return;
@@ -204,8 +224,12 @@ public sealed class TranscriptionController : ITranscriptionController
             var finalText = await MaybeEnhanceTranscriptionAsync(transcriptionText, cfg)
                 .ConfigureAwait(false);
 
-            await _clipboardHelper
-                .SetTextAndPasteAsync(finalText, cfg.Transcriber.AutoPaste)
+            await ApplyFinalTextAsync(
+                    finalText,
+                    transcriptionText,
+                    cfg,
+                    streamedResults: cfg.Transcriber.StreamResults
+                )
                 .ConfigureAwait(false);
 
             PersistHistoryEntries(
@@ -330,6 +354,88 @@ public sealed class TranscriptionController : ITranscriptionController
         }
     }
 
+    private async Task<string> TranscribeRecordedAudioStreamingAsync(
+        IRemoteTranscriber transcriber,
+        string audioFilePath,
+        AppConfig cfg
+    )
+    {
+        var fullText = new StringBuilder();
+
+        try
+        {
+            Logger.Log($"Starting streaming transcription of {audioFilePath}");
+
+            await foreach (
+                var chunk in transcriber
+                    .TranscribeStreamingAsync(audioFilePath)
+                    .ConfigureAwait(false)
+            )
+            {
+                if (string.IsNullOrEmpty(chunk))
+                    continue;
+
+                fullText.Append(chunk);
+
+                Logger.Log(
+                    $"Streaming transcription chunk received: len={chunk.Length}, total={fullText.Length}"
+                );
+
+                try
+                {
+                    await _textTyper
+                        .TypeAsync(fullText.ToString(), autoPaste: cfg.Transcriber.AutoPaste)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception typeEx)
+                {
+                    Logger.Log($"Failed to type streaming transcription chunk: {typeEx.Message}");
+                }
+            }
+        }
+        catch (TranscriberException ex)
+        {
+            if (fullText.Length == 0)
+            {
+                Logger.Log(
+                    $"Streaming transcription failed before any text: {ex.ErrorType}, {ex.Message}"
+                );
+                NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                return "";
+            }
+
+            Logger.Log(
+                $"Streaming transcription error after partial text ({fullText.Length} chars): {ex.Message}"
+            );
+        }
+        catch (Exception ex)
+        {
+            if (fullText.Length == 0)
+            {
+                Logger.Log(
+                    $"Unexpected streaming transcription exception before any text: {ex.GetType().Name}: {ex.Message}"
+                );
+                NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                return "";
+            }
+
+            Logger.Log(
+                $"Unexpected streaming transcription exception after partial text ({fullText.Length} chars): {ex.Message}"
+            );
+        }
+
+        var transcriptionText = fullText.ToString();
+        Logger.Log($"Streaming transcription completed: {transcriptionText.Length} characters");
+
+        if (IsEmptyTranscription(transcriptionText))
+        {
+            NotificationService.ShowWarning("No speech detected.");
+            return "";
+        }
+
+        return transcriptionText;
+    }
+
     private async Task<string> MaybeEnhanceTranscriptionAsync(
         string transcriptionText,
         AppConfig cfg
@@ -337,6 +443,31 @@ public sealed class TranscriptionController : ITranscriptionController
     {
         return await TranscriptionAutoEnhancer
             .MaybeEnhanceAsync(transcriptionText, cfg, _textRefinerFactory)
+            .ConfigureAwait(false);
+    }
+
+    private async Task ApplyFinalTextAsync(
+        string finalText,
+        string originalText,
+        AppConfig cfg,
+        bool streamedResults
+    )
+    {
+        if (!streamedResults)
+        {
+            await _clipboardHelper
+                .SetTextAndPasteAsync(finalText, cfg.Transcriber.AutoPaste)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        if (string.Equals(finalText, originalText, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await _textTyper
+            .TypeAsync(finalText, autoPaste: cfg.Transcriber.AutoPaste)
             .ConfigureAwait(false);
     }
 

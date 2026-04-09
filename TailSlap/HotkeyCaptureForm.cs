@@ -6,6 +6,7 @@ using System.Windows.Forms;
 public sealed class HotkeyCaptureForm : Form
 {
     private readonly Func<uint, uint, string?>? _validator;
+    private readonly bool _allowModifierOnly;
     private readonly Label _prompt;
     private readonly TextBox _display;
     private readonly Label _hint;
@@ -17,9 +18,14 @@ public sealed class HotkeyCaptureForm : Form
     public uint Key { get; private set; }
     public string Display { get; private set; } = string.Empty;
 
-    public HotkeyCaptureForm(Func<uint, uint, string?>? validator = null, string? promptText = null)
+    public HotkeyCaptureForm(
+        Func<uint, uint, string?>? validator = null,
+        string? promptText = null,
+        bool allowModifierOnly = false
+    )
     {
         _validator = validator;
+        _allowModifierOnly = allowModifierOnly;
         Text = "Set Global Hotkey";
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -56,7 +62,11 @@ public sealed class HotkeyCaptureForm : Form
             Text =
                 promptText
                 ?? "Press a keyboard shortcut to use as your global hotkey.\r\n"
-                    + "Must include Ctrl, Alt, Shift, or Win plus a non-modifier key (e.g., Ctrl+Alt+R, Win+T)",
+                    + (
+                        allowModifierOnly
+                            ? "Can be modifiers only for hold-to-talk (e.g., Ctrl+Win), or modifiers plus a non-modifier key."
+                            : "Must include Ctrl, Alt, Shift, or Win plus a non-modifier key (e.g., Ctrl+Alt+R, Win+T)"
+                    ),
             AutoSize = true,
             MaximumSize = new Size(DpiHelper.Scale(720), 0),
             Dock = DockStyle.Fill,
@@ -150,18 +160,12 @@ public sealed class HotkeyCaptureForm : Form
 
     private void OnKeyDownCapture(object? sender, KeyEventArgs e)
     {
-        // Ignore pure modifier presses
-        if (
+        bool isPureModifier =
             e.KeyCode == Keys.ControlKey
             || e.KeyCode == Keys.ShiftKey
             || e.KeyCode == Keys.Menu
             || e.KeyCode == Keys.LWin
-            || e.KeyCode == Keys.RWin
-        )
-        {
-            e.SuppressKeyPress = true;
-            return;
-        }
+            || e.KeyCode == Keys.RWin;
 
         uint mods = 0;
         if (e.Control)
@@ -173,6 +177,37 @@ public sealed class HotkeyCaptureForm : Form
         bool winDown = IsWinDown();
         if (winDown)
             mods |= 0x0008; // MOD_WIN
+
+        if (_allowModifierOnly && isPureModifier && mods != 0)
+        {
+            Modifiers = mods;
+            Key = 0;
+            Display = BuildModifierOnlyDisplay(mods);
+            _display.Text = Display;
+
+            var validationError = _validator?.Invoke(mods, 0);
+            if (string.IsNullOrWhiteSpace(validationError))
+            {
+                SetValidationState(
+                    isValid: true,
+                    hint: "Available modifier-only hold hotkey. Click OK to save."
+                );
+            }
+            else
+            {
+                SetValidationState(isValid: false, hint: validationError);
+            }
+
+            e.SuppressKeyPress = true;
+            return;
+        }
+
+        // Ignore pure modifier presses when modifier-only capture is not allowed
+        if (isPureModifier)
+        {
+            e.SuppressKeyPress = true;
+            return;
+        }
 
         Modifiers = mods;
         Key = (uint)e.KeyCode;
@@ -241,6 +276,23 @@ public sealed class HotkeyCaptureForm : Form
             keyName = "'";
 
         parts.Add(keyName);
+        return string.Join("+", parts);
+    }
+
+    private static string BuildModifierOnlyDisplay(uint modifiers)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+
+        if ((modifiers & 0x0002) != 0)
+            parts.Add("Ctrl");
+        if ((modifiers & 0x0001) != 0)
+            parts.Add("Alt");
+        if ((modifiers & 0x0004) != 0)
+            parts.Add("Shift");
+        if ((modifiers & 0x0008) != 0)
+            parts.Add("Win");
+
+        parts.Add("(hold)");
         return string.Join("+", parts);
     }
 

@@ -110,7 +110,7 @@ public class TextTyper
     /// <param name="foregroundWindow">The current foreground window handle. If null, uses GetForegroundWindow().</param>
     /// <param name="cancellationToken">Cancellation token for async operations.</param>
     /// <returns>A TypeResult describing what happened.</returns>
-    public async Task<TypeResult> TypeAsync(
+    public virtual async Task<TypeResult> TypeAsync(
         string text,
         bool autoPaste = true,
         IntPtr? foregroundWindow = null,
