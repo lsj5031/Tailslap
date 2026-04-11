@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Windows.Automation;
 using System.Windows.Forms;
+using TailSlap;
 
 public sealed class ClipboardService : IClipboardService
 {
@@ -2563,7 +2564,7 @@ public sealed class ClipboardService : IClipboardService
                 {
                     if (comInit)
                     {
-                        CoUninitialize();
+                        NativeMethods.CoUninitialize();
                     }
                 }
                 catch { }
