@@ -133,7 +133,7 @@ public class RefinementControllerTests
         mockClip
             .Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>()))
             .ReturnsAsync("test text");
-        mockClip.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClip.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         mockClip.Setup(c => c.PasteAsync()).ReturnsAsync(true);
 
         var mockRefiner = new Mock<ITextRefiner>();
@@ -177,7 +177,7 @@ public class RefinementControllerTests
         mockClip
             .Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>()))
             .ReturnsAsync("test text");
-        mockClip.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClip.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         mockClip.Setup(c => c.PasteAsync()).ReturnsAsync(true);
 
         var mockRefiner = new Mock<ITextRefiner>();

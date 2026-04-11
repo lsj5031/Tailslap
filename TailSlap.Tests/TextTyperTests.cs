@@ -587,7 +587,7 @@ public class TextTyperTests
     {
         // Arrange
         var mockClip = CreateMockClipboardService();
-        mockClip.Setup(c => c.SetText("Hello World")).Returns(true);
+        mockClip.Setup(c => c.SetTextAsync("Hello World")).ReturnsAsync(true);
         var typer = CreateTextTyper(mockClip);
 
         // Act — AutoPaste disabled means no paste
@@ -596,7 +596,7 @@ public class TextTyperTests
         // Assert — text on clipboard but no paste
         Assert.True(result.TextOnClipboard);
         Assert.True(result.DeliverySuccess);
-        mockClip.Verify(c => c.SetText("Hello World"), Times.Once);
+        mockClip.Verify(c => c.SetTextAsync("Hello World"), Times.Once);
         mockClip.Verify(c => c.SetTextAndPasteAsync(It.IsAny<string>()), Times.Never);
     }
 

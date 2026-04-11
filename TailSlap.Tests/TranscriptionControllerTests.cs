@@ -101,7 +101,7 @@ public class TranscriptionControllerTests
     )
     {
         clipboardService ??= new Mock<IClipboardService>();
-        clipboardService.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        clipboardService.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         clipboardService.Setup(c => c.PasteAsync()).ReturnsAsync(true);
         clipboardService.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
 
@@ -170,7 +170,7 @@ public class TranscriptionControllerTests
     public async Task ApplyFinalTextAsync_WhenNotStreamed_UsesClipboardHelperPath()
     {
         var clipboardService = new Mock<IClipboardService>();
-        clipboardService.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        clipboardService.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         var textTyper = new TestableStreamingTextTyper(clipboardService.Object);
         var controller = CreateController(textTyper, clipboardService);
 
@@ -182,7 +182,7 @@ public class TranscriptionControllerTests
             streamedResults: false
         );
 
-        clipboardService.Verify(c => c.SetText("hello world"), Times.Once);
+        clipboardService.Verify(c => c.SetTextAsync("hello world"), Times.Once);
         Assert.Empty(textTyper.TypedTexts);
     }
 

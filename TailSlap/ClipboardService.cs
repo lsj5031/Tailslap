@@ -1057,7 +1057,7 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
-    public bool SetText(string text)
+    public System.Threading.Tasks.Task<bool> SetTextAsync(string text)
     {
         // If we're not on the UI thread and have a UI context, marshal the call
         var currentContext = SynchronizationContext.Current;
@@ -1067,7 +1067,7 @@ public sealed class ClipboardService : IClipboardService
         try
         {
             Logger.Log(
-                $"SetText: hasUiContext={hasUiContext}, currentContext={currentContext?.GetType().Name ?? "null"}, needsMarshal={needsMarshal}, ThreadId={Thread.CurrentThread.ManagedThreadId}"
+                $"SetTextAsync: hasUiContext={hasUiContext}, currentContext={currentContext?.GetType().Name ?? "null"}, needsMarshal={needsMarshal}, ThreadId={Thread.CurrentThread.ManagedThreadId}"
             );
         }
         catch { }
@@ -1076,48 +1076,17 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                Logger.Log("SetText: Marshaling to UI thread");
+                Logger.Log("SetTextAsync: Marshaling to UI thread");
             }
             catch { }
 
-            bool result = false;
-            using var done = new ManualResetEventSlim(false);
-
-            _uiContext!.Post(
-                _ =>
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"SetText: Running on UI thread, ThreadId={Thread.CurrentThread.ManagedThreadId}"
-                        );
-                    }
-                    catch { }
-                    result = SetTextCore(text);
-                    done.Set();
-                },
-                null
-            );
-
-            // Wait for the UI thread to complete the operation (with timeout)
-            if (!done.Wait(5000))
-            {
-                try
-                {
-                    Logger.Log("SetText: Timed out waiting for UI thread");
-                }
-                catch { }
-                NotificationService.ShowError("Failed to set clipboard text. Please try again.");
-                return false;
-            }
-
-            return result;
+            return RunOnUiContextAsync(() => SetTextCoreAsync(text));
         }
 
-        return SetTextCore(text);
+        return SetTextCoreAsync(text);
     }
 
-    private static bool SetTextCore(string text)
+    private static async System.Threading.Tasks.Task<bool> SetTextCoreAsync(string text)
     {
         int retries = 3;
         while (retries-- > 0)
@@ -1147,7 +1116,7 @@ public sealed class ClipboardService : IClipboardService
                         "Failed to set clipboard text. Please try again."
                     );
                 }
-                Thread.Sleep(50);
+                await System.Threading.Tasks.Task.Delay(50).ConfigureAwait(true);
             }
         }
         return false;
@@ -1230,10 +1199,10 @@ public sealed class ClipboardService : IClipboardService
         // or we just overwrite it because the user intends to paste this text.
         // Given this is for dictation, overwriting clipboard is acceptable behavior (like Nuance Dragon).
 
-        if (!SetText(text))
+        if (!await SetTextAsync(text).ConfigureAwait(false))
             return false;
 
-        return await PasteAsync();
+        return await PasteAsync().ConfigureAwait(false);
     }
 
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync()

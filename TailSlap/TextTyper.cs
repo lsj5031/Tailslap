@@ -147,7 +147,7 @@ public class TextTyper
                     WindowChanged = true,
                     DeliverySuccess = false,
                     Text = text,
-                    TextOnClipboard = _clip.SetText(text),
+                    TextOnClipboard = await _clip.SetTextAsync(text).ConfigureAwait(false),
                 };
             }
 
@@ -190,7 +190,7 @@ public class TextTyper
             if (!autoPaste)
             {
                 // AutoPaste disabled — just put text on clipboard
-                textOnClipboard = _clip.SetText(text);
+                textOnClipboard = await _clip.SetTextAsync(text).ConfigureAwait(false);
                 deliverySuccess = textOnClipboard;
             }
             else if (useClipboard)
@@ -224,7 +224,7 @@ public class TextTyper
                         // Ensure text is at least on clipboard as fallback
                         if (!textOnClipboard)
                         {
-                            textOnClipboard = _clip.SetText(newText);
+                            textOnClipboard = await _clip.SetTextAsync(newText).ConfigureAwait(false);
                         }
 
                         try
@@ -266,7 +266,7 @@ public class TextTyper
                     if (!deliverySuccess)
                     {
                         // All methods failed — ensure text is at least on clipboard
-                        textOnClipboard = _clip.SetText(newText);
+                        textOnClipboard = await _clip.SetTextAsync(newText).ConfigureAwait(false);
                         try
                         {
                             Logger.Log(
