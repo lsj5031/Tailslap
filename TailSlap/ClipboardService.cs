@@ -41,9 +41,6 @@ public sealed class ClipboardService : IClipboardService
     }
 
     [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -53,13 +50,7 @@ public sealed class ClipboardService : IClipboardService
     private static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
 
     [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-    [DllImport("user32.dll")]
     private static extern uint GetClipboardSequenceNumber();
-
-    [DllImport("user32.dll")]
-    private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
@@ -95,18 +86,7 @@ public sealed class ClipboardService : IClipboardService
     private static extern short GetAsyncKeyState(int vKey);
 
     [DllImport("user32.dll")]
-    private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-
-    [DllImport("user32.dll")]
     private static extern uint MapVirtualKey(uint uCode, uint uMapType);
-
-    [DllImport("ole32.dll")]
-    private static extern int CoInitializeEx(IntPtr pvReserved, uint dwCoInit);
-
-    [DllImport("ole32.dll")]
-    private static extern void CoUninitialize();
-
-    private const uint COINIT_MULTITHREADED = 0x0;
 
     private const uint WM_COPY = 0x0301;
     private const uint WM_PASTE = 0x0302;
@@ -118,29 +98,6 @@ public sealed class ClipboardService : IClipboardService
     private const uint KEYEVENTF_SCANCODE = 0x0008;
     private const uint MAPVK_VK_TO_VSC = 0x0;
     private const int SW_RESTORE = 9;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GUITHREADINFO
-    {
-        public int cbSize;
-        public uint flags;
-        public IntPtr hwndActive;
-        public IntPtr hwndFocus;
-        public IntPtr hwndCapture;
-        public IntPtr hwndMenuOwner;
-        public IntPtr hwndMoveSize;
-        public IntPtr hwndCaret;
-        public RECT rcCaret;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT
-    {
-        public int Left,
-            Top,
-            Right,
-            Bottom;
-    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
@@ -164,13 +121,6 @@ public sealed class ClipboardService : IClipboardService
         public uint dwFlags;
         public uint time;
         public IntPtr dwExtraInfo;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT
-    {
-        public int X;
-        public int Y;
     }
 
     private static string DescribeWindow(IntPtr hWnd)
@@ -231,7 +181,7 @@ public sealed class ClipboardService : IClipboardService
         // Safely get process information
         try
         {
-            uint threadId = GetWindowThreadProcessId(hWnd, out uint pid);
+            uint threadId = NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
             if (threadId != 0)
             {
                 if (pid != 0)
@@ -450,7 +400,7 @@ public sealed class ClipboardService : IClipboardService
                     Logger.Log("Step 2: Getting foreground window...");
                 }
                 catch { }
-                foregroundWindow = GetForegroundWindow();
+                foregroundWindow = NativeMethods.GetForegroundWindow();
                 try
                 {
                     Logger.Log(
@@ -1187,7 +1137,7 @@ public sealed class ClipboardService : IClipboardService
         {
             LogPasteDiagnostic("PasteAsync");
 
-            var foregroundWindow = GetForegroundWindow();
+            var foregroundWindow = NativeMethods.GetForegroundWindow();
             if (foregroundWindow == IntPtr.Zero)
             {
                 try
@@ -1288,7 +1238,7 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
-            var foregroundWindow = GetForegroundWindow();
+            var foregroundWindow = NativeMethods.GetForegroundWindow();
             if (foregroundWindow == IntPtr.Zero)
             {
                 return false;
@@ -1459,7 +1409,7 @@ public sealed class ClipboardService : IClipboardService
                 }
 
                 // Search within the active window for a focused text provider
-                var hwnd = GetForegroundWindow();
+                var hwnd = NativeMethods.GetForegroundWindow();
                 if (hwnd != IntPtr.Zero)
                 {
                     try
@@ -1556,15 +1506,22 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                var fg = GetForegroundWindow();
-                var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-                uint threadId = GetWindowThreadProcessId(fg, out uint tid);
-                if (threadId == 0 || !GetGUIThreadInfo(threadId, ref info))
+                var fg = NativeMethods.GetForegroundWindow();
+                var info = new NativeMethods.GUITHREADINFO
+                {
+                    cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
+                };
+                uint threadId = NativeMethods.GetWindowThreadProcessId(fg, out uint tid);
+                if (threadId == 0 || !NativeMethods.GetGUIThreadInfo(threadId, ref info))
                     return null;
                 if (info.hwndCaret == IntPtr.Zero)
                     return null;
                 var rc = info.rcCaret;
-                var pt = new POINT { X = rc.Left + 1, Y = rc.Top + (rc.Bottom - rc.Top) / 2 };
+                var pt = new NativeMethods.POINT
+                {
+                    X = rc.Left + 1,
+                    Y = rc.Top + (rc.Bottom - rc.Top) / 2,
+                };
                 try
                 {
                     var logStr =
@@ -1574,7 +1531,7 @@ public sealed class ClipboardService : IClipboardService
                 catch { }
                 try
                 {
-                    ClientToScreen(info.hwndCaret, ref pt);
+                    NativeMethods.ClientToScreen(info.hwndCaret, ref pt);
                 }
                 catch { }
                 System.Windows.Point wpt = new(pt.X, pt.Y);
@@ -1864,20 +1821,23 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
-            var hwnd = GetForegroundWindow();
+            var hwnd = NativeMethods.GetForegroundWindow();
             if (hwnd == IntPtr.Zero)
                 return null;
-            var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-            uint threadId = GetWindowThreadProcessId(hwnd, out uint tid);
-            if (threadId == 0 || !GetGUIThreadInfo(threadId, ref info))
+            var info = new NativeMethods.GUITHREADINFO
+            {
+                cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
+            };
+            uint threadId = NativeMethods.GetWindowThreadProcessId(hwnd, out uint tid);
+            if (threadId == 0 || !NativeMethods.GetGUIThreadInfo(threadId, ref info))
                 return null;
             var owner = info.hwndCaret != IntPtr.Zero ? info.hwndCaret : hwnd;
             int cx = info.rcCaret.Left + ((info.rcCaret.Right - info.rcCaret.Left) / 2);
             int cy = info.rcCaret.Top + ((info.rcCaret.Bottom - info.rcCaret.Top) / 2);
-            var pt = new POINT { X = cx, Y = cy };
+            var pt = new NativeMethods.POINT { X = cx, Y = cy };
             try
             {
-                ClientToScreen(owner, ref pt);
+                NativeMethods.ClientToScreen(owner, ref pt);
             }
             catch { }
             var el = AutomationElement.FromPoint(new System.Windows.Point(pt.X, pt.Y));
@@ -1904,9 +1864,12 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
-            var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-            uint threadId = GetWindowThreadProcessId(hwndForeground, out uint _);
-            if (threadId != 0 && GetGUIThreadInfo(threadId, ref info))
+            var info = new NativeMethods.GUITHREADINFO
+            {
+                cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
+            };
+            uint threadId = NativeMethods.GetWindowThreadProcessId(hwndForeground, out uint _);
+            if (threadId != 0 && NativeMethods.GetGUIThreadInfo(threadId, ref info))
             {
                 if (info.hwndFocus != IntPtr.Zero)
                     return info.hwndFocus;
@@ -2398,7 +2361,7 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
-            var fw = GetForegroundWindow();
+            var fw = NativeMethods.GetForegroundWindow();
             var windowInfo = fw != IntPtr.Zero ? DescribeWindow(fw) : "no foreground window";
 
             bool ctrl = (GetAsyncKeyState(0x11) & 0x8000) != 0;
@@ -2541,7 +2504,7 @@ public sealed class ClipboardService : IClipboardService
             bool comInit = false;
             try
             {
-                int hr = CoInitializeEx(IntPtr.Zero, COINIT_MULTITHREADED);
+                int hr = NativeMethods.CoInitializeEx(IntPtr.Zero, NativeMethods.COINIT_MULTITHREADED);
                 comInit = (hr == 0 || hr == 1); // S_OK or S_FALSE
 
                 T result;
@@ -2620,7 +2583,7 @@ public sealed class ClipboardService : IClipboardService
                 {
                     try
                     {
-                        CoUninitialize();
+                        NativeMethods.CoUninitialize();
                     }
                     catch { }
                 }

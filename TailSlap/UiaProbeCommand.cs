@@ -2,58 +2,10 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Automation;
+using TailSlap;
 
 internal static class UiaProbeCommand
 {
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-    [DllImport("user32.dll")]
-    private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
-
-    [DllImport("user32.dll")]
-    private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-
-    [DllImport("ole32.dll")]
-    private static extern int CoInitializeEx(IntPtr pvReserved, uint dwCoInit);
-
-    [DllImport("ole32.dll")]
-    private static extern void CoUninitialize();
-
-    private const uint COINIT_MULTITHREADED = 0x0;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct GUITHREADINFO
-    {
-        public int cbSize;
-        public uint flags;
-        public IntPtr hwndActive;
-        public IntPtr hwndFocus;
-        public IntPtr hwndCapture;
-        public IntPtr hwndMenuOwner;
-        public IntPtr hwndMoveSize;
-        public IntPtr hwndCaret;
-        public RECT rcCaret;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RECT
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct POINT
-    {
-        public int X;
-        public int Y;
-    }
 
     public static bool IsProbeInvocation(string[] args) => UiaProbeProtocol.IsProbeInvocation(args);
 
@@ -116,7 +68,7 @@ internal static class UiaProbeCommand
             var hwnd =
                 foregroundWindowHandle.HasValue && foregroundWindowHandle.Value != 0
                     ? new IntPtr(foregroundWindowHandle.Value)
-                    : GetForegroundWindow();
+                    : NativeMethods.GetForegroundWindow();
             if (hwnd == IntPtr.Zero)
             {
                 return null;
@@ -143,29 +95,32 @@ internal static class UiaProbeCommand
     {
         var uiaTask = RunInMtaForUia(() =>
         {
-            var foreground = GetForegroundWindow();
+            var foreground = NativeMethods.GetForegroundWindow();
             if (foreground == IntPtr.Zero)
             {
                 return null;
             }
 
-            var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-            uint threadId = GetWindowThreadProcessId(foreground, out _);
+            var info = new NativeMethods.GUITHREADINFO
+            {
+                cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
+            };
+            uint threadId = NativeMethods.GetWindowThreadProcessId(foreground, out _);
             if (
                 threadId == 0
-                || !GetGUIThreadInfo(threadId, ref info)
+                || !NativeMethods.GetGUIThreadInfo(threadId, ref info)
                 || info.hwndCaret == IntPtr.Zero
             )
             {
                 return null;
             }
 
-            var point = new POINT
+            var point = new NativeMethods.POINT
             {
                 X = info.rcCaret.Left + 1,
                 Y = info.rcCaret.Top + ((info.rcCaret.Bottom - info.rcCaret.Top) / 2),
             };
-            ClientToScreen(info.hwndCaret, ref point);
+            NativeMethods.ClientToScreen(info.hwndCaret, ref point);
 
             var element = AutomationElement.FromPoint(new System.Windows.Point(point.X, point.Y));
             for (
@@ -200,7 +155,7 @@ internal static class UiaProbeCommand
             var hwnd =
                 foregroundWindowHandle.HasValue && foregroundWindowHandle.Value != 0
                     ? new IntPtr(foregroundWindowHandle.Value)
-                    : GetForegroundWindow();
+                    : NativeMethods.GetForegroundWindow();
             if (hwnd == IntPtr.Zero)
             {
                 return null;
@@ -261,26 +216,29 @@ internal static class UiaProbeCommand
 
     private static string? TryGetSelectionAtCaretPoint()
     {
-        var hwnd = GetForegroundWindow();
+        var hwnd = NativeMethods.GetForegroundWindow();
         if (hwnd == IntPtr.Zero)
         {
             return null;
         }
 
-        var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
-        uint threadId = GetWindowThreadProcessId(hwnd, out _);
-        if (threadId == 0 || !GetGUIThreadInfo(threadId, ref info))
+        var info = new NativeMethods.GUITHREADINFO
+        {
+            cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
+        };
+        uint threadId = NativeMethods.GetWindowThreadProcessId(hwnd, out _);
+        if (threadId == 0 || !NativeMethods.GetGUIThreadInfo(threadId, ref info))
         {
             return null;
         }
 
         IntPtr owner = info.hwndCaret != IntPtr.Zero ? info.hwndCaret : hwnd;
-        var point = new POINT
+        var point = new NativeMethods.POINT
         {
             X = info.rcCaret.Left + ((info.rcCaret.Right - info.rcCaret.Left) / 2),
             Y = info.rcCaret.Top + ((info.rcCaret.Bottom - info.rcCaret.Top) / 2),
         };
-        ClientToScreen(owner, ref point);
+        NativeMethods.ClientToScreen(owner, ref point);
 
         var element = AutomationElement.FromPoint(new System.Windows.Point(point.X, point.Y));
         return element == null ? null : TryReadSelectionFromElement(element);
@@ -334,7 +292,7 @@ internal static class UiaProbeCommand
             bool comInitialized = false;
             try
             {
-                int hr = CoInitializeEx(IntPtr.Zero, COINIT_MULTITHREADED);
+                int hr = NativeMethods.CoInitializeEx(IntPtr.Zero, NativeMethods.COINIT_MULTITHREADED);
                 comInitialized = hr == 0 || hr == 1;
                 tcs.SetResult(func());
             }
@@ -348,7 +306,7 @@ internal static class UiaProbeCommand
                 {
                     try
                     {
-                        CoUninitialize();
+                        NativeMethods.CoUninitialize();
                     }
                     catch { }
                 }
