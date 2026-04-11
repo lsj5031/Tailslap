@@ -1035,11 +1035,12 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             while (_isRecording && !ct.IsCancellationRequested)
             {
                 var streamingResult = await ProcessStreamingBuffersAsync(
-                    enableVAD,
-                    consecutiveSilenceMs,
-                    hasDetectedSpeech,
-                    silenceThresholdMs
-                ).ConfigureAwait(false);
+                        enableVAD,
+                        consecutiveSilenceMs,
+                        hasDetectedSpeech,
+                        silenceThresholdMs
+                    )
+                    .ConfigureAwait(false);
 
                 consecutiveSilenceMs = streamingResult.ConsecutiveSilenceMs;
                 hasDetectedSpeech = streamingResult.HasDetectedSpeech;
@@ -1208,7 +1209,9 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                             // DEBUG: Only log every 20th buffer to reduce noise (1 second of audio)
                             if (_totalBuffersProcessed % 20 == 0)
                             {
-                                string speechState = result.HasDetectedSpeech ? "ACTIVE" : "WAITING";
+                                string speechState = result.HasDetectedSpeech
+                                    ? "ACTIVE"
+                                    : "WAITING";
                                 string vadType = _useWebRtcVad ? "WebRTC" : "RMS";
                                 Logger.Log(
                                     $"VAD[DEBUG]: buf#{_totalBuffersProcessed} {vadType} speech={isSpeech} RMS={rms:F0} state={speechState} silence={result.ConsecutiveSilenceMs}ms"

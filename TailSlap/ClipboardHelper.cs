@@ -18,7 +18,7 @@ public sealed class ClipboardHelper
             return false;
         }
 
-        bool setTextSuccess = _clip.SetText(text);
+        bool setTextSuccess = await _clip.SetTextAsync(text).ConfigureAwait(false);
         if (!setTextSuccess)
         {
             return false;

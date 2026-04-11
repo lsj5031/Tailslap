@@ -124,6 +124,7 @@ public class TextTyper
         }
 
         var currentWindow = foregroundWindow ?? GetForegroundWindow();
+        bool windowChanged = false;
 
         lock (_stateLock)
         {
@@ -141,14 +142,7 @@ public class TextTyper
                 // Reset baseline on window change
                 _baselineText = "";
                 _targetWindow = currentWindow;
-
-                return new TypeResult
-                {
-                    WindowChanged = true,
-                    DeliverySuccess = false,
-                    Text = text,
-                    TextOnClipboard = _clip.SetText(text),
-                };
+                windowChanged = true;
             }
 
             // Capture target window if not set
@@ -156,6 +150,17 @@ public class TextTyper
             {
                 _targetWindow = currentWindow;
             }
+        }
+
+        if (windowChanged)
+        {
+            return new TypeResult
+            {
+                WindowChanged = true,
+                DeliverySuccess = false,
+                Text = text,
+                TextOnClipboard = await _clip.SetTextAsync(text).ConfigureAwait(false),
+            };
         }
 
         // Calculate corrections
@@ -190,7 +195,7 @@ public class TextTyper
             if (!autoPaste)
             {
                 // AutoPaste disabled — just put text on clipboard
-                textOnClipboard = _clip.SetText(text);
+                textOnClipboard = await _clip.SetTextAsync(text).ConfigureAwait(false);
                 deliverySuccess = textOnClipboard;
             }
             else if (useClipboard)
@@ -224,7 +229,9 @@ public class TextTyper
                         // Ensure text is at least on clipboard as fallback
                         if (!textOnClipboard)
                         {
-                            textOnClipboard = _clip.SetText(newText);
+                            textOnClipboard = await _clip
+                                .SetTextAsync(newText)
+                                .ConfigureAwait(false);
                         }
 
                         try
@@ -266,7 +273,7 @@ public class TextTyper
                     if (!deliverySuccess)
                     {
                         // All methods failed — ensure text is at least on clipboard
-                        textOnClipboard = _clip.SetText(newText);
+                        textOnClipboard = await _clip.SetTextAsync(newText).ConfigureAwait(false);
                         try
                         {
                             Logger.Log(

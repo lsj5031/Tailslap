@@ -410,7 +410,7 @@ public class TypelessControllerTests
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "hello");
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
 
         var controller = CreateController(
             transcriberFactoryMock: mockTranscriberFactory,
@@ -460,7 +460,7 @@ public class TypelessControllerTests
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "hello world");
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         var mockHistory = new Mock<IHistoryService>();
 
         var controller = CreateController(
@@ -517,7 +517,7 @@ public class TypelessControllerTests
         await controller.HandleKeyDownAsync();
         await controller.HandleKeyUpAsync();
 
-        mockClipboard.Verify(c => c.SetText(It.IsAny<string>()), Times.Never);
+        mockClipboard.Verify(c => c.SetTextAsync(It.IsAny<string>()), Times.Never);
         mockHistory.Verify(
             h => h.AppendTranscription(It.IsAny<string>(), It.IsAny<int>()),
             Times.Never
@@ -529,7 +529,7 @@ public class TypelessControllerTests
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "   ", "\n\n");
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         mockClipboard
             .Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>()))
             .Returns(Task.FromResult(true));
@@ -635,7 +635,7 @@ public class TypelessControllerTests
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "hello world");
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         var mockHistory = new Mock<IHistoryService>();
 
         var controller = CreateController(
@@ -661,7 +661,7 @@ public class TypelessControllerTests
         var configMock = CreateMockConfigService(autoEnhanceThresholdChars: 20);
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, rawText);
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         mockClipboard.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
         var mockHistory = new Mock<IHistoryService>();
         var mockRefiner = new Mock<ITextRefiner>();
@@ -697,7 +697,7 @@ public class TypelessControllerTests
         var configMock = CreateMockConfigService(autoEnhanceThresholdChars: 50);
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, rawText);
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         mockClipboard.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
         var mockHistory = new Mock<IHistoryService>();
         var mockRefinerFactory = new Mock<ITextRefinerFactory>();
@@ -751,7 +751,7 @@ public class TypelessControllerTests
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "hello ", "world");
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         var mockHistory = new Mock<IHistoryService>();
 
         var controller = CreateController(
@@ -788,7 +788,7 @@ public class TypelessControllerTests
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "test result");
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
 
         var controller = CreateController(
             transcriberFactoryMock: mockTranscriberFactory,
@@ -844,7 +844,7 @@ public class TypelessControllerTests
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "first result");
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
 
         var controller = CreateController(
             transcriberFactoryMock: mockTranscriberFactory,
@@ -897,7 +897,7 @@ public class TypelessControllerTests
             .Returns(mockTranscriber.Object);
 
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         var mockHistory = new Mock<IHistoryService>();
 
         var controller = CreateController(
@@ -969,7 +969,7 @@ public class TypelessControllerTests
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "test");
         var mockClipboard = new Mock<IClipboardService>();
-        mockClipboard.Setup(c => c.SetText(It.IsAny<string>())).Returns(true);
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
         var mockHistory = new Mock<IHistoryService>();
 
         var controller = CreateController(
