@@ -125,37 +125,41 @@ public class TextTyper
 
         var currentWindow = foregroundWindow ?? GetForegroundWindow();
 
+        bool windowChanged = false;
         lock (_stateLock)
         {
             // Check if foreground window changed
             if (_targetWindow != IntPtr.Zero && currentWindow != _targetWindow)
             {
-                try
-                {
-                    Logger.Log(
-                        $"TextTyper: Foreground window changed from 0x{_targetWindow:X} to 0x{currentWindow:X}, resetting baseline"
-                    );
-                }
-                catch { }
-
+                windowChanged = true;
                 // Reset baseline on window change
                 _baselineText = "";
                 _targetWindow = currentWindow;
-
-                return new TypeResult
-                {
-                    WindowChanged = true,
-                    DeliverySuccess = false,
-                    Text = text,
-                    TextOnClipboard = await _clip.SetTextAsync(text).ConfigureAwait(false),
-                };
             }
-
-            // Capture target window if not set
-            if (_targetWindow == IntPtr.Zero)
+            else if (_targetWindow == IntPtr.Zero)
             {
+                // Capture target window if not set
                 _targetWindow = currentWindow;
             }
+        }
+
+        if (windowChanged)
+        {
+            try
+            {
+                Logger.Log(
+                    $"TextTyper: Foreground window changed to 0x{currentWindow:X}, resetting baseline"
+                );
+            }
+            catch { }
+
+            return new TypeResult
+            {
+                WindowChanged = true,
+                DeliverySuccess = false,
+                Text = text,
+                TextOnClipboard = await _clip.SetTextAsync(text).ConfigureAwait(false),
+            };
         }
 
         // Calculate corrections
