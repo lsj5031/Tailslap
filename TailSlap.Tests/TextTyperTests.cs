@@ -794,6 +794,55 @@ public class TextTyperTests
 
     #endregion
 
+    #region Baseline Failure (VAL-TYPE-011)
+
+    [Fact]
+    public async Task TypeAsync_DeliveryFailure_DoesNotUpdateBaseline()
+    {
+        // Arrange - multiline text forces clipboard path; paste fails
+        var mockClip = CreateMockClipboardService();
+        mockClip.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(false);
+        mockClip.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
+        var typer = CreateTextTyper(mockClip, clipboardThreshold: 5);
+        SetBaselineText(typer, "");
+
+        // Act - multiline text uses clipboard which fails, no SendKeys fallback for multiline
+        var result = await typer.TypeAsync("line1\nline2");
+
+        // Assert - baseline stays empty because delivery failed
+        Assert.False(result.DeliverySuccess);
+        Assert.Equal("", GetBaselineText(typer));
+    }
+
+    [Fact]
+    public async Task TypeAsync_AfterFailure_RetriesFullUndeliveredPrefix()
+    {
+        // Arrange - use multiline text so SendKeys fallback is skipped
+        var mockClip = CreateMockClipboardService();
+        // First call: paste fails, no SendKeys fallback for multiline
+        mockClip
+            .SetupSequence(c => c.SetTextAndPasteAsync(It.IsAny<string>()))
+            .ReturnsAsync(false)
+            .ReturnsAsync(true);
+        mockClip.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
+        var typer = CreateTextTyper(mockClip, clipboardThreshold: 5);
+        SetBaselineText(typer, "");
+
+        // Act - first call fails (multiline, no SendKeys fallback)
+        var result1 = await typer.TypeAsync("hello\nworld");
+        Assert.False(result1.DeliverySuccess);
+        Assert.Equal("", GetBaselineText(typer));
+
+        // Act - second call succeeds, with longer multiline text
+        var result2 = await typer.TypeAsync("hello\nworld extra");
+        Assert.True(result2.DeliverySuccess);
+        // Since baseline was empty, newText should be the full text
+        Assert.Equal("hello\nworld extra", result2.NewText);
+        Assert.Equal("hello\nworld extra", GetBaselineText(typer));
+    }
+
+    #endregion
+
     #region Helper Methods (Reflection)
 
     private static void SetBaselineText(TextTyper typer, string text)

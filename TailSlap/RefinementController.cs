@@ -166,8 +166,13 @@ public sealed class RefinementController : IRefinementController
         }
         catch (Exception ex)
         {
-            NotificationService.ShowError("Refinement failed: " + ex.Message);
-            Logger.Log("Error: " + ex.Message);
+            var msg = ex.Message;
+            if (msg.Length > 200)
+                msg = msg.Substring(0, 200) + "…";
+            NotificationService.ShowError("Refinement failed: " + msg);
+            Logger.Log(
+                $"Refinement error: type={ex.GetType().Name}, msgLen={ex.Message?.Length ?? 0}"
+            );
             return false;
         }
     }

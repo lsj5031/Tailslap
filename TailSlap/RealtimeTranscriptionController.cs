@@ -4,7 +4,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace TailSlap;
 
@@ -14,6 +13,8 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private readonly IClipboardService _clip;
     private readonly IRealtimeTranscriberFactory _transcriberFactory;
     private readonly IAudioRecorderFactory _audioRecorderFactory;
+    private readonly IHistoryService _history;
+    private readonly ITextRefinerFactory _textRefinerFactory;
 
     private StreamingState _streamingState = StreamingState.Idle;
     private readonly object _streamingStateLock = new();
@@ -50,6 +51,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     );
     private readonly HashSet<string> _completedOrderedRealtimeItems = new(StringComparer.Ordinal);
     private long _nextOrderedRealtimeSequence = 0;
+    private readonly object _orderedRealtimeLock = new();
+    private int _queuePumpRunning = 0;
+    private PendingLegacyRealtimeUpdate? _pendingLegacyUpdate;
 
     public StreamingState State
     {
@@ -72,54 +76,25 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
 
-    [DllImport("user32.dll")]
-    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-    [DllImport("user32.dll")]
-    private static extern uint MapVirtualKey(uint uCode, uint uMapType);
-
-    private const int INPUT_KEYBOARD = 1;
-    private const uint KEYEVENTF_KEYUP = 0x0002;
-    private const uint KEYEVENTF_SCANCODE = 0x0008;
-    private const uint KEYEVENTF_UNICODE = 0x0004;
-    private const uint MAPVK_VK_TO_VSC = 0x0;
-    private const uint VK_BACK = 0x08;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct INPUT
-    {
-        public int type;
-        public INPUTUNION U;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    private struct INPUTUNION
-    {
-        [FieldOffset(0)]
-        public KEYBDINPUT ki;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KEYBDINPUT
-    {
-        public ushort wVk;
-        public ushort wScan;
-        public uint dwFlags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
-
     private sealed class PendingOrderedRealtimeUpdate
     {
         public required RealtimeTranscriptionUpdate Update { get; set; }
         public required long Sequence { get; init; }
     }
 
+    private sealed class PendingLegacyRealtimeUpdate
+    {
+        public required string Text { get; set; }
+        public required bool IsFinal { get; set; }
+    }
+
     public RealtimeTranscriptionController(
         IConfigService config,
         IClipboardService clip,
         IRealtimeTranscriberFactory transcriberFactory,
-        IAudioRecorderFactory audioRecorderFactory
+        IAudioRecorderFactory audioRecorderFactory,
+        IHistoryService history,
+        ITextRefinerFactory textRefinerFactory
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -128,6 +103,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             transcriberFactory ?? throw new ArgumentNullException(nameof(transcriberFactory));
         _audioRecorderFactory =
             audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
+        _history = history ?? throw new ArgumentNullException(nameof(history));
+        _textRefinerFactory =
+            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
     }
 
     public async Task TriggerStreamingAsync()
@@ -199,10 +177,14 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         _pendingLegacyFinalText = "";
         _allowRealtimeTextUpdates = true;
         _allowRealtimeInterimWhileStopping = false;
-        _pendingOrderedRealtimeUpdates.Clear();
-        _orderedRealtimeSequences.Clear();
-        _completedOrderedRealtimeItems.Clear();
-        _nextOrderedRealtimeSequence = 0;
+        lock (_orderedRealtimeLock)
+        {
+            _pendingOrderedRealtimeUpdates.Clear();
+            _orderedRealtimeSequences.Clear();
+            _completedOrderedRealtimeItems.Clear();
+            _nextOrderedRealtimeSequence = 0;
+            _pendingLegacyUpdate = null;
+        }
 
         try
         {
@@ -449,61 +431,150 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             return;
         }
 
-        if (!_orderedRealtimeSequences.TryGetValue(update.ItemId, out var sequence))
+        lock (_orderedRealtimeLock)
         {
-            sequence = _nextOrderedRealtimeSequence++;
-            _orderedRealtimeSequences[update.ItemId] = sequence;
+            if (!_orderedRealtimeSequences.TryGetValue(update.ItemId, out var sequence))
+            {
+                sequence = _nextOrderedRealtimeSequence++;
+                _orderedRealtimeSequences[update.ItemId] = sequence;
+            }
+
+            _pendingOrderedRealtimeUpdates[update.ItemId] = new PendingOrderedRealtimeUpdate
+            {
+                Update = update,
+                Sequence = sequence,
+            };
         }
 
-        _pendingOrderedRealtimeUpdates[update.ItemId] = new PendingOrderedRealtimeUpdate
-        {
-            Update = update,
-            Sequence = sequence,
-        };
-
-        TryProcessQueuedOrderedRealtimeUpdates();
+        _ = PumpOrderedQueueAsync();
     }
 
-    private void TryProcessQueuedOrderedRealtimeUpdates()
+    private async Task PumpOrderedQueueAsync()
     {
-        var textProcessingToken = _textProcessingCts?.Token ?? CancellationToken.None;
+        if (Interlocked.CompareExchange(ref _queuePumpRunning, 1, 0) != 0)
+            return;
 
-        while (true)
+        try
         {
-            PendingOrderedRealtimeUpdate? next = null;
-            foreach (var queuedUpdate in _pendingOrderedRealtimeUpdates.Values)
+            var textProcessingToken = _textProcessingCts?.Token ?? CancellationToken.None;
+
+            while (true)
             {
-                if (!CanProcessOrderedRealtimeUpdate(queuedUpdate.Update))
+                bool isLegacy = false;
+                bool isFinal = false;
+                string? itemId = null;
+                string text = "";
+
+                lock (_orderedRealtimeLock)
                 {
-                    continue;
+                    PendingOrderedRealtimeUpdate? next = null;
+                    foreach (var queuedUpdate in _pendingOrderedRealtimeUpdates.Values)
+                    {
+                        if (!CanProcessOrderedRealtimeUpdate(queuedUpdate.Update))
+                            continue;
+
+                        if (next == null || queuedUpdate.Sequence < next.Sequence)
+                            next = queuedUpdate;
+                    }
+
+                    if (next != null)
+                    {
+                        isLegacy = false;
+                        isFinal = next.Update.IsFinal;
+                        itemId = next.Update.ItemId!;
+                        text = next.Update.Text;
+
+                        if (
+                            !isFinal
+                            && _pendingOrderedRealtimeUpdates.TryGetValue(itemId, out var latest)
+                        )
+                        {
+                            text = latest.Update.Text;
+                        }
+                    }
+                    else if (_pendingLegacyUpdate != null)
+                    {
+                        // Take ownership so a concurrent enqueue can post a newer snapshot.
+                        isLegacy = true;
+                        isFinal = _pendingLegacyUpdate.IsFinal;
+                        text = _pendingLegacyUpdate.Text;
+                        itemId = null;
+                        _pendingLegacyUpdate = null;
+                    }
+                    else
+                    {
+                        return;
+                    }
                 }
 
-                if (next == null || queuedUpdate.Sequence < next.Sequence)
+                if (!isLegacy && !isFinal && itemId != null)
                 {
-                    next = queuedUpdate;
+                    lock (_orderedRealtimeLock)
+                    {
+                        if (_pendingOrderedRealtimeUpdates.TryGetValue(itemId, out var latest))
+                            text = latest.Update.Text;
+                    }
+                }
+                else if (isLegacy && !isFinal)
+                {
+                    // Coalesce any newer legacy interim/final that arrived after take.
+                    lock (_orderedRealtimeLock)
+                    {
+                        if (_pendingLegacyUpdate != null)
+                        {
+                            text = _pendingLegacyUpdate.Text;
+                            isFinal = _pendingLegacyUpdate.IsFinal;
+                            _pendingLegacyUpdate = null;
+                        }
+                    }
+                }
+
+                await ProcessTranscriptionAsync(text, isFinal, itemId, textProcessingToken);
+
+                if (!isFinal)
+                {
+                    // Ordered interims stay in the map for coalescing; exit so the next
+                    // event restarts the pump. Legacy interims were already taken above.
+                    return;
+                }
+
+                if (!isLegacy && itemId != null)
+                {
+                    lock (_orderedRealtimeLock)
+                    {
+                        _completedOrderedRealtimeItems.Add(itemId);
+                        _pendingOrderedRealtimeUpdates.Remove(itemId);
+                        _orderedRealtimeSequences.Remove(itemId);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _queuePumpRunning, 0);
+
+            // If work was enqueued while the pump was winding down, restart.
+            // Only consider legacy pending or ordered *finals* so sticky ordered
+            // interims (left in the map on purpose) do not spin forever.
+            bool shouldRestart;
+            lock (_orderedRealtimeLock)
+            {
+                shouldRestart = _pendingLegacyUpdate != null;
+                if (!shouldRestart)
+                {
+                    foreach (var queued in _pendingOrderedRealtimeUpdates.Values)
+                    {
+                        if (queued.Update.IsFinal && CanProcessOrderedRealtimeUpdate(queued.Update))
+                        {
+                            shouldRestart = true;
+                            break;
+                        }
+                    }
                 }
             }
 
-            if (next == null)
-            {
-                return;
-            }
-
-            _ = ProcessTranscriptionAsync(
-                next.Update.Text,
-                next.Update.IsFinal,
-                next.Update.ItemId,
-                textProcessingToken
-            );
-
-            if (!next.Update.IsFinal)
-            {
-                return;
-            }
-
-            _completedOrderedRealtimeItems.Add(next.Update.ItemId!);
-            _pendingOrderedRealtimeUpdates.Remove(next.Update.ItemId!);
-            _orderedRealtimeSequences.Remove(next.Update.ItemId!);
+            if (shouldRestart)
+                _ = PumpOrderedQueueAsync();
         }
     }
 
@@ -526,8 +597,17 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         ResolvePendingLegacyFinal(text);
         _lastReceivedRealtimeText = text;
 
-        var textProcessingToken = _textProcessingCts?.Token ?? CancellationToken.None;
-        _ = ProcessTranscriptionAsync(text, isFinal, null, textProcessingToken);
+        lock (_orderedRealtimeLock)
+        {
+            // Coalesce to the latest legacy snapshot; pump serializes application.
+            _pendingLegacyUpdate = new PendingLegacyRealtimeUpdate
+            {
+                Text = text,
+                IsFinal = isFinal,
+            };
+        }
+
+        _ = PumpOrderedQueueAsync();
     }
 
     private void ResolvePendingLegacyFinal(string nextText)
@@ -812,148 +892,19 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             return;
         }
 
-        try
-        {
-            var scanCode = (ushort)MapVirtualKey(VK_BACK, MAPVK_VK_TO_VSC);
-            if (scanCode == 0)
-            {
-                scanCode = 0x0E;
-            }
-
-            var inputs = new INPUT[count * 2];
-            for (int i = 0; i < count; i++)
-            {
-                int downIndex = i * 2;
-                inputs[downIndex] = new INPUT
-                {
-                    type = INPUT_KEYBOARD,
-                    U = new INPUTUNION
-                    {
-                        ki = new KEYBDINPUT { wScan = scanCode, dwFlags = KEYEVENTF_SCANCODE },
-                    },
-                };
-                inputs[downIndex + 1] = new INPUT
-                {
-                    type = INPUT_KEYBOARD,
-                    U = new INPUTUNION
-                    {
-                        ki = new KEYBDINPUT
-                        {
-                            wScan = scanCode,
-                            dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
-                        },
-                    },
-                };
-            }
-
-            var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-            if (sent != inputs.Length)
-            {
-                Logger.Log(
-                    $"SendBackspace: SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
-                );
-                SendKeys.SendWait("{BS " + count + "}");
-                SendKeys.Flush();
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"SendBackspace failed: {ex.Message}");
-        }
+        NativeInputSimulator.SendBackspace(count);
     }
 
     private static void TypeTextDirectly(string text)
     {
-        if (string.IsNullOrEmpty(text))
-            return;
-
         try
         {
-            var inputs = BuildUnicodeInputs(text);
-            var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-            if (sent == inputs.Length)
-            {
-                return;
-            }
-
-            Logger.Log(
-                $"TypeTextDirectly: Unicode SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
-            );
-
-            var escaped = new System.Text.StringBuilder();
-            foreach (char c in text)
-            {
-                if (
-                    c == '+'
-                    || c == '^'
-                    || c == '%'
-                    || c == '~'
-                    || c == '('
-                    || c == ')'
-                    || c == '{'
-                    || c == '}'
-                    || c == '['
-                    || c == ']'
-                )
-                {
-                    escaped.Append('{').Append(c).Append('}');
-                }
-                else if (c == '\n')
-                {
-                    escaped.Append("{ENTER}");
-                }
-                else if (c == '\r') { }
-                else
-                {
-                    escaped.Append(c);
-                }
-            }
-
-            SendKeys.SendWait(escaped.ToString());
-            SendKeys.Flush();
+            NativeInputSimulator.TypeTextDirectly(text);
         }
         catch (Exception ex)
         {
             Logger.Log($"TypeTextDirectly failed: {ex.Message}");
         }
-    }
-
-    private static INPUT[] BuildUnicodeInputs(string text)
-    {
-        var inputs = new INPUT[text.Length * 2];
-        int inputIndex = 0;
-
-        foreach (char c in text)
-        {
-            inputs[inputIndex++] = new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                U = new INPUTUNION
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = 0,
-                        wScan = c,
-                        dwFlags = KEYEVENTF_UNICODE,
-                    },
-                },
-            };
-            inputs[inputIndex++] = new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                U = new INPUTUNION
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = 0,
-                        wScan = c,
-                        dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-                    },
-                },
-            };
-        }
-
-        return inputs;
     }
 
     private async void HandleRealtimeError(string error)
@@ -1083,6 +1034,16 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         try
         {
             Logger.Log("CleanupAsync: Cleaning up");
+
+            var transcriber = _realtimeTranscriber;
+            if (transcriber != null)
+            {
+                transcriber.OnTranscription -= HandleRealtimeTranscriptionEvent;
+                transcriber.OnError -= HandleRealtimeError;
+                transcriber.OnDisconnected -= HandleRealtimeDisconnected;
+                transcriber.OnConnectionLost -= HandleRealtimeConnectionLost;
+            }
+
             _allowRealtimeTextUpdates = false;
             _allowRealtimeInterimWhileStopping = false;
             _textProcessingCts?.Cancel();
@@ -1099,10 +1060,15 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             _currentRealtimeItemId = null;
             _legacyFinalPending = false;
             _pendingLegacyFinalText = "";
-            _pendingOrderedRealtimeUpdates.Clear();
-            _orderedRealtimeSequences.Clear();
-            _completedOrderedRealtimeItems.Clear();
-            _nextOrderedRealtimeSequence = 0;
+
+            lock (_orderedRealtimeLock)
+            {
+                _pendingOrderedRealtimeUpdates.Clear();
+                _orderedRealtimeSequences.Clear();
+                _completedOrderedRealtimeItems.Clear();
+                _nextOrderedRealtimeSequence = 0;
+                _pendingLegacyUpdate = null;
+            }
 
             lock (_streamingStateLock)
             {
@@ -1111,7 +1077,6 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             _transcriptionLock.Release();
 
-            var transcriber = _realtimeTranscriber;
             var recorder = _realtimeRecorder;
             var cts = _transcriberCts;
             var textProcessingCts = _textProcessingCts;
@@ -1123,11 +1088,6 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             if (transcriber != null)
             {
-                transcriber.OnTranscription -= HandleRealtimeTranscriptionEvent;
-                transcriber.OnError -= HandleRealtimeError;
-                transcriber.OnDisconnected -= HandleRealtimeDisconnected;
-                transcriber.OnConnectionLost -= HandleRealtimeConnectionLost;
-
                 try
                 {
                     await transcriber.DisconnectAsync();
@@ -1152,13 +1112,82 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 _streamingBuffer.Position = 0;
             }
             _streamingTargetWindow = IntPtr.Zero;
+
+            var sessionStart = _streamingStartTime;
             _streamingStartTime = DateTime.MinValue;
 
-            if (
-                !string.IsNullOrEmpty(finalTranscriptionText)
-                || !string.IsNullOrEmpty(finalTypedText)
-            )
+            // Committed finals live in finalTypedText; in-flight residual in finalTranscriptionText.
+            var sessionText = string.Concat(finalTypedText, finalTranscriptionText);
+
+            if (!string.IsNullOrEmpty(sessionText))
             {
+                var durationMs =
+                    sessionStart == DateTime.MinValue
+                        ? 0
+                        : (int)Math.Max(0, (DateTime.UtcNow - sessionStart).TotalMilliseconds);
+
+                var rawSessionText = sessionText;
+                try
+                {
+                    var cfg = _config.CreateValidatedCopy();
+                    sessionText = await TranscriptionAutoEnhancer
+                        .MaybeEnhanceAsync(sessionText, cfg, _textRefinerFactory)
+                        .ConfigureAwait(false);
+
+                    if (
+                        !string.Equals(rawSessionText, sessionText, StringComparison.Ordinal)
+                        && !string.IsNullOrWhiteSpace(sessionText)
+                    )
+                    {
+                        // B2: clipboard + notify — safer than rewriting already-typed realtime text.
+                        try
+                        {
+                            await _clip.SetTextAsync(sessionText).ConfigureAwait(false);
+                            NotificationService.ShowInfo(
+                                "Enhanced transcript is on the clipboard (Ctrl+V to paste)."
+                            );
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log(
+                                $"RealtimeTranscriptionController: Failed to place enhanced text on clipboard: {ex.GetType().Name}"
+                            );
+                        }
+
+                        try
+                        {
+                            _history.Append(rawSessionText, sessionText, cfg.Llm.Model);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log(
+                                $"RealtimeTranscriptionController: Refinement history save failed: {ex.GetType().Name}"
+                            );
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log(
+                        $"RealtimeTranscriptionController: Auto-enhance failed: {ex.GetType().Name}"
+                    );
+                    sessionText = rawSessionText;
+                }
+
+                try
+                {
+                    _history.AppendTranscription(rawSessionText, durationMs);
+                    Logger.Log(
+                        $"RealtimeTranscriptionController: History saved, len={rawSessionText.Length}, duration={durationMs}ms"
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log(
+                        $"RealtimeTranscriptionController: History save failed: {ex.GetType().Name}"
+                    );
+                }
+
                 NotificationService.ShowSuccess("Real-time transcription complete.");
             }
 

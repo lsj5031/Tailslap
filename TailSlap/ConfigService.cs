@@ -138,7 +138,14 @@ public sealed class TranscriberConfig
     public int AutoEnhanceThresholdChars { get; set; } = 100; // Minimum chars to trigger enhancement
 
     // Real-time transcription provider: "custom" (glm-asr-docker) or "openai" (Realtime API)
-    public string RealtimeProvider { get; set; } = "custom";
+    // Operational default for local glm-asr / OpenAI-protocol stacks is "openai"; "custom" remains supported.
+    public string RealtimeProvider { get; set; } = "openai";
+
+    /// <summary>BCP-47 language hint for OpenAI-protocol realtime (empty = provider auto-detect).</summary>
+    public string Language { get; set; } = "";
+
+    /// <summary>Optional vocabulary / domain prompt for OpenAI-protocol realtime session.</summary>
+    public string RealtimeSessionPrompt { get; set; } = "";
 
     [JsonIgnore]
     public string? ApiKey
@@ -289,6 +296,8 @@ public sealed class TranscriberConfig
             WebSocketHeartbeatIntervalSeconds = WebSocketHeartbeatIntervalSeconds,
             WebSocketHeartbeatTimeoutSeconds = WebSocketHeartbeatTimeoutSeconds,
             RealtimeProvider = RealtimeProvider,
+            Language = Language,
+            RealtimeSessionPrompt = RealtimeSessionPrompt,
         };
     }
 }
@@ -539,7 +548,7 @@ public sealed class ConfigService : IConfigService, IDisposable
         // Validate transcriber settings
         if (!IsValidUrl(cfg.Transcriber.BaseUrl))
         {
-            cfg.Transcriber.BaseUrl = "http://localhost:18000/v1/audio/transcriptions";
+            cfg.Transcriber.BaseUrl = "http://localhost:18000/v1";
         }
 
         if (!IsValidModelName(cfg.Transcriber.Model))

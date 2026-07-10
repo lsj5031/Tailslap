@@ -171,8 +171,8 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
             input_audio_transcription = new
             {
                 model,
-                prompt = string.Empty,
-                language = string.Empty,
+                prompt = _config.RealtimeSessionPrompt ?? string.Empty,
+                language = _config.Language ?? string.Empty,
             },
             turn_detection = new
             {

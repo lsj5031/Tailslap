@@ -47,13 +47,13 @@ Be respectful, inclusive, and constructive in all interactions.
    - Ensure code compiles without warnings
    - No hardcoded secrets, API keys, or sensitive information
    - Format code consistently (VS Code format recommended)
-   - Automated tests will run via GitHub Actions (build.yml)
+   - Automated tests run via the `test` job in `.github/workflows/build.yml`
 
 6. **Submit PR**:
    - Reference related issues: "Fixes #123"
    - Describe what changed and why
    - Include any configuration examples if adding new features
-   - GitHub Actions will automatically build and test your PR
+   - GitHub Actions will automatically run the `test` job and build your PR
 
 ## Development Setup
 

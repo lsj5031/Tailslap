@@ -267,7 +267,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                     Logger.Log("JSON parsed successfully");
                     var text = ExtractTextFromResponse(payload.RootElement);
                     Logger.Log(
-                        $"Extracted text from response: {text.Substring(0, Math.Min(100, text.Length))}"
+                        $"Extracted text from response: len={text.Length}, sha256={Hashing.Sha256Hex(text)}"
                     );
                     return text;
                 }
@@ -278,9 +278,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                         TranscriberErrorType.ParseError,
                         "Remote API returned invalid JSON",
                         e,
-                        responseText: responseText.Length > 500
-                            ? responseText.Substring(0, 500)
-                            : responseText
+                        responseText: FingerprintPayload(responseText)
                     );
                 }
             }
@@ -436,12 +434,12 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 var errorText = await response
                     .Content.ReadAsStringAsync(timeoutCts.Token)
                     .ConfigureAwait(false);
-                Logger.Log($"Streaming error response: {errorText}");
+                Logger.Log($"Streaming error response: {FingerprintPayload(errorText)}");
                 throw new TranscriberException(
                     TranscriberErrorType.HttpError,
                     $"Remote API returned error (HTTP {(int)response.StatusCode})",
                     statusCode: (int)response.StatusCode,
-                    responseText: errorText.Length > 500 ? errorText.Substring(0, 500) : errorText
+                    responseText: FingerprintPayload(errorText)
                 );
             }
 
@@ -505,11 +503,11 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                     // Check for error
                     if (text.StartsWith("[Error:", StringComparison.Ordinal))
                     {
-                        Logger.Log($"Streaming error: {text}");
+                        Logger.Log($"Streaming error chunk: {FingerprintPayload(text)}");
                         throw new TranscriberException(
                             TranscriberErrorType.HttpError,
-                            text,
-                            responseText: text
+                            "Remote streaming error",
+                            responseText: FingerprintPayload(text)
                         );
                     }
 
@@ -535,11 +533,11 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
 
                     if (text.StartsWith("[Error:", StringComparison.Ordinal))
                     {
-                        Logger.Log($"Streaming error: {text}");
+                        Logger.Log($"Streaming error chunk: {FingerprintPayload(text)}");
                         throw new TranscriberException(
                             TranscriberErrorType.HttpError,
-                            text,
-                            responseText: text
+                            "Remote streaming error",
+                            responseText: FingerprintPayload(text)
                         );
                     }
 
@@ -768,7 +766,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         try
         {
             Logger.Log(
-                $"ExtractTextFromResponse: Could not find text in response structure: {response.ToString()[..Math.Min(500, response.ToString().Length)]}"
+                $"ExtractTextFromResponse: Could not find text in response structure: {FingerprintPayload(response.ToString())}"
             );
         }
         catch { }
@@ -776,9 +774,12 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         throw new TranscriberException(
             TranscriberErrorType.ParseError,
             "API response does not contain transcription text in any recognized format",
-            responseText: response.ToString()
+            responseText: FingerprintPayload(response.ToString())
         );
     }
+
+    private static string FingerprintPayload(string? s) =>
+        string.IsNullOrEmpty(s) ? "" : $"len={s.Length}, sha256={Hashing.Sha256Hex(s)}";
 
     private static byte[] CreateSilenceWavBytes(float durationSeconds)
     {

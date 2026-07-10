@@ -82,7 +82,7 @@ public class OpenAIRealtimeTranscriberTests
     public void Config_DefaultProvider_IsCustom()
     {
         var config = new TranscriberConfig();
-        Assert.Equal("custom", config.RealtimeProvider);
+        Assert.Equal("openai", config.RealtimeProvider);
     }
 
     [Fact]
@@ -92,9 +92,13 @@ public class OpenAIRealtimeTranscriberTests
         {
             RealtimeProvider = "openai",
             BaseUrl = "https://api.openai.com/v1",
+            Language = "en",
+            RealtimeSessionPrompt = "tailslap vocabulary",
         };
         var clone = config.Clone();
         Assert.Equal("openai", clone.RealtimeProvider);
+        Assert.Equal("en", clone.Language);
+        Assert.Equal("tailslap vocabulary", clone.RealtimeSessionPrompt);
     }
 
     [Fact]

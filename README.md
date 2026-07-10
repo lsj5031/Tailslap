@@ -45,9 +45,8 @@
 - **Internet connection** for LLM processing (local Ollama doesn't require internet)
 ### Real-time Backend Requirements
 - **WebSocket Streaming**: Requires a WebSocket-compatible transcription service
-- **Custom Provider**: Uses `ws://localhost:18000/v1/audio/transcriptions/stream` and TailSlap's richer custom streaming protocol
-- **OpenAI Provider**: Uses `ws://localhost:18000/v1/realtime?intent=transcription` for OpenAI-compatible realtime transcription
-- **Recommended**: [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker) for both streaming modes
+- **Recommended provider**: `openai` — OpenAI-compatible `ws://…/v1/realtime?intent=transcription` (default; works with [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
+- **Legacy custom provider**: `custom` — `ws://…/v1/audio/transcriptions/stream` (still supported)
 - **Fallback**: Standard HTTP transcription also supported
 
 ## Usage
@@ -78,8 +77,9 @@
 3. Automatic silence detection can stop recording when you pause speaking, or you can stop manually
 
 **Advanced Settings:**
-- **Stream Results**: For toggle transcription, type post-recording chunks as they arrive from the HTTP streaming endpoint
-- **Realtime Provider**: Choose `custom` for TailSlap's richer streaming protocol or `openai` for OpenAI-compatible `/v1/realtime?intent=transcription`
+- **Stream Results**: For **toggle** transcription only — stream post-recording HTTP chunks into the app as they arrive. Live speech-to-text while talking uses the **Realtime** hotkey, not this checkbox.
+- **Realtime Provider**: Prefer `openai` (default). `custom` remains available for older stream endpoints.
+- **ASR Language / session prompt**: Optional OpenAI-protocol session hints (blank language = auto-detect)
 - **WebSocket Endpoint**: Built automatically from the base API endpoint for the selected realtime provider
 - **Silence Detection**: Configure threshold (default: 2000ms) to auto-stop recording
 - **Microphone Selection**: Choose preferred microphone device in Settings
@@ -132,8 +132,10 @@ You can edit this file directly or use the Settings dialog in the system tray me
 - `EnableVAD`: Voice Activity Detection (default: `true`)
 - `SilenceThresholdMs`: Silence detection threshold in milliseconds (default: `2000`)
 - `PreferredMicrophoneIndex`: Microphone device selection (default: `-1` for system default)
-- `StreamResults`: Stream post-recording transcription chunks into the target app as they arrive (default: `false`)
-- `RealtimeProvider`: `custom` for TailSlap's native protocol or `openai` for OpenAI-compatible realtime transcription (default: `custom`)
+- `StreamResults`: Stream HTTP chunks for toggle transcription only (default: `false`). Live streaming uses the realtime hotkey.
+- `RealtimeProvider`: `openai` (default, recommended) or `custom` (legacy stream URL)
+- `Language`: Optional BCP-47 hint for OpenAI-protocol realtime (default empty = auto)
+- `RealtimeSessionPrompt`: Optional session vocabulary hint for OpenAI-protocol realtime
 - `WebSocketUrl`: Auto-constructed WebSocket endpoint for the selected streaming provider
 
 #### Hotkey Configuration

@@ -13,7 +13,25 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 5
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
+
+    - name: Setup .NET 9
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Test
+      run: dotnet test -c Release --verbosity normal
+
   build-framework-dependent:
+    needs: test
     runs-on: windows-latest
     timeout-minutes: 5
 
@@ -43,6 +61,7 @@ jobs:
         if-no-files-found: error
 
   build-self-contained:
+    needs: test
     runs-on: windows-latest
     timeout-minutes: 5
     

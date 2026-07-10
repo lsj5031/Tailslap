@@ -1,9 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace TailSlap;
 
@@ -25,43 +23,6 @@ public class TextTyper
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-    [DllImport("user32.dll")]
-    private static extern uint MapVirtualKey(uint uCode, uint uMapType);
-
-    private const int INPUT_KEYBOARD = 1;
-    private const uint KEYEVENTF_KEYUP = 0x0002;
-    private const uint KEYEVENTF_SCANCODE = 0x0008;
-    private const uint KEYEVENTF_UNICODE = 0x0004;
-    private const uint MAPVK_VK_TO_VSC = 0x0;
-    private const uint VK_BACK = 0x08;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct INPUT
-    {
-        public int type;
-        public INPUTUNION U;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    private struct INPUTUNION
-    {
-        [FieldOffset(0)]
-        public KEYBDINPUT ki;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KEYBDINPUT
-    {
-        public ushort wVk;
-        public ushort wScan;
-        public uint dwFlags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-    }
 
     #endregion
 
@@ -295,10 +256,14 @@ public class TextTyper
             deliverySuccess = true;
         }
 
-        // Update baseline
-        lock (_stateLock)
+        // Update baseline only when delivery succeeded so a later chunk
+        // retries undelivered text via common-prefix logic.
+        if (deliverySuccess)
         {
-            _baselineText = text;
+            lock (_stateLock)
+            {
+                _baselineText = text;
+            }
         }
 
         return new TypeResult
@@ -345,39 +310,7 @@ public class TextTyper
     /// </summary>
     public static string EscapeForSendKeys(string text)
     {
-        if (string.IsNullOrEmpty(text))
-            return "";
-
-        var escaped = new StringBuilder(text.Length * 2);
-        foreach (char c in text)
-        {
-            switch (c)
-            {
-                case '+':
-                case '^':
-                case '%':
-                case '~':
-                case '(':
-                case ')':
-                case '[':
-                case ']':
-                case '{':
-                case '}':
-                    escaped.Append('{').Append(c).Append('}');
-                    break;
-                case '\n':
-                    escaped.Append("{ENTER}");
-                    break;
-                case '\r':
-                    // Strip carriage return — \r\n becomes just {ENTER}
-                    break;
-                default:
-                    escaped.Append(c);
-                    break;
-            }
-        }
-
-        return escaped.ToString();
+        return NativeInputSimulator.EscapeForSendKeys(text);
     }
 
     /// <summary>
@@ -520,63 +453,7 @@ public class TextTyper
             return;
         }
 
-        try
-        {
-            var scanCode = (ushort)MapVirtualKey(VK_BACK, MAPVK_VK_TO_VSC);
-            if (scanCode == 0)
-            {
-                scanCode = 0x0E; // Standard backspace scan code
-            }
-
-            var inputs = new INPUT[count * 2];
-            for (int i = 0; i < count; i++)
-            {
-                int downIndex = i * 2;
-                inputs[downIndex] = new INPUT
-                {
-                    type = INPUT_KEYBOARD,
-                    U = new INPUTUNION
-                    {
-                        ki = new KEYBDINPUT { wScan = scanCode, dwFlags = KEYEVENTF_SCANCODE },
-                    },
-                };
-                inputs[downIndex + 1] = new INPUT
-                {
-                    type = INPUT_KEYBOARD,
-                    U = new INPUTUNION
-                    {
-                        ki = new KEYBDINPUT
-                        {
-                            wScan = scanCode,
-                            dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
-                        },
-                    },
-                };
-            }
-
-            var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-            if (sent != inputs.Length)
-            {
-                try
-                {
-                    Logger.Log(
-                        $"TextTyper: SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
-                    );
-                }
-                catch { }
-
-                SendKeys.SendWait("{BS " + count + "}");
-                SendKeys.Flush();
-            }
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                Logger.Log($"TextTyper: SendBackspace failed: {ex.Message}");
-            }
-            catch { }
-        }
+        NativeInputSimulator.SendBackspace(count);
     }
 
     internal virtual void TypeTextDirectly(string text)
@@ -584,60 +461,7 @@ public class TextTyper
         if (string.IsNullOrEmpty(text))
             return;
 
-        var inputs = BuildUnicodeInputs(text);
-        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-        if (sent != inputs.Length)
-        {
-            try
-            {
-                Logger.Log(
-                    $"TextTyper: Unicode SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
-                );
-            }
-            catch { }
-
-            var escaped = EscapeForSendKeys(text);
-            SendKeys.SendWait(escaped);
-            SendKeys.Flush();
-        }
-    }
-
-    private static INPUT[] BuildUnicodeInputs(string text)
-    {
-        var inputs = new INPUT[text.Length * 2];
-        int inputIndex = 0;
-
-        foreach (char c in text)
-        {
-            inputs[inputIndex++] = new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                U = new INPUTUNION
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = 0,
-                        wScan = c,
-                        dwFlags = KEYEVENTF_UNICODE,
-                    },
-                },
-            };
-            inputs[inputIndex++] = new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                U = new INPUTUNION
-                {
-                    ki = new KEYBDINPUT
-                    {
-                        wVk = 0,
-                        wScan = c,
-                        dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-                    },
-                },
-            };
-        }
-
-        return inputs;
+        NativeInputSimulator.TypeTextDirectly(text);
     }
 
     #endregion

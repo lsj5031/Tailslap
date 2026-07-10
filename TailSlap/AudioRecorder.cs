@@ -1458,11 +1458,6 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
     }
 
-    private void AttemptStreamingBufferRecovery(double gapMs)
-    {
-        AttemptStreamingBufferRecoveryAsync(gapMs).GetAwaiter().GetResult();
-    }
-
     public void StopRecording()
     {
         _isRecording = false;

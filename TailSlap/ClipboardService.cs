@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Windows.Automation;
 using System.Windows.Forms;
 
 public sealed class ClipboardService : IClipboardService
@@ -11,11 +10,6 @@ public sealed class ClipboardService : IClipboardService
     // Performance metrics
     private static readonly System.Collections.Generic.Dictionary<string, int> _captureStats =
         new();
-    private static readonly System.Collections.Generic.Dictionary<
-        string,
-        IntPtr
-    > _windowHandleCache = new();
-    private static DateTime _lastCacheClear = DateTime.Now;
 
     // UI thread context for clipboard operations (clipboard requires STA thread)
     private static SynchronizationContext? _uiContext;
@@ -246,40 +240,6 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
-    // "Canary Probe" to check if UIA is responsive for a window
-    private static bool IsUiaResponsive(IntPtr hWnd)
-    {
-        // Use a very short timeout for the probe
-        using var cts = new CancellationTokenSource(50);
-        try
-        {
-            var task = RunInMtaForUIA(
-                () =>
-                {
-                    try
-                    {
-                        var el = AutomationElement.FromHandle(hWnd);
-                        // Just accessing a lightweight property to see if the provider responds
-                        var id = el.Current.AutomationId;
-                        return true;
-                    }
-                    catch
-                    {
-                        return false;
-                    }
-                },
-                cts
-            );
-
-            task.Wait(cts.Token);
-            return task.Result;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     private static void LogClipboardState(string prefix)
     {
         try
@@ -325,7 +285,6 @@ public sealed class ClipboardService : IClipboardService
     public string CaptureSelectionOrClipboard(bool useClipboardFallback = false)
     {
         var sw = Stopwatch.StartNew();
-        ClearCacheIfNeeded();
 
         try
         {
@@ -1345,123 +1304,6 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
-    private static string? TryGetSelectionViaUIA(CancellationTokenSource? cts = null)
-    {
-        // Use MTA thread for UI Automation as per Microsoft recommendations.
-        // AutomationElement instances do not implement IDisposable and require no explicit Dispose/using.
-        // This prevents COM marshaling crashes with applications like Firefox.
-        var uiaTask = RunInMtaForUIA(() =>
-        {
-            try
-            {
-                var focused = AutomationElement.FocusedElement;
-                if (focused == null)
-                    return null;
-
-                try
-                {
-                    if (
-                        focused.TryGetCurrentPattern(TextPattern.Pattern, out var tpObj)
-                        && tpObj is TextPattern tp
-                    )
-                    {
-                        var sel = tp.GetSelection();
-                        if (sel != null && sel.Length > 0)
-                        {
-                            var text = sel[0].GetText(int.MaxValue);
-                            return string.IsNullOrWhiteSpace(text) ? null : text;
-                        }
-                    }
-                    if (
-                        focused.TryGetCurrentPattern(ValuePattern.Pattern, out var vpObj)
-                        && vpObj is ValuePattern vp
-                    )
-                    {
-                        var v = vp.Current.Value;
-                        return string.IsNullOrWhiteSpace(v) ? null : v;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    try
-                    {
-                        Logger.Log($"UIA pattern access failed: {ex.GetType().Name}: {ex.Message}");
-                    }
-                    catch { }
-                    return null;
-                }
-
-                // Search within the active window for a focused text provider
-                var hwnd = NativeMethods.GetForegroundWindow();
-                if (hwnd != IntPtr.Zero)
-                {
-                    try
-                    {
-                        var root = AutomationElement.FromHandle(hwnd);
-                        if (root != null)
-                        {
-                            var cond = new PropertyCondition(
-                                AutomationElement.IsTextPatternAvailableProperty,
-                                true
-                            );
-                            var el = root.FindFirst(TreeScope.Subtree, cond);
-                            if (
-                                el != null
-                                && el.TryGetCurrentPattern(TextPattern.Pattern, out var tpo)
-                                && tpo is TextPattern tp2
-                            )
-                            {
-                                var sel2 = tp2.GetSelection();
-                                if (sel2 != null && sel2.Length > 0)
-                                {
-                                    var t2 = sel2[0].GetText(int.MaxValue);
-                                    if (!string.IsNullOrWhiteSpace(t2))
-                                        return t2;
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        try
-                        {
-                            Logger.Log(
-                                $"UIA subtree search failed: {ex.GetType().Name}: {ex.Message}"
-                            );
-                        }
-                        catch { }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    Logger.Log(
-                        $"UIA focused element access failed: {ex.GetType().Name}: {ex.Message}"
-                    );
-                }
-                catch { }
-            }
-            return null;
-        });
-
-        // Wait for completion with timeout
-        if (uiaTask.Wait(System.TimeSpan.FromMilliseconds(800)))
-        {
-            return uiaTask.Result;
-        }
-        else
-        {
-            try
-            {
-                Logger.Log("UIA operation timed out after 800ms");
-            }
-            catch { }
-            return null;
-        }
-    }
-
     private static UiaProbeInvocationResult TryGetSelectionViaUiaProbe(
         UiaProbeMode mode,
         IntPtr foregroundWindow,
@@ -1480,121 +1322,6 @@ public sealed class ClipboardService : IClipboardService
         }
 
         return result;
-    }
-
-    private static string? TryGetSelectionViaUIAFromCaret(CancellationTokenSource? cts = null)
-    {
-        // Use MTA thread for UI Automation as per Microsoft recommendations
-        var uiaTask = RunInMtaForUIA(() =>
-        {
-            try
-            {
-                var fg = NativeMethods.GetForegroundWindow();
-                var info = new NativeMethods.GUITHREADINFO
-                {
-                    cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
-                };
-                uint threadId = NativeMethods.GetWindowThreadProcessId(fg, out uint tid);
-                if (threadId == 0 || !NativeMethods.GetGUIThreadInfo(threadId, ref info))
-                    return null;
-                if (info.hwndCaret == IntPtr.Zero)
-                    return null;
-                var rc = info.rcCaret;
-                var pt = new NativeMethods.POINT
-                {
-                    X = rc.Left + 1,
-                    Y = rc.Top + (rc.Bottom - rc.Top) / 2,
-                };
-                try
-                {
-                    var logStr =
-                        $"Caret hwnd={DescribeWindow(info.hwndCaret)}, rc=({rc.Left},{rc.Top},{rc.Right},{rc.Bottom})";
-                    Logger.Log(logStr);
-                }
-                catch { }
-                try
-                {
-                    NativeMethods.ClientToScreen(info.hwndCaret, ref pt);
-                }
-                catch { }
-                System.Windows.Point wpt = new(pt.X, pt.Y);
-                AutomationElement? el = null;
-                try
-                {
-                    el = AutomationElement.FromPoint(wpt);
-                }
-                catch (Exception ex)
-                {
-                    try
-                    {
-                        Logger.Log($"UIA FromPoint failed: {ex.GetType().Name}: {ex.Message}");
-                    }
-                    catch { }
-                    el = null;
-                }
-                if (el == null)
-                    return null;
-                // Walk up to find a TextPattern provider
-                for (
-                    AutomationElement? cur = el;
-                    cur != null;
-                    cur = TreeWalker.RawViewWalker.GetParent(cur)
-                )
-                {
-                    try
-                    {
-                        if (
-                            cur.TryGetCurrentPattern(TextPattern.Pattern, out var tpo)
-                            && tpo is TextPattern tp
-                        )
-                        {
-                            var sel = tp.GetSelection();
-                            if (sel != null && sel.Length > 0)
-                            {
-                                var t = sel[0].GetText(int.MaxValue);
-                                if (!string.IsNullOrWhiteSpace(t))
-                                    return t;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        try
-                        {
-                            Logger.Log(
-                                $"UIA caret pattern access failed: {ex.GetType().Name}: {ex.Message}"
-                            );
-                        }
-                        catch { }
-                        // Continue walking up the tree
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    Logger.Log($"UIA caret method failed: {ex.GetType().Name}: {ex.Message}");
-                }
-                catch { }
-            }
-            return null;
-        });
-
-        // Wait for completion with timeout
-        if (uiaTask.Wait(System.TimeSpan.FromMilliseconds(500)))
-        {
-            return uiaTask.Result;
-        }
-        else
-        {
-            try
-            {
-                Logger.Log("UIA caret operation timed out after 500ms");
-            }
-            catch { }
-            return null;
-        }
     }
 
     private static string? TryGetSelectionViaWin32(IntPtr hwndForeground)
@@ -1645,202 +1372,6 @@ public sealed class ClipboardService : IClipboardService
         {
             return null;
         }
-    }
-
-    private static string? TryGetSelectionViaUIADeep(
-        IntPtr hwndForeground,
-        CancellationTokenSource? cts = null
-    )
-    {
-        // Use MTA thread for UI Automation as per Microsoft recommendations
-        var uiaTask = RunInMtaForUIA(() =>
-        {
-            try
-            {
-                // Attempt selection from caret point
-                try
-                {
-                    var caretSel = TryGetSelectionAtCaretPoint();
-                    if (!string.IsNullOrWhiteSpace(caretSel))
-                        return caretSel;
-                }
-                catch (Exception ex)
-                {
-                    try
-                    {
-                        Logger.Log($"UIA caret method failed: {ex.GetType().Name}: {ex.Message}");
-                    }
-                    catch { }
-                }
-                if (hwndForeground == IntPtr.Zero)
-                    return null;
-                AutomationElement? root = null;
-                try
-                {
-                    root = AutomationElement.FromHandle(hwndForeground);
-                }
-                catch (Exception ex)
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"UIA deep FromHandle failed: {ex.GetType().Name}: {ex.Message}"
-                        );
-                    }
-                    catch { }
-                    return null;
-                }
-                if (root == null)
-                    return null;
-
-                var sw = Stopwatch.StartNew();
-                int visited = 0;
-                var stack = new System.Collections.Generic.Stack<AutomationElement>();
-                stack.Push(root);
-                while (stack.Count > 0 && visited < 3000 && sw.ElapsedMilliseconds < 400)
-                {
-                    AutomationElement? el = null;
-                    try
-                    {
-                        el = stack.Pop();
-                    }
-                    catch
-                    {
-                        el = null;
-                    }
-                    if (el == null)
-                        continue;
-                    visited++;
-                    try
-                    {
-                        if (
-                            el.TryGetCurrentPattern(TextPattern.Pattern, out var tpo)
-                            && tpo is TextPattern tp
-                        )
-                        {
-                            try
-                            {
-                                var sel = tp.GetSelection();
-                                if (sel != null && sel.Length > 0)
-                                {
-                                    var t = sel[0].GetText(int.MaxValue);
-                                    if (!string.IsNullOrWhiteSpace(t))
-                                        return t;
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                try
-                                {
-                                    Logger.Log(
-                                        $"UIA deep selection access failed: {ex.GetType().Name}: {ex.Message}"
-                                    );
-                                }
-                                catch { }
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        try
-                        {
-                            Logger.Log(
-                                $"UIA deep pattern access failed: {ex.GetType().Name}: {ex.Message}"
-                            );
-                        }
-                        catch { }
-                    }
-
-                    try
-                    {
-                        var children = el.FindAll(TreeScope.Children, Condition.TrueCondition);
-                        for (int i = 0; i < children.Count; i++)
-                        {
-                            var child = children[i];
-                            if (child != null)
-                                stack.Push(child);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        try
-                        {
-                            Logger.Log(
-                                $"UIA deep children enumeration failed: {ex.GetType().Name}: {ex.Message}"
-                            );
-                        }
-                        catch { }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    Logger.Log($"UIA deep search failed: {ex.GetType().Name}: {ex.Message}");
-                }
-                catch { }
-            }
-            return null;
-        });
-
-        // Wait for completion with timeout
-        if (uiaTask.Wait(System.TimeSpan.FromMilliseconds(800)))
-        {
-            return uiaTask.Result;
-        }
-        else
-        {
-            try
-            {
-                Logger.Log("UIA deep search timed out after 800ms");
-            }
-            catch { }
-            return null;
-        }
-    }
-
-    private static string? TryGetSelectionAtCaretPoint()
-    {
-        try
-        {
-            var hwnd = NativeMethods.GetForegroundWindow();
-            if (hwnd == IntPtr.Zero)
-                return null;
-            var info = new NativeMethods.GUITHREADINFO
-            {
-                cbSize = Marshal.SizeOf<NativeMethods.GUITHREADINFO>(),
-            };
-            uint threadId = NativeMethods.GetWindowThreadProcessId(hwnd, out uint tid);
-            if (threadId == 0 || !NativeMethods.GetGUIThreadInfo(threadId, ref info))
-                return null;
-            var owner = info.hwndCaret != IntPtr.Zero ? info.hwndCaret : hwnd;
-            int cx = info.rcCaret.Left + ((info.rcCaret.Right - info.rcCaret.Left) / 2);
-            int cy = info.rcCaret.Top + ((info.rcCaret.Bottom - info.rcCaret.Top) / 2);
-            var pt = new NativeMethods.POINT { X = cx, Y = cy };
-            try
-            {
-                NativeMethods.ClientToScreen(owner, ref pt);
-            }
-            catch { }
-            var el = AutomationElement.FromPoint(new System.Windows.Point(pt.X, pt.Y));
-            if (
-                el != null
-                && el.TryGetCurrentPattern(TextPattern.Pattern, out var tpo)
-                && tpo is TextPattern tp
-            )
-            {
-                var sel = tp.GetSelection();
-                if (sel != null && sel.Length > 0)
-                {
-                    var t = sel[0].GetText(int.MaxValue);
-                    if (!string.IsNullOrWhiteSpace(t))
-                        return t;
-                }
-            }
-        }
-        catch { }
-        return null;
     }
 
     private static IntPtr ResolveFocusHwnd(IntPtr hwndForeground)
@@ -2367,16 +1898,6 @@ public sealed class ClipboardService : IClipboardService
         return RunInSta(() => CaptureSelectionOrClipboard(useClipboardFallback));
     }
 
-    private static void ClearCacheIfNeeded()
-    {
-        // Clear cache every 5 minutes to prevent stale handles
-        if (DateTime.Now - _lastCacheClear > TimeSpan.FromMinutes(5))
-        {
-            _windowHandleCache.Clear();
-            _lastCacheClear = DateTime.Now;
-        }
-    }
-
     private static void RecordCaptureSuccess(string method, bool success)
     {
         string key = success ? $"{method}_success" : $"{method}_fail";
@@ -2395,30 +1916,6 @@ public sealed class ClipboardService : IClipboardService
             catch { }
         }
     }
-
-    private static IntPtr GetCachedWindowHandle(string windowClass)
-    {
-        if (_windowHandleCache.TryGetValue(windowClass, out IntPtr cachedHandle))
-        {
-            // Verify handle is still valid
-            if (IsWindow(cachedHandle))
-                return cachedHandle;
-            else
-                _windowHandleCache.Remove(windowClass);
-        }
-        return IntPtr.Zero;
-    }
-
-    private static void CacheWindowHandle(string windowClass, IntPtr handle)
-    {
-        if (handle != IntPtr.Zero && IsWindow(handle))
-        {
-            _windowHandleCache[windowClass] = handle;
-        }
-    }
-
-    [DllImport("user32.dll")]
-    private static extern bool IsWindow(IntPtr hWnd);
 
     private static System.Threading.Tasks.Task<T> RunInSta<T>(Func<T> func)
     {
@@ -2469,124 +1966,6 @@ public sealed class ClipboardService : IClipboardService
             },
             null
         );
-
-        return tcs.Task;
-    }
-
-    // New method for UI Automation operations using MTA thread (recommended by Microsoft)
-    // Enhanced with thread tracking and abort for timed-out operations
-    private static System.Threading.Tasks.Task<T> RunInMtaForUIA<T>(
-        Func<T> func,
-        CancellationTokenSource? cts = null
-    )
-    {
-        var tcs = new System.Threading.Tasks.TaskCompletionSource<T>();
-        Thread? th = null;
-        th = new Thread(() =>
-        {
-            bool comInit = false;
-            try
-            {
-                int hr = NativeMethods.CoInitializeEx(
-                    IntPtr.Zero,
-                    NativeMethods.COINIT_MULTITHREADED
-                );
-                comInit = (hr == 0 || hr == 1); // S_OK or S_FALSE
-
-                T result;
-                try
-                {
-                    result = func();
-                }
-                catch (COMException ex)
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"UIA COM exception in delegate: {ex.GetType().Name}: {ex.Message}"
-                        );
-                    }
-                    catch { }
-                    tcs.TrySetException(ex);
-                    return;
-                }
-                catch (InvalidOperationException ex)
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"UIA InvalidOperationException in delegate: {ex.GetType().Name}: {ex.Message}"
-                        );
-                    }
-                    catch { }
-                    tcs.TrySetException(ex);
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    try
-                    {
-                        Logger.Log($"UIA delegate exception: {ex.GetType().Name}: {ex.Message}");
-                    }
-                    catch { }
-                    tcs.TrySetException(ex);
-                    return;
-                }
-                tcs.SetResult(result);
-            }
-            catch (ThreadAbortException)
-            {
-                // Thread was aborted due to timeout - this is expected
-                try
-                {
-                    Logger.Log("UIA MTA thread aborted due to timeout");
-                }
-                catch { }
-                tcs.TrySetCanceled();
-
-                // Attempt thread abort cleanup for COM
-                try
-                {
-                    if (comInit)
-                    {
-                        NativeMethods.CoUninitialize();
-                    }
-                }
-                catch { }
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    Logger.Log($"UIA MTA thread exception: {ex.GetType().Name}: {ex.Message}");
-                }
-                catch { }
-                tcs.TrySetException(ex);
-            }
-            finally
-            {
-                if (comInit)
-                {
-                    try
-                    {
-                        NativeMethods.CoUninitialize();
-                    }
-                    catch { }
-                }
-            }
-        });
-        th.IsBackground = true;
-        th.SetApartmentState(ApartmentState.MTA); // Use MTA for UI Automation as per Microsoft docs
-        th.Start();
-
-        // Monitor thread and attempt abort on timeout if possible
-        // Note: Thread.Abort may not work in .NET Core/5+ (PlatformNotSupported)
-        // In that case, we just let the thread run and rely on the timeout to unblock callers
-        if (cts != null)
-        {
-            // The caller is responsible for timing out the task and handling cancellation
-            // This is a best-effort cleanup attempt
-        }
 
         return tcs.Task;
     }

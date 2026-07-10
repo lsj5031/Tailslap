@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using TailSlap;
 
 public sealed class SettingsForm : Form
 {
@@ -28,6 +29,7 @@ public sealed class SettingsForm : Form
     private TextBox _temperature;
     private TextBox _maxTokens;
     private TextBox _refinementPrompt;
+    private ComboBox? _promptPresetDropdown;
     private TextBox _apiKey;
     private TextBox _referer;
     private TextBox _xTitle;
@@ -62,6 +64,8 @@ public sealed class SettingsForm : Form
     private CheckBox? _transcriberEnableAutoEnhance;
     private TextBox? _transcriberAutoEnhanceThreshold;
     private ComboBox? _realtimeProviderDropdown;
+    private TextBox? _transcriberLanguage;
+    private TextBox? _transcriberRealtimeSessionPrompt;
 
     // WebSocket timeout controls
     private TextBox? _wsConnectionTimeout;
@@ -162,7 +166,7 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 12,
+            RowCount = 13,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
@@ -288,6 +292,36 @@ public sealed class SettingsForm : Form
             6
         );
         llm.Controls.Add(_refinementPrompt, 1, 6);
+
+        _promptPresetDropdown = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Dock = DockStyle.Fill,
+        };
+        _promptPresetDropdown.Items.Add("(Choose a prompt preset…)");
+        foreach (var preset in PromptPresets.All)
+            _promptPresetDropdown.Items.Add(preset.Name);
+        _promptPresetDropdown.SelectedIndex = 0;
+        _promptPresetDropdown.SelectedIndexChanged += (_, __) =>
+        {
+            if (_promptPresetDropdown.SelectedIndex <= 0)
+                return;
+            var preset = PromptPresets.All[_promptPresetDropdown.SelectedIndex - 1];
+            _refinementPrompt.Text = preset.Body;
+        };
+        llm.Controls.Add(
+            new Label
+            {
+                Text = "Prompt preset",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            7
+        );
+        llm.Controls.Add(_promptPresetDropdown, 1, 7);
+
         _referer = new TextBox
         {
             Text = _cfg.Llm.HttpReferer ?? string.Empty,
@@ -302,9 +336,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            7
+            8
         );
-        llm.Controls.Add(_referer, 1, 7);
+        llm.Controls.Add(_referer, 1, 8);
         _xTitle = new TextBox { Text = _cfg.Llm.XTitle ?? string.Empty, Dock = DockStyle.Fill };
         llm.Controls.Add(
             new Label
@@ -315,9 +349,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            8
+            9
         );
-        llm.Controls.Add(_xTitle, 1, 8);
+        llm.Controls.Add(_xTitle, 1, 9);
         _llmHotkey = new TextBox
         {
             ReadOnly = true,
@@ -333,9 +367,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            9
+            10
         );
-        llm.Controls.Add(_llmHotkey, 1, 9);
+        llm.Controls.Add(_llmHotkey, 1, 10);
         _captureLlmHotkeyButton = new Button
         {
             Text = "Change Hotkey",
@@ -343,7 +377,7 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _captureLlmHotkeyButton.Click += CaptureLlmHotkey;
-        llm.Controls.Add(_captureLlmHotkeyButton, 1, 10);
+        llm.Controls.Add(_captureLlmHotkeyButton, 1, 11);
         _testConnectionButton = new Button
         {
             Text = "Test LLM Connection",
@@ -375,9 +409,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            11
+            12
         );
-        llm.Controls.Add(llmTestRow, 1, 11);
+        llm.Controls.Add(llmTestRow, 1, 12);
 
         // Add validation label and buttons
         _validationLabel = new Label
@@ -467,7 +501,7 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 28,
+            RowCount = 30,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
@@ -587,7 +621,8 @@ public sealed class SettingsForm : Form
 
         _transcriberStreamResults = new CheckBox
         {
-            Text = "Type words as they arrive (after recording)",
+            Text =
+                "Stream HTTP chunks for toggle transcription (Ctrl+Alt+T). Live speech uses Realtime hotkey.",
             Checked = _cfg.Transcriber.StreamResults,
             AutoSize = true,
             Dock = DockStyle.Fill,
@@ -991,11 +1026,11 @@ public sealed class SettingsForm : Form
         _realtimeProviderDropdown.Items.AddRange(new object[] { "custom", "openai" });
         _realtimeProviderDropdown.SelectedItem = string.Equals(
             _cfg.Transcriber.RealtimeProvider,
-            "openai",
+            "custom",
             StringComparison.OrdinalIgnoreCase
         )
-            ? "openai"
-            : "custom";
+            ? "custom"
+            : "openai";
         transcriber.Controls.Add(
             new Label
             {
@@ -1008,6 +1043,44 @@ public sealed class SettingsForm : Form
             27
         );
         transcriber.Controls.Add(_realtimeProviderDropdown, 1, 27);
+
+        _transcriberLanguage = new TextBox
+        {
+            Text = _cfg.Transcriber.Language ?? "",
+            Dock = DockStyle.Fill,
+            PlaceholderText = "e.g. en, zh — blank = auto (openai provider)",
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "ASR Language",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            28
+        );
+        transcriber.Controls.Add(_transcriberLanguage, 1, 28);
+
+        _transcriberRealtimeSessionPrompt = new TextBox
+        {
+            Text = _cfg.Transcriber.RealtimeSessionPrompt ?? "",
+            Dock = DockStyle.Fill,
+            PlaceholderText = "Optional vocabulary hint (openai realtime session)",
+        };
+        transcriber.Controls.Add(
+            new Label
+            {
+                Text = "Realtime session prompt",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            29
+        );
+        transcriber.Controls.Add(_transcriberRealtimeSessionPrompt, 1, 29);
 
         return transcriber;
     }
@@ -1155,6 +1228,10 @@ public sealed class SettingsForm : Form
             && wsHbTimeout <= 120
         )
             _cfg.Transcriber.WebSocketHeartbeatTimeoutSeconds = wsHbTimeout;
+
+        _cfg.Transcriber.Language = _transcriberLanguage?.Text?.Trim() ?? "";
+        _cfg.Transcriber.RealtimeSessionPrompt =
+            _transcriberRealtimeSessionPrompt?.Text?.Trim() ?? "";
 
         _cfg.Transcriber.RealtimeProvider = string.Equals(
             _realtimeProviderDropdown?.SelectedItem?.ToString(),
@@ -1730,6 +1807,11 @@ public sealed class SettingsForm : Form
             _wsHeartbeatTimeout!.Text =
                 defaultCfg.Transcriber.WebSocketHeartbeatTimeoutSeconds.ToString();
             _realtimeProviderDropdown!.SelectedItem = defaultCfg.Transcriber.RealtimeProvider;
+            if (_transcriberLanguage != null)
+                _transcriberLanguage.Text = defaultCfg.Transcriber.Language ?? "";
+            if (_transcriberRealtimeSessionPrompt != null)
+                _transcriberRealtimeSessionPrompt.Text =
+                    defaultCfg.Transcriber.RealtimeSessionPrompt ?? "";
             if (
                 defaultCfg.Transcriber.PreferredMicrophoneIndex >= 0
                 && defaultCfg.Transcriber.PreferredMicrophoneIndex

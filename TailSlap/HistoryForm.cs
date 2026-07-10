@@ -1,7 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows.Forms;
+using TailSlap;
 
 public sealed class HistoryForm : Form
 {
@@ -15,7 +19,16 @@ public sealed class HistoryForm : Form
     private int _lastCount;
     private Button _refreshButton;
     private Label _statusLabel;
+    private TextBox _searchBox;
     private readonly IHistoryService _history;
+    private List<(DateTime Timestamp, string Model, string Original, string Refined)> _allItems =
+        new();
+    private List<(
+        DateTime Timestamp,
+        string Model,
+        string Original,
+        string Refined
+    )> _visibleItems = new();
 
     public HistoryForm(IHistoryService history)
     {
@@ -119,6 +132,12 @@ public sealed class HistoryForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
+        var export = new Button
+        {
+            Text = "Export…",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
 
         copyR.Click += (_, __) =>
         {
@@ -188,14 +207,25 @@ public sealed class HistoryForm : Form
                 NotificationService.ShowError("Failed to clear encrypted history.");
             }
         };
+        export.Click += (_, __) => ExportVisible();
 
         buttons.Controls.Add(copyR);
         buttons.Controls.Add(copyO);
         buttons.Controls.Add(copyD);
+        buttons.Controls.Add(export);
         buttons.Controls.Add(_refreshButton);
         buttons.Controls.Add(clear);
 
+        _searchBox = new TextBox
+        {
+            Dock = DockStyle.Top,
+            PlaceholderText = "Search original, refined, or model…",
+            Height = DpiHelper.Scale(28),
+        };
+        _searchBox.TextChanged += (_, __) => ApplyFilter();
+
         Controls.Add(split);
+        Controls.Add(_searchBox);
         Controls.Add(buttons);
 
         Load += (_, __) =>
@@ -227,43 +257,8 @@ public sealed class HistoryForm : Form
     {
         try
         {
-            var items = _history.ReadAll();
-            _list.Items.Clear();
-
-            int corruptedCount = 0;
-            foreach (var (timestamp, model, original, refined) in items)
-            {
-                string previewOriginal = Preview(original);
-                string previewRefined = Preview(refined);
-
-                // Detect if decryption failed (empty strings are either truly empty or failed decryption)
-                if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(refined))
-                {
-                    corruptedCount++;
-                    _list.Items.Add($"{timestamp:MM-dd HH:mm} [{model}] ⚠️ CORRUPTED ENTRY");
-                }
-                else
-                {
-                    _list.Items.Add(
-                        $"{timestamp:MM-dd HH:mm} [{model}] {previewOriginal} -> {previewRefined}"
-                    );
-                }
-            }
-
-            if (corruptedCount > 0)
-            {
-                _statusLabel.Text =
-                    $"Status: Ready - {corruptedCount} corrupted (encrypted) entries detected";
-                _statusLabel.ForeColor = Color.Orange;
-            }
-            else
-            {
-                _statusLabel.Text = "Status: Ready";
-                _statusLabel.ForeColor = Color.DarkGray;
-            }
-
-            if (_list.Items.Count > 0)
-                _list.SelectedIndex = _list.Items.Count - 1;
+            _allItems = _history.ReadAll();
+            ApplyFilter();
         }
         catch (Exception ex)
         {
@@ -274,6 +269,105 @@ public sealed class HistoryForm : Form
                 Logger.Log($"Encrypted history populate failed: {ex.Message}");
             }
             catch { }
+        }
+    }
+
+    private void ApplyFilter()
+    {
+        var query = _searchBox?.Text ?? "";
+        _visibleItems = _allItems
+            .Where(e => HistoryQuery.Matches(query, e.Original, e.Refined, e.Model))
+            .ToList();
+
+        _list.BeginUpdate();
+        _list.Items.Clear();
+        int corruptedCount = 0;
+        foreach (var (timestamp, model, original, refined) in _visibleItems)
+        {
+            string previewOriginal = Preview(original);
+            string previewRefined = Preview(refined);
+
+            if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(refined))
+            {
+                corruptedCount++;
+                _list.Items.Add($"{timestamp:MM-dd HH:mm} [{model}] ⚠️ CORRUPTED ENTRY");
+            }
+            else
+            {
+                _list.Items.Add(
+                    $"{timestamp:MM-dd HH:mm} [{model}] {previewOriginal} -> {previewRefined}"
+                );
+            }
+        }
+        _list.EndUpdate();
+
+        if (corruptedCount > 0)
+        {
+            _statusLabel.Text =
+                $"Status: {_visibleItems.Count}/{_allItems.Count} shown — {corruptedCount} corrupted";
+            _statusLabel.ForeColor = Color.Orange;
+        }
+        else
+        {
+            _statusLabel.Text =
+                $"Status: {_visibleItems.Count}/{_allItems.Count} shown"
+                + (string.IsNullOrWhiteSpace(query) ? "" : " (filtered)");
+            _statusLabel.ForeColor = Color.DarkGray;
+        }
+
+        if (_list.Items.Count > 0)
+            _list.SelectedIndex = _list.Items.Count - 1;
+        else
+        {
+            _orig.Clear();
+            _ref.Clear();
+            _diff.Clear();
+        }
+    }
+
+    private void ExportVisible()
+    {
+        try
+        {
+            if (_visibleItems.Count == 0)
+            {
+                NotificationService.ShowWarning("Nothing to export.");
+                return;
+            }
+
+            if (
+                BrandedMessageBox.Show(
+                    "Export writes decrypted history as plaintext (not DPAPI-protected). Continue?",
+                    "Confirm Export",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning
+                ) != DialogResult.Yes
+            )
+            {
+                return;
+            }
+
+            using var dlg = new SaveFileDialog
+            {
+                Title = "Export refinement history (plaintext)",
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                FileName = $"tailslap-refinement-history-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            var content = HistoryQuery.FormatRefinementExport(DateTime.UtcNow, _visibleItems);
+            File.WriteAllText(dlg.FileName, content, Encoding.UTF8);
+            NotificationService.ShowSuccess("History exported.");
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"History export failed: {ex.GetType().Name}");
+            }
+            catch { }
+            NotificationService.ShowError("Failed to export history.");
         }
     }
 
@@ -290,11 +384,10 @@ public sealed class HistoryForm : Form
         try
         {
             var idx = _list.SelectedIndex;
-            var all = _history.ReadAll();
-            if (idx < 0 || idx >= all.Count)
+            if (idx < 0 || idx >= _visibleItems.Count)
                 return;
 
-            var (timestamp, model, original, refined) = all[idx];
+            var (timestamp, model, original, refined) = _visibleItems[idx];
 
             _orig.Text = original;
             _ref.Text = refined;
@@ -423,8 +516,8 @@ public sealed class HistoryForm : Form
     {
         try
         {
-            var currentItems = _history.ReadAll();
-            if (currentItems.Count != _lastCount)
+            var currentCount = _history.ReadAll().Count;
+            if (currentCount != _allItems.Count)
             {
                 RefreshHistory();
             }

@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Windows.Forms;
+using TailSlap;
 
 public sealed class TranscriptionHistoryForm : Form
 {
@@ -13,6 +16,9 @@ public sealed class TranscriptionHistoryForm : Form
     private System.Windows.Forms.Timer? _refreshTimer;
     private DateTime _lastRefresh;
     private readonly IHistoryService _history;
+    private TextBox _searchBox;
+    private List<(DateTime Timestamp, string Text, int RecordingDurationMs)> _allItems = new();
+    private List<(DateTime Timestamp, string Text, int RecordingDurationMs)> _visibleItems = new();
 
     public TranscriptionHistoryForm(IHistoryService history)
     {
@@ -74,6 +80,12 @@ public sealed class TranscriptionHistoryForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
+        var export = new Button
+        {
+            Text = "Export…",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
 
         copy.Click += (_, __) =>
         {
@@ -116,10 +128,19 @@ public sealed class TranscriptionHistoryForm : Form
                 NotificationService.ShowError("Failed to clear encrypted history.");
             }
         };
+        export.Click += (_, __) => ExportVisible();
 
-        buttons.Controls.AddRange(new Control[] { copy, _refreshButton, clear });
+        buttons.Controls.AddRange(new Control[] { copy, export, _refreshButton, clear });
 
-        Controls.AddRange(new Control[] { _statusLabel, buttons, _textBox, _list });
+        _searchBox = new TextBox
+        {
+            Dock = DockStyle.Top,
+            PlaceholderText = "Search transcriptions…",
+            Height = DpiHelper.Scale(28),
+        };
+        _searchBox.TextChanged += (_, __) => ApplyFilter();
+
+        Controls.AddRange(new Control[] { _statusLabel, buttons, _textBox, _list, _searchBox });
 
         Load += (_, __) =>
         {
@@ -169,16 +190,21 @@ public sealed class TranscriptionHistoryForm : Form
 
     private void Populate()
     {
-        var items = _history.ReadAllTranscriptions();
+        _allItems = _history.ReadAllTranscriptions();
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        var query = _searchBox?.Text ?? "";
+        _visibleItems = _allItems.Where(e => HistoryQuery.Matches(query, e.Text)).ToList();
+
         _list.BeginUpdate();
         _list.Items.Clear();
-
         int corruptedCount = 0;
-        foreach (var (timestamp, text, duration) in items)
+        foreach (var (timestamp, text, duration) in _visibleItems)
         {
             string preview = Preview(text);
-
-            // Detect corrupted/encrypted entries
             if (string.IsNullOrEmpty(text))
             {
                 corruptedCount++;
@@ -194,17 +220,67 @@ public sealed class TranscriptionHistoryForm : Form
         if (corruptedCount > 0)
         {
             _statusLabel.Text =
-                $"Status: {items.Count} total entries - {corruptedCount} corrupted (encrypted) entries detected";
+                $"Status: {_visibleItems.Count}/{_allItems.Count} shown — {corruptedCount} corrupted";
             _statusLabel.ForeColor = Color.Orange;
         }
         else
         {
-            _statusLabel.Text = $"Status: {items.Count} total entries";
+            _statusLabel.Text =
+                $"Status: {_visibleItems.Count}/{_allItems.Count} shown"
+                + (string.IsNullOrWhiteSpace(query) ? "" : " (filtered)");
             _statusLabel.ForeColor = Color.DarkGray;
         }
 
         if (_list.Items.Count > 0)
             _list.SelectedIndex = _list.Items.Count - 1;
+        else
+            _textBox.Clear();
+    }
+
+    private void ExportVisible()
+    {
+        try
+        {
+            if (_visibleItems.Count == 0)
+            {
+                NotificationService.ShowWarning("Nothing to export.");
+                return;
+            }
+
+            if (
+                BrandedMessageBox.Show(
+                    "Export writes decrypted transcriptions as plaintext (not DPAPI-protected). Continue?",
+                    "Confirm Export",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning
+                ) != DialogResult.Yes
+            )
+            {
+                return;
+            }
+
+            using var dlg = new SaveFileDialog
+            {
+                Title = "Export transcription history (plaintext)",
+                Filter = "Text files (*.txt)|*.txt|All files (*.*)|*.*",
+                FileName = $"tailslap-transcription-history-{DateTime.Now:yyyyMMdd-HHmmss}.txt",
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK)
+                return;
+
+            var content = HistoryQuery.FormatTranscriptionExport(DateTime.UtcNow, _visibleItems);
+            File.WriteAllText(dlg.FileName, content, Encoding.UTF8);
+            NotificationService.ShowSuccess("History exported.");
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.Log($"Transcription history export failed: {ex.GetType().Name}");
+            }
+            catch { }
+            NotificationService.ShowError("Failed to export history.");
+        }
     }
 
     private string Preview(string s)
@@ -221,12 +297,11 @@ public sealed class TranscriptionHistoryForm : Form
     {
         try
         {
-            var items = _history.ReadAllTranscriptions();
             int idx = _list.SelectedIndex;
-            if (idx < 0 || idx >= items.Count)
+            if (idx < 0 || idx >= _visibleItems.Count)
                 return;
 
-            var (timestamp, text, duration) = items[idx];
+            var (timestamp, text, duration) = _visibleItems[idx];
 
             // Replace NBSP with regular spaces for readability
             var cleanText = (text ?? "").Replace('\u00A0', ' ');
@@ -267,7 +342,7 @@ public sealed class TranscriptionHistoryForm : Form
         try
         {
             int currentCount = _history.ReadAllTranscriptions().Count;
-            if (currentCount != _list.Items.Count)
+            if (currentCount != _allItems.Count)
             {
                 SafePopulate();
             }

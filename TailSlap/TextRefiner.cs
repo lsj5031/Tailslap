@@ -169,7 +169,12 @@ public sealed class TextRefiner : ITextRefiner
                         .ConfigureAwait(false);
                     var userFriendlyError = GetUserFriendlyError(resp.StatusCode, errorBody);
                     NotificationService.ShowError($"LLM request failed: {userFriendlyError}");
-                    throw new Exception($"LLM error {resp.StatusCode}: {errorBody}");
+                    Logger.Log(
+                        $"LLM error response: status={(int)resp.StatusCode}, len={errorBody.Length}, sha256={Hashing.Sha256Hex(errorBody)}"
+                    );
+                    throw new InvalidOperationException(
+                        $"LLM error {resp.StatusCode}: {userFriendlyError}"
+                    );
                 }
 
                 var result = await ReadResultAsync(resp, timeoutCts.Token).ConfigureAwait(false);
@@ -229,14 +234,10 @@ public sealed class TextRefiner : ITextRefiner
             {
                 try
                 {
-                    Logger.Log("LLM exception: " + ex.Message + "; retrying in 1s");
+                    Logger.Log($"LLM exception: type={ex.GetType().Name}; retrying in 1s");
                 }
                 catch { }
-                DiagnosticsEventSource.Log.RefinementRetry(
-                    2 - attempts,
-                    ex.Message ?? "Unknown error",
-                    1000
-                );
+                DiagnosticsEventSource.Log.RefinementRetry(2 - attempts, ex.GetType().Name, 1000);
                 await Task.Delay(1000, ct);
             }
         }

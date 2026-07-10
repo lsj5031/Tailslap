@@ -129,7 +129,9 @@ All interface-driven, registered via DI:
 - Useful realtime log command:
   `jq -r 'select((.msg? | strings) | test("OpenAIRealtimeTranscriber|RealtimeTranscriber|HandleRealtime|ProcessTranscriptionAsync|AudioRecorder.StartStreamingAsync|VAD\\[|StreamingRecovery")) | [.ts, .source, .msg] | @tsv' "%APPDATA%\\TailSlap\\logs\\app.jsonl"`
 - Current local realtime setup to remember:
-  `transcriber.realtimeProvider = "openai"`
+  `transcriber.realtimeProvider = "openai"` (also the **new-install default**)
   `transcriber.baseUrl = "http://localhost:18000/v1/audio/transcriptions"`
   `transcriber.model = "glm-nano-2512"`
+- `custom` realtime remains supported for legacy stream endpoints; prefer OpenAI-protocol for glm-asr-docker.
 - In this repo, "OpenAI mode" may therefore mean a local OpenAI-protocol backend rather than the hosted OpenAI API. Always confirm the actual `baseUrl` before debugging.
+- Realtime sessions are saved to encrypted transcription history on cleanup; optional LLM auto-enhance may place an improved draft on the clipboard.
