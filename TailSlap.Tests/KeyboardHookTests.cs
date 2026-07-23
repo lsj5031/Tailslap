@@ -450,7 +450,277 @@ public class KeyboardHookTests
         Assert.False(keyUpFired);
     }
 
+    #region RightAltOnly modifier-only hotkey tests
+
+    private const uint VK_RMENU = 0xA5;
+    private const uint VK_LMENU = 0xA4;
+
+    private static HotkeyConfig CreateRightAltOnlyHotkey()
+    {
+        return new HotkeyConfig
+        {
+            Modifiers = 0x0001, // MOD_ALT
+            Key = 0, // modifier-only
+            RightAltOnly = true,
+        };
+    }
+
+    [Fact]
+    public void RightAltOnly_FiresOnKeyDown_WhenRightAltHeld()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+        bool keyDownFired = false;
+        hook.OnKeyDown += () => keyDownFired = true;
+
+        // Simulate hook callback setting _rightAltHeld before key-down
+        SetRightAltHeld(hook, true);
+
+        // Act — simulate key-down for right Alt (modifiers passed don't matter for RightAltOnly)
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+
+        // Assert
+        Assert.True(keyDownFired);
+    }
+
+    [Fact]
+    public void RightAltOnly_FiresOnKeyDown_WhenRightAltVkPassed()
+    {
+        // Arrange — test the fallback path: vk==VK_RMENU works even if _rightAltHeld is stale
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+        bool keyDownFired = false;
+        hook.OnKeyDown += () => keyDownFired = true;
+
+        // Don't set _rightAltHeld — rely on the vk fallback
+        // Act
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+
+        // Assert
+        Assert.True(keyDownFired);
+    }
+
+    [Fact]
+    public void RightAltOnly_DoesNotFire_WhenLeftAltPressed()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+        bool keyDownFired = false;
+        hook.OnKeyDown += () => keyDownFired = true;
+
+        // _rightAltHeld is false, vk is left Alt — neither condition should match
+        // Act
+        SimulateKeyDown(hook, 0x0001, VK_LMENU);
+
+        // Assert
+        Assert.False(keyDownFired);
+    }
+
+    [Fact]
+    public void RightAltOnly_FiresOnKeyUp_WhenRightAltReleased()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+        bool keyUpFired = false;
+        hook.OnKeyUp += () => keyUpFired = true;
+
+        // Activate recording first
+        SetRightAltHeld(hook, true);
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+
+        // Clear _rightAltHeld BEFORE calling ProcessModifierChange (as HookCallback does)
+        SetRightAltHeld(hook, false);
+
+        // Act — simulate right Alt release via modifier change
+        SimulateModifierChange(hook, 0x0000, VK_RMENU);
+
+        // Assert
+        Assert.True(keyUpFired);
+    }
+
+    [Fact]
+    public void RightAltOnly_DoesNotFireOnKeyUp_WhenLeftAltReleased()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+        bool keyUpFired = false;
+        hook.OnKeyUp += () => keyUpFired = true;
+
+        // Activate recording via right Alt
+        SetRightAltHeld(hook, true);
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+
+        // Simulate left Alt release — should not deactivate
+        SimulateModifierChange(hook, 0x0000, VK_LMENU);
+
+        // Assert — recording still active, no key-up fired
+        Assert.False(keyUpFired);
+        Assert.True(IsRecordingActive(hook));
+    }
+
+    [Fact]
+    public void RightAltOnly_AutoRepeat_SuppressedWhileAltHeld()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+        int keyDownCount = 0;
+        hook.OnKeyDown += () => keyDownCount++;
+
+        SetRightAltHeld(hook, true);
+
+        // Act — first key-down
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+        // Repeated key-down while still held
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+
+        // Assert
+        Assert.Equal(1, keyDownCount);
+    }
+
+    [Fact]
+    public void RightAltOnly_Reconfigure_PreservesRightAltBehavior()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+
+        // Act — reconfigure to a new RightAltOnly config
+        var newConfig = CreateRightAltOnlyHotkey();
+        newConfig.RightAltOnly = true;
+        hook.Reconfigure(newConfig);
+
+        // Assert — hook should still respond to right Alt
+        bool keyDownFired = false;
+        hook.OnKeyDown += () => keyDownFired = true;
+        SetRightAltHeld(hook, true);
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+        Assert.True(keyDownFired);
+    }
+
+    #endregion
+
+    #region ForceStop latch tests
+
+    [Fact]
+    public void ForceStop_PreventsReTrigger_WhileModifiersHeld()
+    {
+        // Arrange — non-RightAltOnly modifier-only hotkey
+        using var hook = new KeyboardHook(
+            new HotkeyConfig
+            {
+                Modifiers = 0x000A, // Ctrl+Win
+                Key = 0,
+            }
+        );
+        int keyDownCount = 0;
+        hook.OnKeyDown += () => keyDownCount++;
+
+        // Activate recording
+        SimulateKeyDown(hook, 0x000A, 0);
+        Assert.Equal(1, keyDownCount);
+
+        // Force stop (simulates max duration expiry)
+        hook.ForceStop();
+
+        // Act — attempt re-trigger while Ctrl+Win still held
+        SimulateKeyDown(hook, 0x000A, 0);
+
+        // Assert — no new key-down
+        Assert.Equal(1, keyDownCount);
+        Assert.False(IsRecordingActive(hook));
+    }
+
+    [Fact]
+    public void ForceStop_ReArmsAfterModifierRelease()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(
+            new HotkeyConfig
+            {
+                Modifiers = 0x000A, // Ctrl+Win
+                Key = 0,
+            }
+        );
+        int keyDownCount = 0;
+        hook.OnKeyDown += () => keyDownCount++;
+
+        // Activate and force stop
+        SimulateKeyDown(hook, 0x000A, 0);
+        hook.ForceStop();
+
+        // Release all modifiers
+        SimulateModifierChange(hook, 0x0000, 0);
+
+        // Re-press the hotkey
+        SimulateKeyDown(hook, 0x000A, 0);
+
+        // Assert
+        Assert.Equal(2, keyDownCount);
+        Assert.True(IsRecordingActive(hook));
+    }
+
+    [Fact]
+    public void ForceStop_PreventsReTrigger_WhileRightAltHeld()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+        int keyDownCount = 0;
+        hook.OnKeyDown += () => keyDownCount++;
+
+        // Activate via right Alt
+        SetRightAltHeld(hook, true);
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+        Assert.Equal(1, keyDownCount);
+
+        // Force stop while right Alt still held
+        hook.ForceStop();
+
+        // Attempt re-trigger while right Alt held
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+
+        // Assert
+        Assert.Equal(1, keyDownCount);
+        Assert.False(IsRecordingActive(hook));
+    }
+
+    [Fact]
+    public void ForceStop_ReArmsAfterRightAltRelease()
+    {
+        // Arrange
+        using var hook = new KeyboardHook(CreateRightAltOnlyHotkey());
+        int keyDownCount = 0;
+        hook.OnKeyDown += () => keyDownCount++;
+
+        // Activate and force stop
+        SetRightAltHeld(hook, true);
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+        hook.ForceStop();
+
+        // Release right Alt
+        SetRightAltHeld(hook, false);
+        SimulateModifierChange(hook, 0x0000, VK_RMENU);
+
+        // Re-press right Alt
+        SetRightAltHeld(hook, true);
+        SimulateKeyDown(hook, 0x0001, VK_RMENU);
+
+        // Assert
+        Assert.Equal(2, keyDownCount);
+        Assert.True(IsRecordingActive(hook));
+    }
+
+    #endregion
+
     #region Helper methods for testing via reflection
+
+    private static void SetRightAltHeld(KeyboardHook hook, bool held)
+    {
+        var field = typeof(KeyboardHook).GetField(
+            "_rightAltHeld",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(field);
+        field!.SetValue(hook, held);
+    }
 
     private static void SimulateKeyDown(KeyboardHook hook, uint modifiers, uint vk)
     {
@@ -472,14 +742,18 @@ public class KeyboardHookTests
         method!.Invoke(hook, new object[] { vk });
     }
 
-    private static void SimulateModifierChange(KeyboardHook hook, uint currentModifiers)
+    private static void SimulateModifierChange(
+        KeyboardHook hook,
+        uint currentModifiers,
+        uint vk = 0
+    )
     {
         var method = typeof(KeyboardHook).GetMethod(
             "ProcessModifierChange",
             BindingFlags.Instance | BindingFlags.NonPublic
         );
         Assert.NotNull(method);
-        method!.Invoke(hook, new object[] { currentModifiers });
+        method!.Invoke(hook, new object[] { currentModifiers, vk });
     }
 
     private static bool IsRecordingActive(KeyboardHook hook)

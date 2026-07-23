@@ -38,9 +38,21 @@ public sealed class HotkeyConfig
     public uint Modifiers { get; set; } = 0x0003; // CTRL + ALT
     public uint Key { get; set; } = (uint)Keys.R;
 
+    /// <summary>
+    /// When true and Key == 0 (modifier-only push-to-talk), the keyboard hook
+    /// requires the right Alt key specifically, ignoring left Alt entirely.
+    /// Has no effect on RegisterHotKey-based hotkeys (non-modifier-only).
+    /// </summary>
+    public bool RightAltOnly { get; set; } = false;
+
     public HotkeyConfig Clone()
     {
-        return new HotkeyConfig { Modifiers = Modifiers, Key = Key };
+        return new HotkeyConfig
+        {
+            Modifiers = Modifiers,
+            Key = Key,
+            RightAltOnly = RightAltOnly,
+        };
     }
 }
 
@@ -593,13 +605,6 @@ public sealed class ConfigService : IConfigService, IDisposable
         {
             cfg.TranscriberHotkey.Modifiers = 0x0003; // CTRL + ALT
             cfg.TranscriberHotkey.Key = (uint)Keys.T;
-        }
-
-        // Default typeless hotkey to Ctrl+Win hold
-        if (cfg.TypelessHotkey.Modifiers == 0 && cfg.TypelessHotkey.Key == 0)
-        {
-            cfg.TypelessHotkey.Modifiers = 0x000A; // CTRL + WIN
-            cfg.TypelessHotkey.Key = 0;
         }
 
         return cfg;

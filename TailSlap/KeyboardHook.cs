@@ -70,6 +70,8 @@ public sealed class KeyboardHook : IDisposable
     private bool _disposed;
     private bool _isRecordingActive;
     private bool _primaryKeyHeld;
+    private bool _rightAltHeld;
+    private bool _forceStopped;
     private DateTime _keyDownTimestamp;
     private uint _lastKnownModifiers;
     private System.Threading.Timer? _maxDurationTimer;
@@ -173,6 +175,8 @@ public sealed class KeyboardHook : IDisposable
         StopMaxDurationTimer();
         _isRecordingActive = false;
         _primaryKeyHeld = false;
+        _rightAltHeld = false;
+        _forceStopped = false;
     }
 
     /// <summary>
@@ -194,7 +198,7 @@ public sealed class KeyboardHook : IDisposable
         try
         {
             Logger.Log(
-                $"KeyboardHook reconfigured: mods={newConfig.Modifiers}, key={newConfig.Key}"
+                $"KeyboardHook reconfigured: mods={newConfig.Modifiers}, key={newConfig.Key}, rightAltOnly={newConfig.RightAltOnly}"
             );
         }
         catch { }
@@ -216,6 +220,7 @@ public sealed class KeyboardHook : IDisposable
 
         _isRecordingActive = false;
         _primaryKeyHeld = false;
+        _forceStopped = true;
         StopMaxDurationTimer();
         OnKeyUp?.Invoke();
     }
@@ -249,7 +254,7 @@ public sealed class KeyboardHook : IDisposable
 
         if (IsModifierOnlyHotkey)
         {
-            ProcessModifierOnlyKeyDown(currentModifiers);
+            ProcessModifierOnlyKeyDown(currentModifiers, vk);
             return;
         }
 
@@ -279,12 +284,30 @@ public sealed class KeyboardHook : IDisposable
 
     /// <summary>
     /// Handles key-down for modifier-only hotkeys. Fires OnKeyDown when all configured
-    /// modifiers are simultaneously held.
+    /// modifiers are simultaneously held, or when RightAltOnly is set and right Alt is held.
     /// </summary>
-    private void ProcessModifierOnlyKeyDown(uint currentModifiers)
+    private void ProcessModifierOnlyKeyDown(uint currentModifiers, uint vk)
     {
-        // Check if all configured modifiers are now held
-        if ((currentModifiers & _config.Modifiers) != _config.Modifiers)
+        bool modifiersHeld;
+
+        if (_config.RightAltOnly)
+        {
+            // Track right Alt from vk AND _rightAltHeld.
+            // _rightAltHeld is the primary source (set by HookCallback from vk),
+            // but vk==VK_RMENU serves as a fallback in case _rightAltHeld is stale
+            // (e.g., after Uninstall/Reconfigure while Alt was held).
+            modifiersHeld = _rightAltHeld || vk == VK_RMENU;
+        }
+        else
+        {
+            modifiersHeld = (currentModifiers & _config.Modifiers) == _config.Modifiers;
+        }
+
+        if (!modifiersHeld)
+            return;
+
+        // Prevent re-trigger after ForceStop until all required modifiers are released
+        if (_forceStopped)
             return;
 
         // Auto-repeat suppression
@@ -348,18 +371,46 @@ public sealed class KeyboardHook : IDisposable
     /// Updates the tracked modifier state. Called when modifier keys change
     /// (pressed or released).
     /// For modifier-only hotkeys (Key == 0), fires OnKeyUp when any required modifier is released.
+    /// For RightAltOnly modifier-only hotkeys, fires OnKeyUp when right Alt is released.
     /// For standard hotkeys, does NOT affect recording state — recording continues
     /// even if all modifiers are released before the primary key.
     /// </summary>
-    internal void ProcessModifierChange(uint currentModifiers)
+    internal void ProcessModifierChange(uint currentModifiers, uint vk)
     {
         _lastKnownModifiers = currentModifiers;
+
+        // Clear force-stopped latch when required modifiers are released
+        if (_forceStopped)
+        {
+            if (_config.RightAltOnly)
+            {
+                if (!_rightAltHeld)
+                    _forceStopped = false;
+            }
+            else if ((_config.Modifiers & currentModifiers) != _config.Modifiers)
+            {
+                _forceStopped = false;
+            }
+        }
 
         // For modifier-only hotkeys, releasing any required modifier triggers key-up
         if (IsModifierOnlyHotkey && _primaryKeyHeld)
         {
-            bool anyRequiredReleased = (_config.Modifiers & currentModifiers) != _config.Modifiers;
-            if (anyRequiredReleased)
+            bool released;
+
+            if (_config.RightAltOnly)
+            {
+                // Track right Alt release from _rightAltHeld AND vk.
+                // _rightAltHeld is set to false by HookCallback BEFORE this method runs
+                // (when vk==VK_RMENU on key-up). We also check vk directly as a safety net.
+                released = !_rightAltHeld || vk == VK_RMENU;
+            }
+            else
+            {
+                released = (_config.Modifiers & currentModifiers) != _config.Modifiers;
+            }
+
+            if (released)
             {
                 _primaryKeyHeld = false;
                 _isRecordingActive = false;
@@ -410,6 +461,12 @@ public sealed class KeyboardHook : IDisposable
 
             if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
             {
+                // Track right Alt state from the vk parameter, not GetAsyncKeyState.
+                // GetAsyncKeyState is unreliable in WH_KEYBOARD_LL: the OS hasn't
+                // updated the async key state yet when the hook callback fires.
+                if (vk == VK_RMENU)
+                    _rightAltHeld = true;
+
                 uint currentModifiers = GetCurrentModifiers();
                 ProcessKeyDown(currentModifiers, vk);
             }
@@ -417,9 +474,12 @@ public sealed class KeyboardHook : IDisposable
             {
                 if (IsModifierKey(vk))
                 {
-                    // Modifier key released — update tracking but don't affect recording
+                    // Track right Alt release before computing modifiers
+                    if (vk == VK_RMENU)
+                        _rightAltHeld = false;
+
                     uint currentModifiers = GetCurrentModifiers();
-                    ProcessModifierChange(currentModifiers);
+                    ProcessModifierChange(currentModifiers, vk);
                 }
                 else
                 {

@@ -123,7 +123,7 @@ public sealed class SettingsForm : Form
         general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _autoPaste = new CheckBox
         {
-            Text = "Auto Paste after refine",
+            Text = "Auto-paste refined text",
             Checked = _cfg.AutoPaste,
             AutoSize = true,
             Dock = DockStyle.Fill,
@@ -142,7 +142,7 @@ public sealed class SettingsForm : Form
         general.Controls.Add(_autoPaste, 1, 0);
         _clipboardFallback = new CheckBox
         {
-            Text = "Use clipboard when no selection is captured",
+            Text = "Use clipboard when nothing is selected",
             Checked = _cfg.UseClipboardFallback,
             AutoSize = true,
             Dock = DockStyle.Fill,
@@ -176,7 +176,7 @@ public sealed class SettingsForm : Form
             llm.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _enabled = new CheckBox
         {
-            Text = "Enable LLM Processing",
+            Text = "Enable LLM refinement",
             Checked = _cfg.Llm.Enabled,
             AutoSize = true,
             Dock = DockStyle.Fill,
@@ -312,7 +312,7 @@ public sealed class SettingsForm : Form
         llm.Controls.Add(
             new Label
             {
-                Text = "Prompt preset",
+                Text = "Prompt Preset",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -361,7 +361,7 @@ public sealed class SettingsForm : Form
         llm.Controls.Add(
             new Label
             {
-                Text = "Hotkey",
+                Text = "Refinement Hotkey",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -432,14 +432,18 @@ public sealed class SettingsForm : Form
 
         var generalPage = new TabPage("General") { AutoScroll = true };
         generalPage.Controls.Add(general);
-        var llmPage = new TabPage("LLM") { AutoScroll = true };
+        var llmPage = new TabPage("LLM Refinement") { AutoScroll = true };
         llmPage.Controls.Add(llm);
-        var transcriber = CreateTranscriberTab();
-        var transcriberPage = new TabPage("Transcriber") { AutoScroll = true };
-        transcriberPage.Controls.Add(transcriber);
+        var recording = CreateRecordingTab();
+        var recordingPage = new TabPage("Recording") { AutoScroll = true };
+        recordingPage.Controls.Add(recording);
+        var advanced = CreateAdvancedTab();
+        var advancedPage = new TabPage("Advanced") { AutoScroll = true };
+        advancedPage.Controls.Add(advanced);
         tabs.TabPages.Add(generalPage);
         tabs.TabPages.Add(llmPage);
-        tabs.TabPages.Add(transcriberPage);
+        tabs.TabPages.Add(recordingPage);
+        tabs.TabPages.Add(advancedPage);
 
         var buttons = new FlowLayoutPanel
         {
@@ -494,21 +498,21 @@ public sealed class SettingsForm : Form
         RefreshValidationState(null, EventArgs.Empty);
     }
 
-    private TableLayoutPanel CreateTranscriberTab()
+    private TableLayoutPanel CreateRecordingTab()
     {
-        var transcriber = new TableLayoutPanel
+        var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 30,
+            RowCount = 21,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
-        transcriber.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 28; i++)
-            transcriber.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int i = 0; i < 21; i++)
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         _transcriberEnabled = new CheckBox
         {
@@ -517,7 +521,7 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Enabled",
@@ -528,17 +532,17 @@ public sealed class SettingsForm : Form
             0,
             0
         );
-        transcriber.Controls.Add(_transcriberEnabled, 1, 0);
+        panel.Controls.Add(_transcriberEnabled, 1, 0);
 
         _transcriberBaseUrl = new TextBox
         {
             Text = _cfg.Transcriber.BaseUrl,
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "API Endpoint (root, e.g. http://localhost:18000/v1)",
+                Text = "ASR Server URL",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -546,10 +550,10 @@ public sealed class SettingsForm : Form
             0,
             1
         );
-        transcriber.Controls.Add(_transcriberBaseUrl, 1, 1);
+        panel.Controls.Add(_transcriberBaseUrl, 1, 1);
 
         _transcriberModel = new TextBox { Text = _cfg.Transcriber.Model, Dock = DockStyle.Fill };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Model",
@@ -560,17 +564,17 @@ public sealed class SettingsForm : Form
             0,
             2
         );
-        transcriber.Controls.Add(_transcriberModel, 1, 2);
+        panel.Controls.Add(_transcriberModel, 1, 2);
 
         _transcriberTimeout = new TextBox
         {
             Text = _cfg.Transcriber.TimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Timeout (sec)",
+                Text = "Timeout (seconds)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -578,7 +582,7 @@ public sealed class SettingsForm : Form
             0,
             3
         );
-        transcriber.Controls.Add(_transcriberTimeout, 1, 3);
+        panel.Controls.Add(_transcriberTimeout, 1, 3);
 
         _transcriberApiKey = new TextBox
         {
@@ -586,7 +590,7 @@ public sealed class SettingsForm : Form
             PlaceholderText = "Enter API key (leave blank to keep existing)",
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "API Key",
@@ -597,16 +601,16 @@ public sealed class SettingsForm : Form
             0,
             4
         );
-        transcriber.Controls.Add(_transcriberApiKey, 1, 4);
+        panel.Controls.Add(_transcriberApiKey, 1, 4);
 
         _transcriberAutoPaste = new CheckBox
         {
-            Text = "Auto Paste after transcription",
+            Text = "Auto-paste transcribed text",
             Checked = _cfg.Transcriber.AutoPaste,
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Auto Paste",
@@ -617,17 +621,16 @@ public sealed class SettingsForm : Form
             0,
             5
         );
-        transcriber.Controls.Add(_transcriberAutoPaste, 1, 5);
+        panel.Controls.Add(_transcriberAutoPaste, 1, 5);
 
         _transcriberStreamResults = new CheckBox
         {
-            Text =
-                "Stream HTTP chunks for toggle transcription (Ctrl+Alt+T). Live speech uses Realtime hotkey.",
+            Text = "Stream results as they arrive",
             Checked = _cfg.Transcriber.StreamResults,
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Stream Results",
@@ -638,16 +641,16 @@ public sealed class SettingsForm : Form
             0,
             6
         );
-        transcriber.Controls.Add(_transcriberStreamResults, 1, 6);
+        panel.Controls.Add(_transcriberStreamResults, 1, 6);
 
         _transcriberEnableVAD = new CheckBox
         {
-            Text = "Auto-stop recording after silence",
+            Text = "Stop recording after silence",
             Checked = _cfg.Transcriber.EnableVAD,
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Silence Detection",
@@ -658,17 +661,17 @@ public sealed class SettingsForm : Form
             0,
             7
         );
-        transcriber.Controls.Add(_transcriberEnableVAD, 1, 7);
+        panel.Controls.Add(_transcriberEnableVAD, 1, 7);
 
         _transcriberSilenceThreshold = new TextBox
         {
             Text = _cfg.Transcriber.SilenceThresholdMs.ToString(),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Silence Timeout (ms)",
+                Text = "Silence Timeout (milliseconds)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -676,7 +679,7 @@ public sealed class SettingsForm : Form
             0,
             8
         );
-        transcriber.Controls.Add(_transcriberSilenceThreshold, 1, 8);
+        panel.Controls.Add(_transcriberSilenceThreshold, 1, 8);
 
         _transcriberVadSensitivity = new ComboBox
         {
@@ -691,8 +694,7 @@ public sealed class SettingsForm : Form
                 "High (Quiet Environment)",
             }
         );
-        // Map current settings to index: Low=900/550 (hard to trigger), Medium=500/300, High=200/100 (easy to trigger)
-        // Detect current sensitivity based on activation threshold
+        // Map current settings to index based on activation threshold
         if (_cfg.Transcriber.VadActivationThreshold >= 800)
             _transcriberVadSensitivity.SelectedIndex = 0; // Low Sensitivity (Noisy)
         else if (_cfg.Transcriber.VadActivationThreshold >= 400)
@@ -700,7 +702,7 @@ public sealed class SettingsForm : Form
         else
             _transcriberVadSensitivity.SelectedIndex = 2; // High Sensitivity (Quiet)
 
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "VAD Sensitivity",
@@ -711,7 +713,7 @@ public sealed class SettingsForm : Form
             0,
             9
         );
-        transcriber.Controls.Add(_transcriberVadSensitivity, 1, 9);
+        panel.Controls.Add(_transcriberVadSensitivity, 1, 9);
 
         _microphoneDropdown = new ComboBox
         {
@@ -726,7 +728,7 @@ public sealed class SettingsForm : Form
             _microphoneDropdown.SelectedIndex = _cfg.Transcriber.PreferredMicrophoneIndex;
         else if (_microphoneDropdown.Items.Count > 0)
             _microphoneDropdown.SelectedIndex = 0;
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Microphone",
@@ -737,25 +739,25 @@ public sealed class SettingsForm : Form
             0,
             10
         );
-        transcriber.Controls.Add(_microphoneDropdown, 1, 10);
+        panel.Controls.Add(_microphoneDropdown, 1, 10);
 
         _detectMicrophonesButton = new Button
         {
-            Text = "Detect Microphones",
+            Text = "Refresh Microphone List",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _detectMicrophonesButton!.Click += DetectMicrophones;
-        transcriber.Controls.Add(_detectMicrophonesButton, 1, 11);
+        panel.Controls.Add(_detectMicrophonesButton, 1, 11);
 
         _transcriberEnableAutoEnhance = new CheckBox
         {
-            Text = "Auto-enhance long transcriptions with LLM",
+            Text = "Polish long transcriptions with LLM",
             Checked = _cfg.Transcriber.EnableAutoEnhance,
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Auto-Enhance",
@@ -766,17 +768,17 @@ public sealed class SettingsForm : Form
             0,
             12
         );
-        transcriber.Controls.Add(_transcriberEnableAutoEnhance, 1, 12);
+        panel.Controls.Add(_transcriberEnableAutoEnhance, 1, 12);
 
         _transcriberAutoEnhanceThreshold = new TextBox
         {
             Text = _cfg.Transcriber.AutoEnhanceThresholdChars.ToString(),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Enhance Threshold (chars)",
+                Text = "Minimum text length for auto-enhance",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -784,18 +786,19 @@ public sealed class SettingsForm : Form
             0,
             13
         );
-        transcriber.Controls.Add(_transcriberAutoEnhanceThreshold, 1, 13);
+        panel.Controls.Add(_transcriberAutoEnhanceThreshold, 1, 13);
 
+        // Toggle Transcription Hotkey
         _transcriberHotkey = new TextBox
         {
             ReadOnly = true,
             Text = GetHotkeyDisplay(_cfg.TranscriberHotkey),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Hotkey",
+                Text = "Toggle Transcription Hotkey",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -803,7 +806,7 @@ public sealed class SettingsForm : Form
             0,
             14
         );
-        transcriber.Controls.Add(_transcriberHotkey, 1, 14);
+        panel.Controls.Add(_transcriberHotkey, 1, 14);
 
         _captureTranscriberHotkeyButton = new Button
         {
@@ -812,11 +815,12 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _captureTranscriberHotkeyButton!.Click += CaptureTranscriberHotkey;
-        transcriber.Controls.Add(_captureTranscriberHotkeyButton, 1, 15);
+        panel.Controls.Add(_captureTranscriberHotkeyButton, 1, 15);
 
+        // Test Connection
         _testTranscriberConnectionButton = new Button
         {
-            Text = "Test Transcription API",
+            Text = "Test ASR Connection",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
@@ -836,7 +840,7 @@ public sealed class SettingsForm : Form
         };
         transcriberTestRow.Controls.Add(_testTranscriberConnectionButton);
         transcriberTestRow.Controls.Add(_transcriberTestResultLabel);
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Test Connection",
@@ -847,7 +851,7 @@ public sealed class SettingsForm : Form
             0,
             16
         );
-        transcriber.Controls.Add(transcriberTestRow, 1, 16);
+        panel.Controls.Add(transcriberTestRow, 1, 16);
 
         // Push-to-Talk (Typeless) Hotkey
         _typelessHotkey = new TextBox
@@ -856,7 +860,7 @@ public sealed class SettingsForm : Form
             Text = GetHotkeyDisplay(_cfg.TypelessHotkey),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Push-to-Talk Hotkey",
@@ -867,7 +871,7 @@ public sealed class SettingsForm : Form
             0,
             17
         );
-        transcriber.Controls.Add(_typelessHotkey, 1, 17);
+        panel.Controls.Add(_typelessHotkey, 1, 17);
 
         _captureTypelessHotkeyButton = new Button
         {
@@ -876,15 +880,16 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _captureTypelessHotkeyButton!.Click += CaptureTypelessHotkey;
-        transcriber.Controls.Add(_captureTypelessHotkeyButton, 1, 18);
+        panel.Controls.Add(_captureTypelessHotkeyButton, 1, 18);
 
+        // Realtime Streaming Hotkey
         _streamingTranscriberHotkey = new TextBox
         {
             ReadOnly = true,
             Text = GetHotkeyDisplay(_cfg.StreamingTranscriberHotkey),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Realtime Streaming Hotkey",
@@ -895,7 +900,7 @@ public sealed class SettingsForm : Form
             0,
             19
         );
-        transcriber.Controls.Add(_streamingTranscriberHotkey, 1, 19);
+        panel.Controls.Add(_streamingTranscriberHotkey, 1, 19);
 
         _captureStreamingTranscriberHotkeyButton = new Button
         {
@@ -904,114 +909,133 @@ public sealed class SettingsForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _captureStreamingTranscriberHotkeyButton.Click += CaptureStreamingTranscriberHotkey;
-        transcriber.Controls.Add(_captureStreamingTranscriberHotkeyButton, 1, 20);
+        panel.Controls.Add(_captureStreamingTranscriberHotkeyButton, 1, 20);
 
-        // WebSocket Timeout Settings Section
-        transcriber.Controls.Add(
+        return panel;
+    }
+
+    private TableLayoutPanel CreateAdvancedTab()
+    {
+        var panel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 2,
+            Padding = DpiHelper.Scale(new Padding(16)),
+            RowCount = 9,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int i = 0; i < 9; i++)
+            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        // WebSocket Timeout Settings header
+        panel.Controls.Add(
             new Label
             {
-                Text = "WebSocket Timeout Settings",
+                Text = "WebSocket Settings",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font = new Font(this.Font, FontStyle.Bold),
             },
             0,
-            21
+            0
         );
-        transcriber.Controls.Add(new Label(), 1, 21);
+        panel.Controls.Add(new Label(), 1, 0);
 
         _wsConnectionTimeout = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketConnectionTimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Connection Timeout (sec)",
+                Text = "Connection Timeout (seconds)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            22
+            1
         );
-        transcriber.Controls.Add(_wsConnectionTimeout, 1, 22);
+        panel.Controls.Add(_wsConnectionTimeout, 1, 1);
 
         _wsReceiveTimeout = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketReceiveTimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Receive Timeout (sec)",
+                Text = "Receive Timeout (seconds)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            23
+            2
         );
-        transcriber.Controls.Add(_wsReceiveTimeout, 1, 23);
+        panel.Controls.Add(_wsReceiveTimeout, 1, 2);
 
         _wsSendTimeout = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketSendTimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Send Timeout (sec)",
+                Text = "Send Timeout (seconds)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            24
+            3
         );
-        transcriber.Controls.Add(_wsSendTimeout, 1, 24);
+        panel.Controls.Add(_wsSendTimeout, 1, 3);
 
         _wsHeartbeatInterval = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketHeartbeatIntervalSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Heartbeat Interval (sec)",
+                Text = "Heartbeat Interval (seconds)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            25
+            4
         );
-        transcriber.Controls.Add(_wsHeartbeatInterval, 1, 25);
+        panel.Controls.Add(_wsHeartbeatInterval, 1, 4);
 
         _wsHeartbeatTimeout = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketHeartbeatTimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Heartbeat Timeout (sec)",
+                Text = "Heartbeat Timeout (seconds)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            26
+            5
         );
-        transcriber.Controls.Add(_wsHeartbeatTimeout, 1, 26);
+        panel.Controls.Add(_wsHeartbeatTimeout, 1, 5);
 
-        // Add validation handlers
+        // Add validation handlers for WebSocket timeouts
         _wsConnectionTimeout.TextChanged += RefreshValidationState;
         _wsReceiveTimeout.TextChanged += RefreshValidationState;
         _wsSendTimeout.TextChanged += RefreshValidationState;
@@ -1031,7 +1055,7 @@ public sealed class SettingsForm : Form
         )
             ? "custom"
             : "openai";
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "Realtime Provider",
@@ -1040,9 +1064,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            27
+            6
         );
-        transcriber.Controls.Add(_realtimeProviderDropdown, 1, 27);
+        panel.Controls.Add(_realtimeProviderDropdown, 1, 6);
 
         _transcriberLanguage = new TextBox
         {
@@ -1050,7 +1074,7 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Fill,
             PlaceholderText = "e.g. en, zh — blank = auto (openai provider)",
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
                 Text = "ASR Language",
@@ -1059,30 +1083,30 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            28
+            7
         );
-        transcriber.Controls.Add(_transcriberLanguage, 1, 28);
+        panel.Controls.Add(_transcriberLanguage, 1, 7);
 
         _transcriberRealtimeSessionPrompt = new TextBox
         {
             Text = _cfg.Transcriber.RealtimeSessionPrompt ?? "",
             Dock = DockStyle.Fill,
-            PlaceholderText = "Optional vocabulary hint (openai realtime session)",
+            PlaceholderText = "Domain-specific vocabulary hints for realtime",
         };
-        transcriber.Controls.Add(
+        panel.Controls.Add(
             new Label
             {
-                Text = "Realtime session prompt",
+                Text = "Session Prompt (optional vocab hint)",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            29
+            8
         );
-        transcriber.Controls.Add(_transcriberRealtimeSessionPrompt, 1, 29);
+        panel.Controls.Add(_transcriberRealtimeSessionPrompt, 1, 8);
 
-        return transcriber;
+        return panel;
     }
 
     private void RefreshMicrophoneList()
@@ -1557,7 +1581,7 @@ public sealed class SettingsForm : Form
         finally
         {
             _testTranscriberConnectionButton!.Enabled = true;
-            _testTranscriberConnectionButton!.Text = "Test Transcription API";
+            _testTranscriberConnectionButton!.Text = "Test ASR Connection";
         }
     }
 
@@ -1582,6 +1606,7 @@ public sealed class SettingsForm : Form
             return;
         _cfg.TypelessHotkey.Modifiers = cap.Modifiers;
         _cfg.TypelessHotkey.Key = cap.Key;
+        _cfg.TypelessHotkey.RightAltOnly = cap.RightAltOnly;
         _typelessHotkey!.Text = GetHotkeyDisplay(_cfg.TypelessHotkey);
         RefreshValidationState(null, EventArgs.Empty);
         Logger.Log(
@@ -1721,7 +1746,7 @@ public sealed class SettingsForm : Form
             hotkey.Modifiers = 0x0003;
 
         if ((hotkey.Modifiers & 0x0001) != 0)
-            parts.Add("ALT");
+            parts.Add(hotkey.RightAltOnly ? "RALT" : "ALT");
         if ((hotkey.Modifiers & 0x0002) != 0)
             parts.Add("CTRL");
         if ((hotkey.Modifiers & 0x0004) != 0)
@@ -1830,6 +1855,7 @@ public sealed class SettingsForm : Form
 
             _cfg.TypelessHotkey.Modifiers = defaultCfg.TypelessHotkey.Modifiers;
             _cfg.TypelessHotkey.Key = defaultCfg.TypelessHotkey.Key;
+            _cfg.TypelessHotkey.RightAltOnly = defaultCfg.TypelessHotkey.RightAltOnly;
             _typelessHotkey!.Text = GetHotkeyDisplay(defaultCfg.TypelessHotkey);
 
             _cfg.StreamingTranscriberHotkey.Modifiers = defaultCfg

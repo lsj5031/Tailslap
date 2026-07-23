@@ -16,6 +16,12 @@ public sealed class HotkeyCaptureForm : Form
 
     public uint Modifiers { get; private set; }
     public uint Key { get; private set; }
+
+    /// <summary>
+    /// When true, the captured modifier-only hotkey uses the right Alt key
+    /// specifically rather than either Alt key.
+    /// </summary>
+    public bool RightAltOnly { get; private set; }
     public string Display { get; private set; } = string.Empty;
 
     public HotkeyCaptureForm(
@@ -150,6 +156,7 @@ public sealed class HotkeyCaptureForm : Form
     {
         Modifiers = 0;
         Key = 0;
+        RightAltOnly = false;
         Display = string.Empty;
         _display.Text = "Press a key combination...";
         _display.BackColor = SystemColors.Window;
@@ -167,6 +174,11 @@ public sealed class HotkeyCaptureForm : Form
             || e.KeyCode == Keys.LWin
             || e.KeyCode == Keys.RWin;
 
+        // Detect which Alt key is held (Windows synthesizes Keys.Menu for either,
+        // so we must query the individual key states directly).
+        bool rightAltDown = IsRightAltDown();
+        bool leftAltDown = IsLeftAltDown();
+
         uint mods = 0;
         if (e.Control)
             mods |= 0x0002; // MOD_CONTROL
@@ -180,12 +192,29 @@ public sealed class HotkeyCaptureForm : Form
 
         if (_allowModifierOnly && isPureModifier && mods != 0)
         {
-            Modifiers = mods;
+            // Set RightAltOnly when the user is holding right Alt exclusively
+            // (without left Alt also held) as their modifier.
+            bool rightAltExclusive = rightAltDown && !leftAltDown && (mods & 0x0001) != 0;
+
+            if (rightAltExclusive)
+            {
+                // When RightAltOnly is set, strip other modifiers to keep the config
+                // self-consistent: the KeyboardHook only checks right Alt directly,
+                // so extra modifier bits would be misleading.
+                Modifiers = 0x0001; // MOD_ALT only
+                RightAltOnly = true;
+            }
+            else
+            {
+                Modifiers = mods;
+                RightAltOnly = false;
+            }
+
             Key = 0;
-            Display = BuildModifierOnlyDisplay(mods);
+            Display = BuildModifierOnlyDisplay(Modifiers, RightAltOnly);
             _display.Text = Display;
 
-            var validationError = _validator?.Invoke(mods, 0);
+            var validationError = _validator?.Invoke(Modifiers, 0);
             if (string.IsNullOrWhiteSpace(validationError))
             {
                 SetValidationState(
@@ -211,6 +240,7 @@ public sealed class HotkeyCaptureForm : Form
 
         Modifiers = mods;
         Key = (uint)e.KeyCode;
+        RightAltOnly = false; // Only modifier-only hotkeys use RightAltOnly
         Display = BuildDisplay(e.Control, e.Alt, e.Shift, winDown, e.KeyCode);
         _display.Text = Display;
 
@@ -279,14 +309,14 @@ public sealed class HotkeyCaptureForm : Form
         return string.Join("+", parts);
     }
 
-    private static string BuildModifierOnlyDisplay(uint modifiers)
+    private static string BuildModifierOnlyDisplay(uint modifiers, bool rightAltOnly = false)
     {
         var parts = new System.Collections.Generic.List<string>();
 
         if ((modifiers & 0x0002) != 0)
             parts.Add("Ctrl");
         if ((modifiers & 0x0001) != 0)
-            parts.Add("Alt");
+            parts.Add(rightAltOnly ? "RAlt" : "Alt");
         if ((modifiers & 0x0004) != 0)
             parts.Add("Shift");
         if ((modifiers & 0x0008) != 0)
@@ -301,12 +331,38 @@ public sealed class HotkeyCaptureForm : Form
 
     private const int VK_LWIN = 0x5B;
     private const int VK_RWIN = 0x5C;
+    private const int VK_LMENU = 0xA4;
+    private const int VK_RMENU = 0xA5;
 
     private static bool IsWinDown()
     {
         try
         {
             return ((GetKeyState(VK_LWIN) & 0x8000) != 0) || ((GetKeyState(VK_RWIN) & 0x8000) != 0);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsRightAltDown()
+    {
+        try
+        {
+            return (GetKeyState(VK_RMENU) & 0x8000) != 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsLeftAltDown()
+    {
+        try
+        {
+            return (GetKeyState(VK_LMENU) & 0x8000) != 0;
         }
         catch
         {
