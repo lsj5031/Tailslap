@@ -55,7 +55,45 @@ public static class NativeInputSimulator
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
     #endregion
+
+    /// <summary>
+    /// Waits for all hotkey modifier keys to be physically released.
+    /// </summary>
+    public static bool WaitForModifierRelease(int timeoutMs = 1000, int pollMs = 15)
+    {
+        return WaitForModifierRelease(IsKeyDown, timeoutMs, pollMs);
+    }
+
+    internal static bool WaitForModifierRelease(
+        Func<ushort, bool> isKeyDown,
+        int timeoutMs = 1000,
+        int pollMs = 15
+    )
+    {
+        ushort[] modifiers = { 0x11, 0x12, 0x10, 0x5B, 0x5C };
+        long start = Environment.TickCount64;
+
+        do
+        {
+            if (!modifiers.Any(isKeyDown))
+            {
+                return true;
+            }
+
+            Thread.Sleep(pollMs);
+        } while (Environment.TickCount64 - start < timeoutMs);
+
+        return !modifiers.Any(isKeyDown);
+    }
+
+    private static bool IsKeyDown(ushort virtualKey)
+    {
+        return (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+    }
 
     /// <summary>
     /// Sends <paramref name="count"/> backspace keystrokes via scancode

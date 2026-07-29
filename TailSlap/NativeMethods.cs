@@ -4,6 +4,9 @@ using System.Runtime.InteropServices;
 internal static class NativeMethods
 {
     public const uint COINIT_MULTITHREADED = 0x0;
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    public const uint TOKEN_QUERY = 0x0008;
+    public const int TokenElevation = 20;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct GUITHREADINFO
@@ -52,4 +55,31 @@ internal static class NativeMethods
 
     [DllImport("ole32.dll")]
     internal static extern void CoUninitialize();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    internal static extern IntPtr OpenProcess(
+        uint dwDesiredAccess,
+        bool bInheritHandle,
+        uint dwProcessId
+    );
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    internal static extern bool OpenProcessToken(
+        IntPtr processHandle,
+        uint desiredAccess,
+        out IntPtr tokenHandle
+    );
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    internal static extern bool GetTokenInformation(
+        IntPtr tokenHandle,
+        int tokenInformationClass,
+        out int tokenInformation,
+        int tokenInformationLength,
+        out int returnLength
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CloseHandle(IntPtr hObject);
 }

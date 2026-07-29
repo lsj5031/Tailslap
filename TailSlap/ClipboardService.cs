@@ -82,6 +82,9 @@ public sealed class ClipboardService : IClipboardService
     [DllImport("user32.dll")]
     private static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+
     private const uint WM_COPY = 0x0301;
     private const uint WM_PASTE = 0x0302;
     private const uint WM_GETTEXT = 0x000D;
@@ -92,6 +95,8 @@ public sealed class ClipboardService : IClipboardService
     private const uint KEYEVENTF_SCANCODE = 0x0008;
     private const uint MAPVK_VK_TO_VSC = 0x0;
     private const int SW_RESTORE = 9;
+    private const int GWL_STYLE = -16;
+    private const long ES_READONLY = 0x0800;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
@@ -115,6 +120,105 @@ public sealed class ClipboardService : IClipboardService
         public uint dwFlags;
         public uint time;
         public IntPtr dwExtraInfo;
+    }
+
+    private static bool IsTargetElevatedAboveSelf(IntPtr foregroundWindow)
+    {
+        if (foregroundWindow == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr targetProcess = IntPtr.Zero;
+        IntPtr targetToken = IntPtr.Zero;
+        IntPtr selfToken = IntPtr.Zero;
+
+        try
+        {
+            NativeMethods.GetWindowThreadProcessId(foregroundWindow, out uint targetProcessId);
+            if (targetProcessId == 0)
+            {
+                return false;
+            }
+
+            targetProcess = NativeMethods.OpenProcess(
+                NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION,
+                false,
+                targetProcessId
+            );
+            if (targetProcess == IntPtr.Zero)
+            {
+                return Marshal.GetLastWin32Error() == 5;
+            }
+
+            if (
+                !TryGetTokenElevation(targetProcess, out bool targetElevated)
+                || !TryGetTokenElevation(Process.GetCurrentProcess().Handle, out bool selfElevated)
+            )
+            {
+                return false;
+            }
+
+            return targetElevated && !selfElevated;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (targetToken != IntPtr.Zero)
+            {
+                NativeMethods.CloseHandle(targetToken);
+            }
+
+            if (selfToken != IntPtr.Zero)
+            {
+                NativeMethods.CloseHandle(selfToken);
+            }
+
+            if (targetProcess != IntPtr.Zero)
+            {
+                NativeMethods.CloseHandle(targetProcess);
+            }
+        }
+
+        bool TryGetTokenElevation(IntPtr processHandle, out bool elevated)
+        {
+            elevated = false;
+            IntPtr token = IntPtr.Zero;
+            if (
+                !NativeMethods.OpenProcessToken(processHandle, NativeMethods.TOKEN_QUERY, out token)
+            )
+            {
+                return false;
+            }
+
+            if (processHandle == targetProcess)
+            {
+                targetToken = token;
+            }
+            else
+            {
+                selfToken = token;
+            }
+
+            if (
+                !NativeMethods.GetTokenInformation(
+                    token,
+                    NativeMethods.TokenElevation,
+                    out int tokenElevation,
+                    sizeof(int),
+                    out _
+                )
+            )
+            {
+                return false;
+            }
+
+            elevated = tokenElevation != 0;
+            return true;
+        }
     }
 
     private static string DescribeWindow(IntPtr hWnd)
@@ -1089,6 +1193,37 @@ public sealed class ClipboardService : IClipboardService
                 catch { }
             }
 
+            if (IsTargetElevatedAboveSelf(foregroundWindow))
+            {
+                try
+                {
+                    NativeMethods.GetWindowThreadProcessId(
+                        foregroundWindow,
+                        out uint targetProcessId
+                    );
+                    Logger.Log(
+                        $"PasteAsync: Paste blocked because target process {targetProcessId} is elevated above TailSlap"
+                    );
+                }
+                catch { }
+
+                NotificationService.ShowError(
+                    "Cannot paste into an elevated (admin) window. Text is on your clipboard — press Ctrl+V."
+                );
+                return false;
+            }
+
+            if (!TailSlap.NativeInputSimulator.WaitForModifierRelease(1000))
+            {
+                try
+                {
+                    Logger.Log(
+                        "PasteAsync: Modifier release wait timed out; proceeding with paste"
+                    );
+                }
+                catch { }
+            }
+
             await Task.Delay(250).ConfigureAwait(true); // Increased delay for better focus restoration
             bool success = await PasteWithMultipleMethodsAsync();
             if (!success)
@@ -1204,6 +1339,18 @@ public sealed class ClipboardService : IClipboardService
                 return false;
             }
 
+            if ((GetWindowLongPtr(targetWindow, GWL_STYLE).ToInt64() & ES_READONLY) != 0)
+            {
+                try
+                {
+                    Logger.Log(
+                        $"TryPasteWindowMessageAsync: Skipping read-only target {DescribeWindow(targetWindow)}"
+                    );
+                }
+                catch { }
+                return false;
+            }
+
             try
             {
                 Logger.Log(
@@ -1212,10 +1359,14 @@ public sealed class ClipboardService : IClipboardService
             }
             catch { }
 
-            NormalizeInputState();
-            SendMessage(targetWindow, WM_PASTE, IntPtr.Zero, IntPtr.Zero);
-            await Task.Delay(75).ConfigureAwait(true);
-            return true;
+            return await VerifyPasteDeliveryAsync(
+                targetWindow,
+                () =>
+                {
+                    NormalizeInputState();
+                    SendMessage(targetWindow, WM_PASTE, IntPtr.Zero, IntPtr.Zero);
+                }
+            );
         }
         catch
         {
@@ -1223,10 +1374,57 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
+    private static async System.Threading.Tasks.Task<bool> VerifyPasteDeliveryAsync(
+        IntPtr targetWindow,
+        Action pasteAction
+    )
+    {
+        int lengthBefore = (int)SendMessage(
+            targetWindow,
+            WM_GETTEXTLENGTH,
+            IntPtr.Zero,
+            IntPtr.Zero
+        );
+        pasteAction();
+        await Task.Delay(75).ConfigureAwait(true);
+        int lengthAfter = (int)SendMessage(
+            targetWindow,
+            WM_GETTEXTLENGTH,
+            IntPtr.Zero,
+            IntPtr.Zero
+        );
+        bool delivered = lengthAfter > lengthBefore;
+        if (!delivered)
+        {
+            try
+            {
+                Logger.Log(
+                    $"Paste verification failed: target text length unchanged ({lengthBefore}->{lengthAfter})"
+                );
+            }
+            catch { }
+        }
+
+        return delivered;
+    }
+
     private async System.Threading.Tasks.Task<bool> TryPasteCtrlVAsync()
     {
         try
         {
+            var targetWindow = ResolvePasteTarget();
+            if (SupportsWindowMessagePaste(targetWindow))
+            {
+                return await VerifyPasteDeliveryAsync(
+                    targetWindow,
+                    () =>
+                    {
+                        NormalizeInputState();
+                        SendKeys.SendWait("^v");
+                    }
+                );
+            }
+
             NormalizeInputState();
             SendKeys.SendWait("^v");
             await Task.Delay(75).ConfigureAwait(true);
@@ -1242,6 +1440,19 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
+            var targetWindow = ResolvePasteTarget();
+            if (SupportsWindowMessagePaste(targetWindow))
+            {
+                return await VerifyPasteDeliveryAsync(
+                    targetWindow,
+                    () =>
+                    {
+                        NormalizeInputState();
+                        SendKeys.SendWait("+{INSERT}");
+                    }
+                );
+            }
+
             NormalizeInputState();
             SendKeys.SendWait("+{INSERT}");
             await Task.Delay(75).ConfigureAwait(true);
@@ -1257,16 +1468,26 @@ public sealed class ClipboardService : IClipboardService
     {
         try
         {
-            // Use SendInput for more reliable paste
-            NormalizeInputState();
-            ushort[] modifiers =
+            var targetWindow = ResolvePasteTarget();
+            void PasteWithSendInput()
             {
-                0x11, /*CTRL*/
-            };
-            SendChordScancode(
-                modifiers,
-                0x56 /*'V'*/
-            );
+                NormalizeInputState();
+                ushort[] modifiers =
+                {
+                    0x11, /*CTRL*/
+                };
+                SendChordScancode(
+                    modifiers,
+                    0x56 /*'V'*/
+                );
+            }
+
+            if (SupportsWindowMessagePaste(targetWindow))
+            {
+                return await VerifyPasteDeliveryAsync(targetWindow, PasteWithSendInput);
+            }
+
+            PasteWithSendInput();
             await Task.Delay(75).ConfigureAwait(true);
             return true;
         }
@@ -1274,6 +1495,18 @@ public sealed class ClipboardService : IClipboardService
         {
             return false;
         }
+    }
+
+    private static IntPtr ResolvePasteTarget()
+    {
+        var foregroundWindow = NativeMethods.GetForegroundWindow();
+        if (foregroundWindow == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        var targetWindow = ResolveFocusHwnd(foregroundWindow);
+        return targetWindow != IntPtr.Zero ? targetWindow : foregroundWindow;
     }
 
     private static bool SupportsWindowMessagePaste(IntPtr hWnd)
