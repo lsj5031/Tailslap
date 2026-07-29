@@ -8,14 +8,10 @@ using System.Text.Json.Serialization;
 
 public sealed class HistoryService : IHistoryService
 {
-    private static string Dir =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "TailSlap"
-        );
-    private static string FilePath => Path.Combine(Dir, "history.jsonl.encrypted");
-    private static string TranscriptionFilePath =>
-        Path.Combine(Dir, "transcription-history.jsonl.encrypted");
+    private readonly string _directory;
+    private readonly string _filePath;
+    private readonly string _transcriptionFilePath;
+    private readonly object _fileLock = new();
     private const int MaxEntries = 50;
 
     private static readonly JsonSerializerOptions JsonLOptions = new()
@@ -29,6 +25,25 @@ public sealed class HistoryService : IHistoryService
     private int _refinementAppendCount = 0;
     private int _transcriptionAppendCount = 0;
     private const int TrimInterval = 10;
+
+    public HistoryService()
+        : this(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "TailSlap"
+            )
+        ) { }
+
+    public HistoryService(string baseDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(baseDirectory);
+        _directory = baseDirectory;
+        _filePath = Path.Combine(baseDirectory, "history.jsonl.encrypted");
+        _transcriptionFilePath = Path.Combine(
+            baseDirectory,
+            "transcription-history.jsonl.encrypted"
+        );
+    }
 
     private static string EncryptString(string plaintext)
     {
@@ -85,39 +100,41 @@ public sealed class HistoryService : IHistoryService
             return;
         }
 
-        try
-        {
-            Directory.CreateDirectory(Dir);
-
-            var entry = new HistoryEntry
-            {
-                Timestamp = DateTime.Now,
-                Model = model, // Model name isn't sensitive
-                OriginalCiphertext = EncryptString(original),
-                RefinedCiphertext = EncryptString(refined),
-            };
-
-            var line = JsonSerializer.Serialize(entry, JsonLOptions);
-            int entrySize = line.Length;
-            File.AppendAllText(FilePath, line + Environment.NewLine);
-            DiagnosticsEventSource.Log.HistoryAppend("refinement", entrySize);
-            _refinementAppendCount++;
-            if (_refinementAppendCount >= TrimInterval)
-            {
-                _refinementAppendCount = 0;
-                Trim();
-            }
-        }
-        catch (Exception ex)
+        lock (_fileLock)
         {
             try
             {
-                Logger.Log($"Encrypted history append failed: {ex.Message}");
+                Directory.CreateDirectory(_directory);
+
+                var entry = new HistoryEntry
+                {
+                    Timestamp = DateTime.Now,
+                    Model = model, // Model name isn't sensitive
+                    OriginalCiphertext = EncryptString(original),
+                    RefinedCiphertext = EncryptString(refined),
+                };
+
+                var line = JsonSerializer.Serialize(entry, JsonLOptions);
+                int entrySize = line.Length;
+                File.AppendAllText(_filePath, line + Environment.NewLine);
+                DiagnosticsEventSource.Log.HistoryAppend("refinement", entrySize);
+                _refinementAppendCount++;
+                if (_refinementAppendCount >= TrimInterval)
+                {
+                    _refinementAppendCount = Trim() ? TrimInterval - 1 : 0;
+                }
             }
-            catch { }
-            NotificationService.ShowError(
-                "Failed to save encrypted history entry. Check disk space and permissions."
-            );
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Log($"Encrypted history append failed: {ex.Message}");
+                }
+                catch { }
+                NotificationService.ShowError(
+                    "Failed to save encrypted history entry. Check disk space and permissions."
+                );
+            }
         }
     }
 
@@ -126,11 +143,11 @@ public sealed class HistoryService : IHistoryService
         var result = new List<(DateTime, string, string, string)>();
         try
         {
-            if (!File.Exists(FilePath))
+            if (!File.Exists(_filePath))
                 return result;
 
             using var stream = new FileStream(
-                FilePath,
+                _filePath,
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite
@@ -192,9 +209,12 @@ public sealed class HistoryService : IHistoryService
         return result;
     }
 
-    private void Trim()
+    private bool Trim()
     {
-        TrimJsonlFile(FilePath, "refinement");
+        lock (_fileLock)
+        {
+            return TrimJsonlFile(_filePath, "refinement");
+        }
     }
 
     public void AppendTranscription(string text, int recordingDurationMs)
@@ -209,38 +229,40 @@ public sealed class HistoryService : IHistoryService
             return;
         }
 
-        try
-        {
-            Directory.CreateDirectory(Dir);
-
-            var entry = new TranscriptionHistoryEntry
-            {
-                Timestamp = DateTime.Now,
-                TextCiphertext = EncryptString(text),
-                RecordingDurationMs = recordingDurationMs,
-            };
-
-            var line = JsonSerializer.Serialize(entry, JsonLOptions);
-            int entrySize = line.Length;
-            File.AppendAllText(TranscriptionFilePath, line + Environment.NewLine);
-            DiagnosticsEventSource.Log.HistoryAppend("transcription", entrySize);
-            _transcriptionAppendCount++;
-            if (_transcriptionAppendCount >= TrimInterval)
-            {
-                _transcriptionAppendCount = 0;
-                TrimTranscriptions();
-            }
-        }
-        catch (Exception ex)
+        lock (_fileLock)
         {
             try
             {
-                Logger.Log($"Encrypted transcription history append failed: {ex.Message}");
+                Directory.CreateDirectory(_directory);
+
+                var entry = new TranscriptionHistoryEntry
+                {
+                    Timestamp = DateTime.Now,
+                    TextCiphertext = EncryptString(text),
+                    RecordingDurationMs = recordingDurationMs,
+                };
+
+                var line = JsonSerializer.Serialize(entry, JsonLOptions);
+                int entrySize = line.Length;
+                File.AppendAllText(_transcriptionFilePath, line + Environment.NewLine);
+                DiagnosticsEventSource.Log.HistoryAppend("transcription", entrySize);
+                _transcriptionAppendCount++;
+                if (_transcriptionAppendCount >= TrimInterval)
+                {
+                    _transcriptionAppendCount = TrimTranscriptions() ? TrimInterval - 1 : 0;
+                }
             }
-            catch { }
-            NotificationService.ShowError(
-                "Failed to save encrypted transcription history. Check disk space and permissions."
-            );
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Log($"Encrypted transcription history append failed: {ex.Message}");
+                }
+                catch { }
+                NotificationService.ShowError(
+                    "Failed to save encrypted transcription history. Check disk space and permissions."
+                );
+            }
         }
     }
 
@@ -249,11 +271,11 @@ public sealed class HistoryService : IHistoryService
         var result = new List<(DateTime, string, int)>();
         try
         {
-            if (!File.Exists(TranscriptionFilePath))
+            if (!File.Exists(_transcriptionFilePath))
                 return result;
 
             using var stream = new FileStream(
-                TranscriptionFilePath,
+                _transcriptionFilePath,
                 FileMode.Open,
                 FileAccess.Read,
                 FileShare.ReadWrite
@@ -311,18 +333,22 @@ public sealed class HistoryService : IHistoryService
         return result;
     }
 
-    private void TrimTranscriptions()
+    private bool TrimTranscriptions()
     {
-        TrimJsonlFile(TranscriptionFilePath, "transcription");
+        lock (_fileLock)
+        {
+            return TrimJsonlFile(_transcriptionFilePath, "transcription");
+        }
     }
 
-    private void TrimJsonlFile(string filePath, string historyType)
+    private bool TrimJsonlFile(string filePath, string historyType)
     {
         try
         {
             if (!File.Exists(filePath))
-                return;
+                return false;
 
+            List<string> allEntries;
             using (
                 var stream = new FileStream(
                     filePath,
@@ -333,37 +359,38 @@ public sealed class HistoryService : IHistoryService
             )
             using (var reader = new StreamReader(stream))
             {
-                var allEntries = ReadRawJsonEntries(reader);
-
-                if (allEntries.Count <= MaxEntries)
-                    return;
-
-                int beforeCount = allEntries.Count;
-                var trimmedEntries = allEntries.GetRange(allEntries.Count - MaxEntries, MaxEntries);
-                int afterCount = trimmedEntries.Count;
-
-                var tempPath = filePath + ".tmp";
-                using (
-                    var writeStream = new FileStream(
-                        tempPath,
-                        FileMode.Create,
-                        FileAccess.Write,
-                        FileShare.None
-                    )
-                )
-                using (var writer = new StreamWriter(writeStream))
-                {
-                    foreach (var rawEntry in trimmedEntries)
-                    {
-                        writer.Write(rawEntry);
-                        writer.WriteLine();
-                    }
-                }
-
-                File.Move(tempPath, filePath, overwrite: true);
-
-                DiagnosticsEventSource.Log.HistoryTrim(historyType, beforeCount, afterCount);
+                allEntries = ReadRawJsonEntries(reader);
             }
+
+            if (allEntries.Count <= MaxEntries)
+                return false;
+
+            int beforeCount = allEntries.Count;
+            var trimmedEntries = allEntries.GetRange(allEntries.Count - MaxEntries, MaxEntries);
+            int afterCount = trimmedEntries.Count;
+
+            var tempPath = filePath + ".tmp";
+            using (
+                var writeStream = new FileStream(
+                    tempPath,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.None
+                )
+            )
+            using (var writer = new StreamWriter(writeStream))
+            {
+                foreach (var rawEntry in trimmedEntries)
+                {
+                    writer.Write(rawEntry);
+                    writer.WriteLine();
+                }
+            }
+
+            File.Move(tempPath, filePath, overwrite: true);
+
+            DiagnosticsEventSource.Log.HistoryTrim(historyType, beforeCount, afterCount);
+            return true;
         }
         catch (Exception ex)
         {
@@ -375,6 +402,7 @@ public sealed class HistoryService : IHistoryService
             NotificationService.ShowWarning(
                 $"Failed to trim encrypted {historyType} history. File may grow large."
             );
+            return false;
         }
     }
 
@@ -458,47 +486,56 @@ public sealed class HistoryService : IHistoryService
 
     public void ClearRefinementHistory()
     {
-        try
-        {
-            if (File.Exists(FilePath))
-                File.Delete(FilePath);
-        }
-        catch (Exception ex)
+        lock (_fileLock)
         {
             try
             {
-                Logger.Log($"Failed to clear encrypted refinement history: {ex.Message}");
+                if (File.Exists(_filePath))
+                    File.Delete(_filePath);
             }
-            catch { }
-            NotificationService.ShowError(
-                "Failed to clear encrypted refinement history. Check file permissions."
-            );
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Log($"Failed to clear encrypted refinement history: {ex.Message}");
+                }
+                catch { }
+                NotificationService.ShowError(
+                    "Failed to clear encrypted refinement history. Check file permissions."
+                );
+            }
         }
     }
 
     public void ClearTranscriptionHistory()
     {
-        try
-        {
-            if (File.Exists(TranscriptionFilePath))
-                File.Delete(TranscriptionFilePath);
-        }
-        catch (Exception ex)
+        lock (_fileLock)
         {
             try
             {
-                Logger.Log($"Failed to clear encrypted transcription history: {ex.Message}");
+                if (File.Exists(_transcriptionFilePath))
+                    File.Delete(_transcriptionFilePath);
             }
-            catch { }
-            NotificationService.ShowError(
-                "Failed to clear encrypted transcription history. Check file permissions."
-            );
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Log($"Failed to clear encrypted transcription history: {ex.Message}");
+                }
+                catch { }
+                NotificationService.ShowError(
+                    "Failed to clear encrypted transcription history. Check file permissions."
+                );
+            }
         }
     }
 
     public void ClearAll()
     {
-        ClearRefinementHistory();
-        ClearTranscriptionHistory();
+        lock (_fileLock)
+        {
+            ClearRefinementHistory();
+            ClearTranscriptionHistory();
+        }
     }
 }
