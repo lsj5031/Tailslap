@@ -224,16 +224,33 @@ public class TypelessControllerTests
         textTyper ??= new TestableTextTyper(clipboardMock.Object);
 
         var clipboardHelper = new ClipboardHelper(clipboardMock.Object);
+        var resultSink = new TranscriptionResultSink(
+            historyMock.Object,
+            refinerFactoryMock.Object,
+            clipboardHelper,
+            clipboardMock.Object,
+            textTyper
+        );
 
         return new TypelessController(
             configMock.Object,
-            clipboardHelper,
             transcriberFactoryMock.Object,
             recorderFactoryMock.Object,
-            historyMock.Object,
-            refinerFactoryMock.Object,
             textTyper,
+            resultSink,
             recordFunc
+        );
+    }
+
+    private static TranscriptionResultSink CreateResultSink()
+    {
+        var clipboard = new Mock<IClipboardService>();
+        return new TranscriptionResultSink(
+            new Mock<IHistoryService>().Object,
+            new Mock<ITextRefinerFactory>().Object,
+            new ClipboardHelper(clipboard.Object),
+            clipboard.Object,
+            new TestableTextTyper(clipboard.Object)
         );
     }
 
@@ -245,29 +262,10 @@ public class TypelessControllerTests
         Assert.Throws<ArgumentNullException>(() =>
             new TypelessController(
                 null!,
-                new ClipboardHelper(new Mock<IClipboardService>().Object),
                 new Mock<IRemoteTranscriberFactory>().Object,
                 new Mock<IAudioRecorderFactory>().Object,
-                new Mock<IHistoryService>().Object,
-                new Mock<ITextRefinerFactory>().Object,
                 new TestableTextTyper(new Mock<IClipboardService>().Object),
-                CreateRecordFunc()
-            )
-        );
-    }
-
-    [Fact]
-    public void Constructor_NullClipboardHelper_ThrowsArgumentNullException()
-    {
-        Assert.Throws<ArgumentNullException>(() =>
-            new TypelessController(
-                null!,
-                new ClipboardHelper(new Mock<IClipboardService>().Object),
-                new Mock<IRemoteTranscriberFactory>().Object,
-                new Mock<IAudioRecorderFactory>().Object,
-                new Mock<IHistoryService>().Object,
-                new Mock<ITextRefinerFactory>().Object,
-                new TestableTextTyper(new Mock<IClipboardService>().Object),
+                CreateResultSink(),
                 CreateRecordFunc()
             )
         );
@@ -279,12 +277,10 @@ public class TypelessControllerTests
         Assert.Throws<ArgumentNullException>(() =>
             new TypelessController(
                 CreateMockConfigService().Object,
-                new ClipboardHelper(new Mock<IClipboardService>().Object),
                 null!,
                 new Mock<IAudioRecorderFactory>().Object,
-                new Mock<IHistoryService>().Object,
-                new Mock<ITextRefinerFactory>().Object,
                 new TestableTextTyper(new Mock<IClipboardService>().Object),
+                CreateResultSink(),
                 CreateRecordFunc()
             )
         );
@@ -296,53 +292,14 @@ public class TypelessControllerTests
         Assert.Throws<ArgumentNullException>(() =>
             new TypelessController(
                 CreateMockConfigService().Object,
-                new ClipboardHelper(new Mock<IClipboardService>().Object),
                 new Mock<IRemoteTranscriberFactory>().Object,
                 null!,
-                new Mock<IHistoryService>().Object,
-                new Mock<ITextRefinerFactory>().Object,
                 new TestableTextTyper(new Mock<IClipboardService>().Object),
+                CreateResultSink(),
                 CreateRecordFunc()
             )
         );
     }
-
-    [Fact]
-    public void Constructor_NullHistoryService_ThrowsArgumentNullException()
-    {
-        Assert.Throws<ArgumentNullException>(() =>
-            new TypelessController(
-                CreateMockConfigService().Object,
-                new ClipboardHelper(new Mock<IClipboardService>().Object),
-                new Mock<IRemoteTranscriberFactory>().Object,
-                new Mock<IAudioRecorderFactory>().Object,
-                null!,
-                new Mock<ITextRefinerFactory>().Object,
-                new TestableTextTyper(new Mock<IClipboardService>().Object),
-                CreateRecordFunc()
-            )
-        );
-    }
-
-    [Fact]
-    public void Constructor_NullRefinerFactory_ThrowsArgumentNullException()
-    {
-        Assert.Throws<ArgumentNullException>(() =>
-            new TypelessController(
-                CreateMockConfigService().Object,
-                new ClipboardHelper(new Mock<IClipboardService>().Object),
-                new Mock<IRemoteTranscriberFactory>().Object,
-                new Mock<IAudioRecorderFactory>().Object,
-                new Mock<IHistoryService>().Object,
-                null!,
-                new TestableTextTyper(new Mock<IClipboardService>().Object),
-                CreateRecordFunc()
-            )
-        );
-    }
-
-    // Constructor_NullRecordFunc test removed: the internal constructor now accepts null
-    // because the public constructor sets _recordFunc after chaining.
 
     [Fact]
     public void Constructor_NullTextTyper_ThrowsArgumentNullException()
@@ -350,16 +307,32 @@ public class TypelessControllerTests
         Assert.Throws<ArgumentNullException>(() =>
             new TypelessController(
                 CreateMockConfigService().Object,
-                new ClipboardHelper(new Mock<IClipboardService>().Object),
                 new Mock<IRemoteTranscriberFactory>().Object,
                 new Mock<IAudioRecorderFactory>().Object,
-                new Mock<IHistoryService>().Object,
-                new Mock<ITextRefinerFactory>().Object,
+                null!,
+                CreateResultSink(),
+                CreateRecordFunc()
+            )
+        );
+    }
+
+    [Fact]
+    public void Constructor_NullResultSink_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new TypelessController(
+                CreateMockConfigService().Object,
+                new Mock<IRemoteTranscriberFactory>().Object,
+                new Mock<IAudioRecorderFactory>().Object,
+                new TestableTextTyper(new Mock<IClipboardService>().Object),
                 null!,
                 CreateRecordFunc()
             )
         );
     }
+
+    // Constructor_NullRecordFunc test removed: the internal constructor now accepts null
+    // because the public constructor sets _recordFunc after chaining.
 
     [Fact]
     public void Constructor_ValidArgs_InitializesCorrectly()

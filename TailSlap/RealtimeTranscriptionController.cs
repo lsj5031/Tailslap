@@ -12,8 +12,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private readonly IClipboardService _clip;
     private readonly IRealtimeTranscriberFactory _transcriberFactory;
     private readonly IAudioRecorderFactory _audioRecorderFactory;
-    private readonly IHistoryService _history;
-    private readonly ITextRefinerFactory _textRefinerFactory;
+    private readonly ITranscriptionResultSink _resultSink;
 
     private StreamingState _streamingState = StreamingState.Idle;
     private readonly object _streamingStateLock = new();
@@ -84,13 +83,12 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         public required bool IsFinal { get; set; }
     }
 
-    public RealtimeTranscriptionController(
+    internal RealtimeTranscriptionController(
         IConfigService config,
         IClipboardService clip,
         IRealtimeTranscriberFactory transcriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
-        IHistoryService history,
-        ITextRefinerFactory textRefinerFactory
+        ITranscriptionResultSink resultSink
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -99,9 +97,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             transcriberFactory ?? throw new ArgumentNullException(nameof(transcriberFactory));
         _audioRecorderFactory =
             audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
-        _history = history ?? throw new ArgumentNullException(nameof(history));
-        _textRefinerFactory =
-            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
+        _resultSink = resultSink ?? throw new ArgumentNullException(nameof(resultSink));
     }
 
     public async Task TriggerStreamingAsync()
@@ -1130,67 +1126,18 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                         ? 0
                         : (int)Math.Max(0, (DateTime.UtcNow - sessionStart).TotalMilliseconds);
 
-                var rawSessionText = sessionText;
-                try
-                {
-                    var cfg = _config.CreateValidatedCopy();
-                    sessionText = await TranscriptionAutoEnhancer
-                        .MaybeEnhanceAsync(sessionText, cfg, _textRefinerFactory)
-                        .ConfigureAwait(false);
-
-                    if (
-                        !string.Equals(rawSessionText, sessionText, StringComparison.Ordinal)
-                        && !string.IsNullOrWhiteSpace(sessionText)
+                var cfg = _config.CreateValidatedCopy();
+                var result = await _resultSink
+                    .ProcessAsync(
+                        new TranscriptionResultRequest(
+                            sessionText,
+                            cfg,
+                            durationMs,
+                            TranscriptionDeliveryPolicy.EnhancedToClipboardWithNotice
+                        )
                     )
-                    {
-                        // B2: clipboard + notify — safer than rewriting already-typed realtime text.
-                        try
-                        {
-                            await _clip.SetTextAsync(sessionText).ConfigureAwait(false);
-                            NotificationService.ShowInfo(
-                                "Enhanced transcript is on the clipboard (Ctrl+V to paste)."
-                            );
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Log(
-                                $"RealtimeTranscriptionController: Failed to place enhanced text on clipboard: {ex.GetType().Name}"
-                            );
-                        }
-
-                        try
-                        {
-                            _history.Append(rawSessionText, sessionText, cfg.Llm.Model);
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.Log(
-                                $"RealtimeTranscriptionController: Refinement history save failed: {ex.GetType().Name}"
-                            );
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log(
-                        $"RealtimeTranscriptionController: Auto-enhance failed: {ex.GetType().Name}"
-                    );
-                    sessionText = rawSessionText;
-                }
-
-                try
-                {
-                    _history.AppendTranscription(rawSessionText, durationMs);
-                    Logger.Log(
-                        $"RealtimeTranscriptionController: History saved, len={rawSessionText.Length}, duration={durationMs}ms"
-                    );
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log(
-                        $"RealtimeTranscriptionController: History save failed: {ex.GetType().Name}"
-                    );
-                }
+                    .ConfigureAwait(false);
+                sessionText = result.FinalText;
 
                 NotificationService.ShowSuccess("Real-time transcription complete.");
             }

@@ -13,12 +13,10 @@ namespace TailSlap;
 public sealed class TypelessController : ITypelessController
 {
     private readonly IConfigService _config;
-    private readonly ClipboardHelper _clipboardHelper;
     private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
     private readonly IAudioRecorderFactory _audioRecorderFactory;
-    private readonly IHistoryService _history;
-    private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly TextTyper _textTyper;
+    private readonly ITranscriptionResultSink _resultSink;
 
     /// <summary>
     /// Recording delegate — can be overridden in tests to avoid needing a real AudioRecorder.
@@ -72,23 +70,19 @@ public sealed class TypelessController : ITypelessController
     /// <summary>
     /// Creates a TypelessController for production use with a real AudioRecorder.
     /// </summary>
-    public TypelessController(
+    internal TypelessController(
         IConfigService config,
-        ClipboardHelper clipboardHelper,
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
-        IHistoryService history,
-        ITextRefinerFactory textRefinerFactory,
-        TextTyper textTyper
+        TextTyper textTyper,
+        ITranscriptionResultSink resultSink
     )
         : this(
             config,
-            clipboardHelper,
             remoteTranscriberFactory,
             audioRecorderFactory,
-            history,
-            textRefinerFactory,
             textTyper,
+            resultSink,
             null!
         )
     {
@@ -100,27 +94,21 @@ public sealed class TypelessController : ITypelessController
     /// </summary>
     internal TypelessController(
         IConfigService config,
-        ClipboardHelper clipboardHelper,
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
-        IHistoryService history,
-        ITextRefinerFactory textRefinerFactory,
         TextTyper textTyper,
+        ITranscriptionResultSink resultSink,
         Func<AppConfig, string, CancellationToken, Task<RecordingStats>> recordFunc
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _clipboardHelper =
-            clipboardHelper ?? throw new ArgumentNullException(nameof(clipboardHelper));
         _remoteTranscriberFactory =
             remoteTranscriberFactory
             ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
         _audioRecorderFactory =
             audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
-        _history = history ?? throw new ArgumentNullException(nameof(history));
-        _textRefinerFactory =
-            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
         _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
+        _resultSink = resultSink ?? throw new ArgumentNullException(nameof(resultSink));
         _recordFunc = recordFunc; // null for production; set after by public constructor
     }
 
@@ -475,118 +463,24 @@ public sealed class TypelessController : ITypelessController
             return;
         }
 
-        var finalText = await MaybeEnhanceTranscriptionAsync(transcriptionText, cfg)
+        var result = await _resultSink
+            .ProcessAsync(
+                new TranscriptionResultRequest(
+                    transcriptionText,
+                    cfg,
+                    durationMs,
+                    TranscriptionDeliveryPolicy.DeliverOnlyIfEnhanced
+                )
+            )
             .ConfigureAwait(false);
-
-        if (!string.Equals(finalText, transcriptionText, StringComparison.Ordinal))
-        {
-            await ApplyEnhancedTextAsync(finalText, cfg).ConfigureAwait(false);
-        }
-
-        PersistHistoryEntries(transcriptionText, finalText, cfg, durationMs);
 
         try
         {
             Logger.Log(
-                $"TypelessController: Transcription completed, sha256={Hashing.Sha256Hex(finalText)}"
+                $"TypelessController: Transcription completed, sha256={Hashing.Sha256Hex(result.FinalText)}"
             );
         }
         catch { }
-    }
-
-    private async Task<string> MaybeEnhanceTranscriptionAsync(
-        string transcriptionText,
-        AppConfig cfg
-    )
-    {
-        return await TranscriptionAutoEnhancer
-            .MaybeEnhanceAsync(transcriptionText, cfg, _textRefinerFactory)
-            .ConfigureAwait(false);
-    }
-
-    private async Task ApplyEnhancedTextAsync(string finalText, AppConfig cfg)
-    {
-        try
-        {
-            if (cfg.Transcriber.AutoPaste)
-            {
-                var typeResult = await _textTyper
-                    .TypeAsync(finalText, autoPaste: true)
-                    .ConfigureAwait(false);
-
-                if (!typeResult.DeliverySuccess)
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"TypelessController: TextTyper delivery failed for enhanced final text (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
-                        );
-                    }
-                    catch { }
-                }
-
-                return;
-            }
-
-            await _clipboardHelper
-                .SetTextAndPasteAsync(finalText, autoPaste: false)
-                .ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                Logger.Log(
-                    $"TypelessController: Failed to apply enhanced text: {ex.GetType().Name}: {ex.Message}"
-                );
-            }
-            catch { }
-        }
-    }
-
-    private void PersistHistoryEntries(
-        string transcriptionText,
-        string finalText,
-        AppConfig cfg,
-        int durationMs
-    )
-    {
-        try
-        {
-            _history.AppendTranscription(transcriptionText, durationMs);
-            Logger.Log(
-                $"TypelessController: History entry saved, len={transcriptionText.Length}, duration={durationMs}ms"
-            );
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                Logger.Log($"TypelessController: Failed to save history: {ex.Message}");
-            }
-            catch { }
-        }
-
-        if (string.Equals(transcriptionText, finalText, StringComparison.Ordinal))
-            return;
-
-        try
-        {
-            _history.Append(transcriptionText, finalText, cfg.Llm.Model);
-            Logger.Log(
-                $"TypelessController: Enhanced transcription logged to refinement history, len={finalText.Length}, model={cfg.Llm.Model}"
-            );
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                Logger.Log(
-                    $"TypelessController: Failed to save enhanced transcription history: {ex.Message}"
-                );
-            }
-            catch { }
-        }
     }
 
     private void CleanupTempFile()

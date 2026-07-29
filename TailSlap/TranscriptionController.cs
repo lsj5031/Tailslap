@@ -11,10 +11,8 @@ public sealed class TranscriptionController : ITranscriptionController
     private readonly IConfigService _config;
     private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
     private readonly IAudioRecorderFactory _audioRecorderFactory;
-    private readonly IHistoryService _history;
-    private readonly ITextRefinerFactory _textRefinerFactory;
-    private readonly ClipboardHelper _clipboardHelper;
     private readonly TextTyper _textTyper;
+    private readonly ITranscriptionResultSink _resultSink;
     private readonly Func<AppConfig, string, CancellationToken, Task<RecordingStats>> _recordFunc;
 
     private bool _isTranscribing;
@@ -29,23 +27,19 @@ public sealed class TranscriptionController : ITranscriptionController
     public event Action? OnCompleted;
     public event Action<float>? OnRmsLevel;
 
-    public TranscriptionController(
+    internal TranscriptionController(
         IConfigService config,
-        ClipboardHelper clipboardHelper,
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
-        IHistoryService history,
-        ITextRefinerFactory textRefinerFactory,
-        TextTyper textTyper
+        TextTyper textTyper,
+        ITranscriptionResultSink resultSink
     )
         : this(
             config,
-            clipboardHelper,
             remoteTranscriberFactory,
             audioRecorderFactory,
-            history,
-            textRefinerFactory,
             textTyper,
+            resultSink,
             null!
         )
     {
@@ -54,27 +48,21 @@ public sealed class TranscriptionController : ITranscriptionController
 
     internal TranscriptionController(
         IConfigService config,
-        ClipboardHelper clipboardHelper,
         IRemoteTranscriberFactory remoteTranscriberFactory,
         IAudioRecorderFactory audioRecorderFactory,
-        IHistoryService history,
-        ITextRefinerFactory textRefinerFactory,
         TextTyper textTyper,
+        ITranscriptionResultSink resultSink,
         Func<AppConfig, string, CancellationToken, Task<RecordingStats>> recordFunc
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
-        _clipboardHelper =
-            clipboardHelper ?? throw new ArgumentNullException(nameof(clipboardHelper));
         _remoteTranscriberFactory =
             remoteTranscriberFactory
             ?? throw new ArgumentNullException(nameof(remoteTranscriberFactory));
         _audioRecorderFactory =
             audioRecorderFactory ?? throw new ArgumentNullException(nameof(audioRecorderFactory));
-        _history = history ?? throw new ArgumentNullException(nameof(history));
-        _textRefinerFactory =
-            textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
         _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
+        _resultSink = resultSink ?? throw new ArgumentNullException(nameof(resultSink));
         _recordFunc = recordFunc;
     }
 
@@ -251,24 +239,17 @@ public sealed class TranscriptionController : ITranscriptionController
             if (string.IsNullOrEmpty(transcriptionText))
                 return;
 
-            // Auto-enhance if enabled and transcription is long enough
-            var finalText = await MaybeEnhanceTranscriptionAsync(transcriptionText, cfg)
-                .ConfigureAwait(false);
-
-            await ApplyFinalTextAsync(
-                    finalText,
-                    transcriptionText,
-                    cfg,
-                    streamedResults: cfg.Transcriber.StreamResults
+            await _resultSink
+                .ProcessAsync(
+                    new TranscriptionResultRequest(
+                        transcriptionText,
+                        cfg,
+                        recordingStats?.DurationMs ?? 0,
+                        TranscriptionDeliveryPolicy.DeliverFinalText,
+                        ResultsAlreadyStreamed: cfg.Transcriber.StreamResults
+                    )
                 )
                 .ConfigureAwait(false);
-
-            PersistHistoryEntries(
-                transcriptionText,
-                finalText,
-                cfg,
-                recordingStats?.DurationMs ?? 0
-            );
 
             Logger.Log("Transcription completed successfully.");
         }
@@ -480,87 +461,6 @@ public sealed class TranscriptionController : ITranscriptionController
         }
 
         return transcriptionText;
-    }
-
-    private async Task<string> MaybeEnhanceTranscriptionAsync(
-        string transcriptionText,
-        AppConfig cfg
-    )
-    {
-        return await TranscriptionAutoEnhancer
-            .MaybeEnhanceAsync(transcriptionText, cfg, _textRefinerFactory)
-            .ConfigureAwait(false);
-    }
-
-    private async Task ApplyFinalTextAsync(
-        string finalText,
-        string originalText,
-        AppConfig cfg,
-        bool streamedResults
-    )
-    {
-        if (!streamedResults)
-        {
-            await _clipboardHelper
-                .SetTextAndPasteAsync(finalText, cfg.Transcriber.AutoPaste)
-                .ConfigureAwait(false);
-            return;
-        }
-
-        if (string.Equals(finalText, originalText, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        var typeResult = await _textTyper
-            .TypeAsync(finalText, autoPaste: cfg.Transcriber.AutoPaste)
-            .ConfigureAwait(false);
-
-        if (!typeResult.DeliverySuccess)
-        {
-            try
-            {
-                Logger.Log(
-                    $"TranscriptionController: TextTyper delivery failed for enhanced delta (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
-                );
-            }
-            catch { }
-        }
-    }
-
-    private void PersistHistoryEntries(
-        string transcriptionText,
-        string finalText,
-        AppConfig cfg,
-        int recordingDurationMs
-    )
-    {
-        try
-        {
-            _history.AppendTranscription(transcriptionText, recordingDurationMs);
-            Logger.Log(
-                $"Raw transcription logged: {transcriptionText.Length} characters, duration={recordingDurationMs}ms"
-            );
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"Failed to log transcription to history: {ex.Message}");
-        }
-
-        if (string.Equals(transcriptionText, finalText, StringComparison.Ordinal))
-            return;
-
-        try
-        {
-            _history.Append(transcriptionText, finalText, cfg.Llm.Model);
-            Logger.Log(
-                $"Enhanced transcription logged to refinement history: {finalText.Length} characters, model={cfg.Llm.Model}"
-            );
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"Failed to log enhanced transcription to refinement history: {ex.Message}");
-        }
     }
 
     private static bool IsEmptyTranscription(string? text)

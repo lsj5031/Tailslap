@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Moq;
 using TailSlap;
@@ -7,6 +9,25 @@ using Xunit;
 
 public class RealtimeTranscriptionControllerTests
 {
+    private sealed class RecordingResultSink : ITranscriptionResultSink
+    {
+        public List<TranscriptionResultRequest> Requests { get; } = new();
+
+        public Task<TranscriptionResult> ProcessAsync(
+            TranscriptionResultRequest request,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Requests.Add(request);
+            return Task.FromResult(new TranscriptionResult(request.RawText, false));
+        }
+    }
+
+    private static RecordingResultSink CreateResultSink()
+    {
+        return new RecordingResultSink();
+    }
+
     private Mock<IConfigService> CreateMockConfigService(bool transcriberEnabled = true)
     {
         var mockConfig = new Mock<IConfigService>();
@@ -42,8 +63,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         // Assert
@@ -67,8 +87,7 @@ public class RealtimeTranscriptionControllerTests
                 mockClip.Object,
                 mockTranscriberFactory.Object,
                 mockAudioRecorderFactory.Object,
-                new Mock<IHistoryService>().Object,
-                new Mock<ITextRefinerFactory>().Object
+                CreateResultSink()
             )
         );
     }
@@ -87,8 +106,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         // Act
@@ -112,8 +130,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         // Assert
@@ -176,8 +193,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -208,8 +224,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Stopping);
@@ -237,8 +252,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -271,8 +285,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -304,8 +317,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -340,8 +352,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -367,8 +378,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         var update = new RealtimeTranscriptionUpdate
@@ -417,8 +427,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -454,8 +463,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         var pendingUpdatesField = typeof(RealtimeTranscriptionController).GetField(
@@ -512,8 +520,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         Assert.Equal(600, InvokeDetermineStopWaitTimeoutMs(controller, hasRemainingAudio: false));
@@ -532,8 +539,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_realtimeTranscriptionText", "hello");
@@ -555,8 +561,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         Assert.Equal(2500, InvokeDetermineStopWaitTimeoutMs(controller, hasRemainingAudio: true));
@@ -685,8 +690,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -708,8 +712,7 @@ public class RealtimeTranscriptionControllerTests
     public async Task CleanupAsync_WithSessionText_PersistsTranscriptionHistory()
     {
         var mockConfig = CreateMockConfigService();
-        var mockHistory = new Mock<IHistoryService>();
-        var mockRefinerFactory = new Mock<ITextRefinerFactory>();
+        var resultSink = new RecordingResultSink();
         var mockClip = new Mock<IClipboardService>();
         var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
         var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
@@ -719,8 +722,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            mockHistory.Object,
-            mockRefinerFactory.Object
+            resultSink
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -734,9 +736,12 @@ public class RealtimeTranscriptionControllerTests
                 .Invoke(controller, null)!;
         await cleanupTask;
 
-        mockHistory.Verify(
-            h => h.AppendTranscription("hello world", It.Is<int>(ms => ms >= 0)),
-            Times.Once
+        var request = Assert.Single(resultSink.Requests);
+        Assert.Equal("hello world", request.RawText);
+        Assert.True(request.DurationMs >= 0);
+        Assert.Equal(
+            TranscriptionDeliveryPolicy.EnhancedToClipboardWithNotice,
+            request.DeliveryPolicy
         );
         Assert.Equal(StreamingState.Idle, controller.State);
     }
@@ -745,14 +750,13 @@ public class RealtimeTranscriptionControllerTests
     public async Task CleanupAsync_WithEmptySession_DoesNotPersistHistory()
     {
         var mockConfig = CreateMockConfigService();
-        var mockHistory = new Mock<IHistoryService>();
+        var resultSink = new RecordingResultSink();
         var controller = new RealtimeTranscriptionController(
             mockConfig.Object,
             new Mock<IClipboardService>().Object,
             new Mock<IRealtimeTranscriberFactory>().Object,
             new Mock<IAudioRecorderFactory>().Object,
-            mockHistory.Object,
-            new Mock<ITextRefinerFactory>().Object
+            resultSink
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
@@ -763,10 +767,7 @@ public class RealtimeTranscriptionControllerTests
                 .Invoke(controller, null)!;
         await cleanupTask;
 
-        mockHistory.Verify(
-            h => h.AppendTranscription(It.IsAny<string>(), It.IsAny<int>()),
-            Times.Never
-        );
+        Assert.Empty(resultSink.Requests);
     }
 
     [Fact]
@@ -782,8 +783,7 @@ public class RealtimeTranscriptionControllerTests
             mockClip.Object,
             mockTranscriberFactory.Object,
             mockAudioRecorderFactory.Object,
-            new Mock<IHistoryService>().Object,
-            new Mock<ITextRefinerFactory>().Object
+            CreateResultSink()
         );
 
         SetPrivateField(controller, "_streamingState", StreamingState.Streaming);

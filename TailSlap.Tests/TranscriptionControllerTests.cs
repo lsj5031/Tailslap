@@ -112,15 +112,21 @@ public class TranscriptionControllerTests
         configService ??= new Mock<IConfigService>();
         transcriberFactory ??= new Mock<IRemoteTranscriberFactory>();
         historyService ??= new Mock<IHistoryService>();
+        var refinerFactory = new Mock<ITextRefinerFactory>();
+        var resultSink = new TranscriptionResultSink(
+            historyService.Object,
+            refinerFactory.Object,
+            new ClipboardHelper(clipboardService.Object),
+            clipboardService.Object,
+            textTyper
+        );
 
         return new TranscriptionController(
             configService.Object,
-            new ClipboardHelper(clipboardService.Object),
             transcriberFactory.Object,
             new Mock<IAudioRecorderFactory>().Object,
-            historyService.Object,
-            new Mock<ITextRefinerFactory>().Object,
             textTyper,
+            resultSink,
             recordFunc
                 ?? ((_, _, _) =>
                     Task.FromResult(
@@ -182,44 +188,6 @@ public class TranscriptionControllerTests
         {
             File.Delete(tempFile);
         }
-    }
-
-    [Fact]
-    public async Task ApplyFinalTextAsync_WhenStreamedAndChanged_RetypesEnhancedText()
-    {
-        var clipboardService = new Mock<IClipboardService>();
-        var textTyper = new TestableStreamingTextTyper(clipboardService.Object);
-        var controller = CreateController(textTyper, clipboardService);
-
-        await InvokeApplyFinalTextAsync(
-            controller,
-            "hello world!",
-            "hello world",
-            CreateConfig(streamResults: true),
-            streamedResults: true
-        );
-
-        Assert.Equal(new[] { "hello world!" }, textTyper.TypedTexts);
-    }
-
-    [Fact]
-    public async Task ApplyFinalTextAsync_WhenNotStreamed_UsesClipboardHelperPath()
-    {
-        var clipboardService = new Mock<IClipboardService>();
-        clipboardService.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
-        var textTyper = new TestableStreamingTextTyper(clipboardService.Object);
-        var controller = CreateController(textTyper, clipboardService);
-
-        await InvokeApplyFinalTextAsync(
-            controller,
-            "hello world",
-            "hello world",
-            CreateConfig(streamResults: false),
-            streamedResults: false
-        );
-
-        clipboardService.Verify(c => c.SetTextAsync("hello world"), Times.Once);
-        Assert.Empty(textTyper.TypedTexts);
     }
 
     [Fact]
@@ -388,26 +356,4 @@ public class TranscriptionControllerTests
         return await task;
     }
 
-    private static async Task InvokeApplyFinalTextAsync(
-        TranscriptionController controller,
-        string finalText,
-        string originalText,
-        AppConfig cfg,
-        bool streamedResults
-    )
-    {
-        var method = typeof(TranscriptionController).GetMethod(
-            "ApplyFinalTextAsync",
-            BindingFlags.Instance | BindingFlags.NonPublic
-        );
-
-        Assert.NotNull(method);
-
-        var task = (Task)
-            method!.Invoke(
-                controller,
-                new object[] { finalText, originalText, cfg, streamedResults }
-            )!;
-        await task;
-    }
 }
