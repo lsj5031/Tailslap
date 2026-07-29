@@ -149,6 +149,21 @@ public class RealtimeTranscriptionControllerTests
     }
 
     [Fact]
+    public void TruncateError_LongError_LimitsToTwoHundredCharactersAndEllipsis()
+    {
+        var method = typeof(RealtimeTranscriptionController).GetMethod(
+            "TruncateError",
+            BindingFlags.Static | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+
+        var result = Assert.IsType<string>(method!.Invoke(null, new object[] { new string('x', 250) }));
+
+        Assert.Equal(203, result.Length);
+        Assert.Equal(new string('x', 200) + "...", result);
+    }
+
+    [Fact]
     public async Task ProcessTranscriptionAsync_FinalUnchangedText_StillFinalizesItem()
     {
         var mockConfig = CreateMockConfigService();

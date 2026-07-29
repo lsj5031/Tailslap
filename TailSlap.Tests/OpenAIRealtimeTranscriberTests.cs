@@ -283,6 +283,62 @@ public class OpenAIRealtimeTranscriberTests
         Assert.True(updates[1].IsFinal);
     }
 
+    [Fact]
+    public void ProcessServerEvent_FreeTextError_RaisesGenericActionableMessage()
+    {
+        var transcriber = new OpenAIRealtimeTranscriber(
+            new TranscriberConfig
+            {
+                RealtimeProvider = "openai",
+                BaseUrl = "http://localhost:18000/v1",
+                Model = "gpt-4o-transcribe",
+            }
+        );
+        string? raisedError = null;
+        transcriber.OnError += error => raisedError = error;
+
+        InvokeServerEvent(
+            transcriber,
+            """
+            {"type":"error","error":{"message":"secret server diagnostic"}}
+            """
+        );
+
+        Assert.Equal(
+            "The transcription server reported an error. Check the endpoint and model settings, then try again.",
+            raisedError
+        );
+        Assert.DoesNotContain("secret server diagnostic", raisedError);
+    }
+
+    [Fact]
+    public void ProcessServerEvent_ErrorWithSafeCode_PreservesCodeInGenericMessage()
+    {
+        var transcriber = new OpenAIRealtimeTranscriber(
+            new TranscriberConfig
+            {
+                RealtimeProvider = "openai",
+                BaseUrl = "http://localhost:18000/v1",
+                Model = "gpt-4o-transcribe",
+            }
+        );
+        string? raisedError = null;
+        transcriber.OnError += error => raisedError = error;
+
+        InvokeServerEvent(
+            transcriber,
+            """
+            {"type":"error","error":{"code":"invalid_model","message":"secret server diagnostic"}}
+            """
+        );
+
+        Assert.Equal(
+            "The transcription server reported an error (code: invalid_model). Check the endpoint and model settings, then try again.",
+            raisedError
+        );
+        Assert.DoesNotContain("secret server diagnostic", raisedError);
+    }
+
     private static void InvokeServerEvent(OpenAIRealtimeTranscriber transcriber, string json)
     {
         var method = typeof(OpenAIRealtimeTranscriber).GetMethod(

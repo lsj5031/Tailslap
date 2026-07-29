@@ -51,7 +51,7 @@ public sealed class HistoryService : IHistoryService
             return "";
         try
         {
-            return Dpapi.Protect(plaintext);
+            return Dpapi.Protect(plaintext, notifyOnFailure: false);
         }
         catch (Exception ex)
         {
@@ -71,7 +71,7 @@ public sealed class HistoryService : IHistoryService
             return "";
         try
         {
-            return Dpapi.Unprotect(ciphertext);
+            return Dpapi.Unprotect(ciphertext, notifyOnFailure: false);
         }
         catch (Exception ex)
         {

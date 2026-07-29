@@ -58,6 +58,22 @@ public class DpapiTests
     }
 
     [Fact]
+    public void Unprotect_InvalidCiphertext_WithNotificationDisabled_ReturnsEmptyString()
+    {
+        var result = Dpapi.Unprotect("SW52YWxpZERhdGE=", notifyOnFailure: false);
+
+        Assert.Equal(string.Empty, result);
+    }
+
+    [Fact]
+    public void Protect_NullInput_WithNotificationDisabled_ReturnsEmptyString()
+    {
+        var result = Dpapi.Protect(null!, notifyOnFailure: false);
+
+        Assert.Equal(string.Empty, result);
+    }
+
+    [Fact]
     public void Protect_NullInput_ReturnsEmptyString()
     {
         // Arrange

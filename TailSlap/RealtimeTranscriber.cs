@@ -504,31 +504,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
 
                         try
                         {
-                            var msg = JsonSerializer.Deserialize(
-                                json,
-                                TailSlapJsonContext.Default.RealtimeTranscriptionMessage
-                            );
-                            if (msg != null)
-                            {
-                                if (!string.IsNullOrEmpty(msg.Error))
-                                {
-                                    Logger.Log($"RealtimeTranscriber: Server error - {msg.Error}");
-                                    OnError?.Invoke(msg.Error);
-                                }
-                                else
-                                {
-                                    Logger.Log(
-                                        $"RealtimeTranscriber: Received text (final={msg.Final}, len={msg.Text?.Length ?? 0}, sha256={Hashing.Sha256Hex(msg.Text ?? string.Empty)})"
-                                    );
-                                    OnTranscription?.Invoke(
-                                        new RealtimeTranscriptionUpdate
-                                        {
-                                            Text = msg.Text ?? string.Empty,
-                                            IsFinal = msg.Final,
-                                        }
-                                    );
-                                }
-                            }
+                            ProcessServerTextMessage(json);
                         }
                         catch (JsonException ex)
                         {
@@ -560,6 +536,40 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
             );
             OnDisconnected?.Invoke();
         }
+    }
+
+    private void ProcessServerTextMessage(string json)
+    {
+        var msg = JsonSerializer.Deserialize(
+            json,
+            TailSlapJsonContext.Default.RealtimeTranscriptionMessage
+        );
+        if (msg == null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(msg.Error))
+        {
+            Logger.Log(
+                $"RealtimeTranscriber: Server error (len={msg.Error.Length}, sha256={Hashing.Sha256Hex(msg.Error)})"
+            );
+            OnError?.Invoke(
+                "The transcription server reported an error. Check the endpoint and model settings, then try again."
+            );
+            return;
+        }
+
+        Logger.Log(
+            $"RealtimeTranscriber: Received text (final={msg.Final}, len={msg.Text?.Length ?? 0}, sha256={Hashing.Sha256Hex(msg.Text ?? string.Empty)})"
+        );
+        OnTranscription?.Invoke(
+            new RealtimeTranscriptionUpdate
+            {
+                Text = msg.Text ?? string.Empty,
+                IsFinal = msg.Final,
+            }
+        );
     }
 
     private async Task CleanupWebSocketAsync()

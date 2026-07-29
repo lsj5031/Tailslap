@@ -590,22 +590,36 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
 
             case "error":
             {
-                var errorMessage = "Unknown error";
+                var errorMessage = string.Empty;
+                string? errorCode = null;
                 if (root.TryGetProperty("error", out var errorObj))
                 {
                     if (errorObj.ValueKind == JsonValueKind.Object)
                     {
-                        errorMessage = errorObj.TryGetProperty("message", out var msg)
-                            ? msg.GetString() ?? errorMessage
-                            : errorMessage;
+                        if (
+                            errorObj.TryGetProperty("message", out var msg)
+                            && msg.ValueKind == JsonValueKind.String
+                        )
+                        {
+                            errorMessage = msg.GetString() ?? string.Empty;
+                        }
+                        if (
+                            errorObj.TryGetProperty("code", out var code)
+                            && code.ValueKind == JsonValueKind.String
+                        )
+                        {
+                            errorCode = SanitizeErrorCode(code.GetString());
+                        }
                     }
                     else if (errorObj.ValueKind == JsonValueKind.String)
                     {
-                        errorMessage = errorObj.GetString() ?? errorMessage;
+                        errorMessage = errorObj.GetString() ?? string.Empty;
                     }
                 }
-                Logger.Log($"OpenAIRealtimeTranscriber: Server error - {errorMessage}");
-                OnError?.Invoke(errorMessage);
+                Logger.Log(
+                    $"OpenAIRealtimeTranscriber: Server error (len={errorMessage.Length}, sha256={Hashing.Sha256Hex(errorMessage)}, code={errorCode ?? "none"})"
+                );
+                OnError?.Invoke(CreateActionableServerError(errorCode));
                 break;
             }
 
@@ -616,6 +630,26 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                 break;
             }
         }
+    }
+
+    private static string CreateActionableServerError(string? errorCode)
+    {
+        var codeSuffix = string.IsNullOrEmpty(errorCode) ? string.Empty : $" (code: {errorCode})";
+        return $"The transcription server reported an error{codeSuffix}. Check the endpoint and model settings, then try again.";
+    }
+
+    private static string? SanitizeErrorCode(string? errorCode)
+    {
+        if (
+            string.IsNullOrWhiteSpace(errorCode)
+            || errorCode.Length > 64
+            || errorCode.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '_' and not '-' and not '.')
+        )
+        {
+            return null;
+        }
+
+        return errorCode;
     }
 
     private bool ShouldTreatReceiveTimeoutAsConnectionLoss()

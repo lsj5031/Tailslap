@@ -1,10 +1,16 @@
 using System;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 
 public static class Dpapi
 {
-    public static string Protect(string plaintext)
+    private static int _protectFailureNotified;
+    private static int _unprotectFailureNotified;
+
+    public static string Protect(string plaintext) => Protect(plaintext, notifyOnFailure: true);
+
+    public static string Protect(string plaintext, bool notifyOnFailure)
     {
         try
         {
@@ -19,12 +25,27 @@ public static class Dpapi
                 Logger.Log($"DPAPI Protect failed: {ex.GetType().Name}");
             }
             catch { }
+            if (
+                notifyOnFailure
+                && Interlocked.Exchange(ref _protectFailureNotified, 1) == 0
+            )
+            {
+                try
+                {
+                    NotificationService.ShowError(
+                        "TailSlap could not securely save sensitive data. Check your Windows account security settings and try again."
+                    );
+                }
+                catch { }
+            }
             // Fail gracefully: caller will treat empty result as "no key"
             return string.Empty;
         }
     }
 
-    public static string Unprotect(string base64)
+    public static string Unprotect(string base64) => Unprotect(base64, notifyOnFailure: true);
+
+    public static string Unprotect(string base64, bool notifyOnFailure)
     {
         try
         {
@@ -39,6 +60,19 @@ public static class Dpapi
                 Logger.Log($"DPAPI Unprotect failed: {ex.GetType().Name}");
             }
             catch { }
+            if (
+                notifyOnFailure
+                && Interlocked.Exchange(ref _unprotectFailureNotified, 1) == 0
+            )
+            {
+                try
+                {
+                    NotificationService.ShowError(
+                        "TailSlap could not decrypt saved sensitive data. Re-enter the affected API key and try again."
+                    );
+                }
+                catch { }
+            }
             // Fail gracefully: caller will see an empty API key and simply not send auth
             return string.Empty;
         }

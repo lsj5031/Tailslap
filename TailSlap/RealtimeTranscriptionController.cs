@@ -908,8 +908,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     {
         try
         {
-            Logger.Log($"HandleRealtimeError: {error}");
-            NotificationService.ShowError($"Real-time transcription error: {error}");
+            var truncatedError = TruncateError(error);
+            Logger.Log($"HandleRealtimeError: {truncatedError}");
+            NotificationService.ShowError($"Real-time transcription error: {truncatedError}");
 
             lock (_streamingStateLock)
             {
@@ -927,6 +928,12 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         {
             Logger.Log($"HandleRealtimeError: ERROR during handling - {ex.Message}");
         }
+    }
+
+    private static string TruncateError(string error)
+    {
+        const int maxLength = 200;
+        return error.Length <= maxLength ? error : error[..maxLength] + "...";
     }
 
     private async void HandleRealtimeDisconnected()
