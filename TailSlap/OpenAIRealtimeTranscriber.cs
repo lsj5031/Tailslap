@@ -101,6 +101,20 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                     FullMode = BoundedChannelFullMode.DropOldest,
                     SingleReader = true,
                     SingleWriter = false,
+                },
+                item =>
+                {
+                    if (item.Buffer != null)
+                        ArrayPool<byte>.Shared.Return(item.Buffer);
+
+                    Interlocked.Increment(ref _chunksSkipped);
+
+                    if (item.IsStop)
+                    {
+                        Logger.Log(
+                            "OpenAIRealtimeTranscriber: stop marker dropped from send queue"
+                        );
+                    }
                 }
             );
 
@@ -237,15 +251,14 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
             {
                 while (_sendChannel.Reader.TryRead(out var item))
                 {
-                    if (_ws?.State != WebSocketState.Open)
-                    {
-                        if (item.Buffer != null)
-                            ArrayPool<byte>.Shared.Return(item.Buffer);
-                        continue;
-                    }
-
+                    byte[]? toReturn = item.Buffer;
                     try
                     {
+                        if (_ws?.State != WebSocketState.Open)
+                        {
+                            continue;
+                        }
+
                         using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                         sendCts.CancelAfter(_sendTimeout);
 
@@ -262,6 +275,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                                 item.Count
                             );
                             ArrayPool<byte>.Shared.Return(item.Buffer);
+                            toReturn = null;
 
                             var base64 = Convert.ToBase64String(resampled);
                             var appendEvent = new
@@ -289,8 +303,6 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                     catch (OperationCanceledException)
                     {
                         Logger.Log("OpenAIRealtimeTranscriber SendLoop: Send timeout");
-                        if (item.Buffer != null)
-                            ArrayPool<byte>.Shared.Return(item.Buffer);
 
                         Interlocked.Increment(ref _consecutiveErrors);
                         if (_consecutiveErrors >= MaxConsecutiveErrors)
@@ -304,8 +316,6 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                         Logger.Log(
                             $"OpenAIRealtimeTranscriber SendLoop: Send failed - {ex.Message}"
                         );
-                        if (item.Buffer != null)
-                            ArrayPool<byte>.Shared.Return(item.Buffer);
 
                         Interlocked.Increment(ref _consecutiveErrors);
                         if (_consecutiveErrors >= MaxConsecutiveErrors)
@@ -313,6 +323,11 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                             await HandleConnectionLostAsync("Too many send failures");
                             return;
                         }
+                    }
+                    finally
+                    {
+                        if (toReturn != null)
+                            ArrayPool<byte>.Shared.Return(toReturn);
                     }
                 }
             }
@@ -689,6 +704,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                 await _sendChannel
                     .Writer.WriteAsync(new QueueItem(null, 0, true), ct)
                     .ConfigureAwait(false);
+                _sendChannel.Writer.TryComplete();
             }
         }
         catch (Exception ex)

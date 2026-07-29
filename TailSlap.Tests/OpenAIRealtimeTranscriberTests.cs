@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading.Channels;
 using TailSlap;
 using Xunit;
 
@@ -46,6 +47,43 @@ public class OpenAIRealtimeTranscriberTests
         transcriber.Dispose();
 
         await Assert.ThrowsAsync<ObjectDisposedException>(() => transcriber.ConnectAsync());
+    }
+
+    [Fact]
+    public async Task SendAudioChunkAsync_BeforeConnect_DoesNotThrow()
+    {
+        using var transcriber = new OpenAIRealtimeTranscriber(
+            new TranscriberConfig
+            {
+                BaseUrl = "https://api.openai.com/v1",
+                Model = "gpt-4o-transcribe",
+                RealtimeProvider = "openai",
+            }
+        );
+
+        await transcriber.SendAudioChunkAsync(new byte[] { 0, 0 });
+    }
+
+    [Fact]
+    public void BoundedChannel_DropOldest_InvokesItemDroppedCallback()
+    {
+        var droppedItems = new List<int>();
+        var channel = Channel.CreateBounded<int>(
+            new BoundedChannelOptions(1)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+                SingleWriter = true,
+            },
+            droppedItems.Add
+        );
+
+        Assert.True(channel.Writer.TryWrite(1));
+        Assert.True(channel.Writer.TryWrite(2));
+
+        Assert.Equal(new[] { 1 }, droppedItems);
+        Assert.True(channel.Reader.TryRead(out var remainingItem));
+        Assert.Equal(2, remainingItem);
     }
 
     [Fact]
