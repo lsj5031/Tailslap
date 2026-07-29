@@ -7,6 +7,7 @@ using System.Windows.Forms;
 public sealed class AppConfig
 {
     public bool AutoPaste { get; set; } = true;
+    public bool ExcludeFromClipboardHistory { get; set; } = true;
     public bool UseClipboardFallback { get; set; } = true;
     public HotkeyConfig Hotkey { get; set; } = new() { Modifiers = 0x0003, Key = (uint)Keys.R }; // Ctrl+Alt+R for LLM
     public HotkeyConfig TranscriberHotkey { get; set; } =
@@ -22,6 +23,7 @@ public sealed class AppConfig
         return new AppConfig
         {
             AutoPaste = AutoPaste,
+            ExcludeFromClipboardHistory = ExcludeFromClipboardHistory,
             UseClipboardFallback = UseClipboardFallback,
             Hotkey = Hotkey.Clone(),
             TranscriberHotkey = TranscriberHotkey.Clone(),

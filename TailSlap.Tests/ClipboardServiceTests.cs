@@ -1,5 +1,7 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using Moq;
 using Xunit;
 
@@ -9,7 +11,7 @@ public class ClipboardServiceTests
     public void ClipboardService_CreatesInstance()
     {
         // Arrange & Act
-        var service = new ClipboardService();
+        var service = new ClipboardService(CreateMockConfigService().Object);
 
         // Assert
         Assert.NotNull(service);
@@ -19,8 +21,9 @@ public class ClipboardServiceTests
     public void ClipboardService_MultipleInstances_CanBeCreated()
     {
         // Arrange & Act
-        var service1 = new ClipboardService();
-        var service2 = new ClipboardService();
+        var configService = CreateMockConfigService();
+        var service1 = new ClipboardService(configService.Object);
+        var service2 = new ClipboardService(configService.Object);
 
         // Assert - should not throw
         Assert.NotNull(service1);
@@ -32,7 +35,7 @@ public class ClipboardServiceTests
     public void ClipboardService_EventsCanBeSubscribed()
     {
         // Arrange
-        var service = new ClipboardService();
+        var service = new ClipboardService(CreateMockConfigService().Object);
         bool captureStartedFired = false;
         bool captureEndedFired = false;
 
@@ -49,7 +52,7 @@ public class ClipboardServiceTests
     public void CaptureSelectionOrClipboardAsync_ReturnsTask()
     {
         // Arrange
-        var service = new ClipboardService();
+        var service = new ClipboardService(CreateMockConfigService().Object);
 
         // Act
         var task = service.CaptureSelectionOrClipboardAsync();
@@ -58,5 +61,50 @@ public class ClipboardServiceTests
         Assert.IsType<Task<string>>(task);
 
         // Note: the operation requires actual window focus which we can't simulate in unit test
+    }
+
+    [Fact]
+    public void BuildExcludedDataObject_AddsTextAndClipboardPrivacyFormats()
+    {
+        const string text = "private dictated text";
+
+        DataObject dataObject = ClipboardService.BuildExcludedDataObject(text);
+
+        Assert.Equal(text, dataObject.GetData(DataFormats.UnicodeText));
+        AssertDwordFormat(dataObject, "ExcludeClipboardContentFromMonitorProcessing", 1);
+        AssertDwordFormat(dataObject, "CanIncludeInClipboardHistory", 0);
+        AssertDwordFormat(dataObject, "CanUploadToCloudClipboard", 0);
+    }
+
+    [Fact]
+    public void AppConfig_ClipboardHistoryExclusion_DefaultsToTrue()
+    {
+        Assert.True(new AppConfig().ExcludeFromClipboardHistory);
+    }
+
+    [Fact]
+    public void AppConfig_Clone_PreservesClipboardHistoryExclusion()
+    {
+        var config = new AppConfig { ExcludeFromClipboardHistory = false };
+
+        AppConfig clone = config.Clone();
+
+        Assert.False(clone.ExcludeFromClipboardHistory);
+    }
+
+    private static Mock<IConfigService> CreateMockConfigService()
+    {
+        var mock = new Mock<IConfigService>();
+        mock.Setup(service => service.CreateValidatedCopy()).Returns(new AppConfig());
+        return mock;
+    }
+
+    private static void AssertDwordFormat(DataObject dataObject, string format, int expected)
+    {
+        Assert.True(dataObject.GetDataPresent(format, autoConvert: false));
+        var stream = Assert.IsType<MemoryStream>(
+            dataObject.GetData(format, autoConvert: false)
+        );
+        Assert.Equal(expected, BitConverter.ToInt32(stream.ToArray(), 0));
     }
 }

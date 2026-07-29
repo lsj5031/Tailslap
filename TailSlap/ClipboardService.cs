@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -7,6 +8,13 @@ using System.Windows.Forms;
 
 public sealed class ClipboardService : IClipboardService
 {
+    private const string ExcludeFromMonitorProcessingFormat =
+        "ExcludeClipboardContentFromMonitorProcessing";
+    private const string CanIncludeInClipboardHistoryFormat = "CanIncludeInClipboardHistory";
+    private const string CanUploadToCloudClipboardFormat = "CanUploadToCloudClipboard";
+
+    private readonly IConfigService _configService;
+
     // Performance metrics
     private static readonly System.Collections.Generic.Dictionary<string, int> _captureStats =
         new();
@@ -17,6 +25,12 @@ public sealed class ClipboardService : IClipboardService
     // Events for UI feedback
     public event Action? CaptureStarted;
     public event Action? CaptureEnded;
+
+    public ClipboardService(IConfigService configService)
+    {
+        _configService =
+            configService ?? throw new ArgumentNullException(nameof(configService));
+    }
 
     /// <summary>
     /// Initialize the clipboard service with the UI synchronization context.
@@ -1113,14 +1127,24 @@ public sealed class ClipboardService : IClipboardService
         return await SetTextCoreAsync(text).ConfigureAwait(false);
     }
 
-    private static async System.Threading.Tasks.Task<bool> SetTextCoreAsync(string text)
+    private async System.Threading.Tasks.Task<bool> SetTextCoreAsync(string text)
     {
+        bool excludeFromClipboardHistory = _configService
+            .CreateValidatedCopy()
+            .ExcludeFromClipboardHistory;
         int retries = 3;
         while (retries-- > 0)
         {
             try
             {
-                Clipboard.SetText(text, TextDataFormat.UnicodeText);
+                if (excludeFromClipboardHistory)
+                {
+                    Clipboard.SetDataObject(BuildExcludedDataObject(text), copy: true);
+                }
+                else
+                {
+                    Clipboard.SetText(text, TextDataFormat.UnicodeText);
+                }
                 try
                 {
                     Logger.Log($"SetText ok, len={text?.Length ?? 0}");
@@ -1147,6 +1171,35 @@ public sealed class ClipboardService : IClipboardService
             }
         }
         return false;
+    }
+
+    internal static DataObject BuildExcludedDataObject(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var dataObject = new DataObject();
+        dataObject.SetData(DataFormats.UnicodeText, autoConvert: false, text);
+        dataObject.SetData(
+            ExcludeFromMonitorProcessingFormat,
+            autoConvert: false,
+            CreateDwordStream(1)
+        );
+        dataObject.SetData(
+            CanIncludeInClipboardHistoryFormat,
+            autoConvert: false,
+            CreateDwordStream(0)
+        );
+        dataObject.SetData(
+            CanUploadToCloudClipboardFormat,
+            autoConvert: false,
+            CreateDwordStream(0)
+        );
+        return dataObject;
+    }
+
+    private static MemoryStream CreateDwordStream(int value)
+    {
+        return new MemoryStream(BitConverter.GetBytes(value), writable: false);
     }
 
     public System.Threading.Tasks.Task<bool> PasteAsync()

@@ -23,6 +23,7 @@ public sealed class SettingsForm : Form
 
     private CheckBox _enabled;
     private CheckBox _autoPaste;
+    private CheckBox _excludeFromClipboardHistory;
     private CheckBox _clipboardFallback;
     private TextBox _baseUrl;
     private TextBox _model;
@@ -113,12 +114,13 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Top,
             ColumnCount = 2,
             Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 2,
+            RowCount = 3,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         general.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(110)));
         general.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         _autoPaste = new CheckBox
@@ -140,6 +142,25 @@ public sealed class SettingsForm : Form
             0
         );
         general.Controls.Add(_autoPaste, 1, 0);
+        _excludeFromClipboardHistory = new CheckBox
+        {
+            Text = "Exclude delivered text from clipboard history",
+            Checked = _cfg.ExcludeFromClipboardHistory,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+        };
+        general.Controls.Add(
+            new Label
+            {
+                Text = "Clipboard Privacy",
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            },
+            0,
+            1
+        );
+        general.Controls.Add(_excludeFromClipboardHistory, 1, 1);
         _clipboardFallback = new CheckBox
         {
             Text = "Use clipboard when nothing is selected",
@@ -156,9 +177,9 @@ public sealed class SettingsForm : Form
                 TextAlign = ContentAlignment.MiddleLeft,
             },
             0,
-            1
+            2
         );
-        general.Controls.Add(_clipboardFallback, 1, 1);
+        general.Controls.Add(_clipboardFallback, 1, 2);
 
         // LLM tab
         var llm = new TableLayoutPanel
@@ -1140,6 +1161,7 @@ public sealed class SettingsForm : Form
         }
 
         _cfg.AutoPaste = _autoPaste.Checked;
+        _cfg.ExcludeFromClipboardHistory = _excludeFromClipboardHistory.Checked;
         _cfg.Llm.Enabled = _enabled.Checked;
         _cfg.Llm.BaseUrl = _baseUrl.Text.Trim();
         _cfg.Llm.Model = _model.Text.Trim();
@@ -1799,6 +1821,7 @@ public sealed class SettingsForm : Form
             var defaultCfg = new AppConfig();
 
             _autoPaste.Checked = defaultCfg.AutoPaste;
+            _excludeFromClipboardHistory.Checked = defaultCfg.ExcludeFromClipboardHistory;
             _enabled.Checked = defaultCfg.Llm.Enabled;
             _clipboardFallback.Checked = defaultCfg.UseClipboardFallback;
             _baseUrl.Text = defaultCfg.Llm.BaseUrl;
