@@ -333,6 +333,8 @@ public sealed class ConfigService : IConfigService, IDisposable
     private FileSystemWatcher? _watcher;
     private System.Threading.Timer? _debounceTimer;
     private readonly object _debounceLock = new();
+    private AppConfig? _cache;
+    private readonly object _cacheLock = new();
     public event Action? ConfigChanged;
     private DateTime _lastRead = DateTime.MinValue;
     private bool _disposed;
@@ -364,6 +366,7 @@ public sealed class ConfigService : IConfigService, IDisposable
             _debounceTimer = new System.Threading.Timer(
                 _ =>
                 {
+                    InvalidateCache();
                     try
                     {
                         ConfigChanged?.Invoke();
@@ -397,6 +400,7 @@ public sealed class ConfigService : IConfigService, IDisposable
             var timer = _debounceTimer;
             if (timer == null)
             {
+                InvalidateCache();
                 ConfigChanged?.Invoke();
                 return;
             }
@@ -408,6 +412,7 @@ public sealed class ConfigService : IConfigService, IDisposable
         }
         catch
         {
+            InvalidateCache();
             ConfigChanged?.Invoke();
         }
     }
@@ -418,6 +423,22 @@ public sealed class ConfigService : IConfigService, IDisposable
     }
 
     public AppConfig LoadOrDefault()
+    {
+        lock (_cacheLock)
+        {
+            if (_cache != null)
+                return _cache.Clone();
+        }
+
+        var loaded = LoadFromDiskOrDefault();
+        lock (_cacheLock)
+        {
+            _cache = loaded;
+            return _cache.Clone();
+        }
+    }
+
+    private AppConfig LoadFromDiskOrDefault()
     {
         try
         {
@@ -465,9 +486,14 @@ public sealed class ConfigService : IConfigService, IDisposable
                 Directory.CreateDirectory(Dir);
             _lastRead = DateTime.Now;
             File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, WriteOptions));
+            lock (_cacheLock)
+            {
+                _cache = cfg.Clone();
+            }
         }
         catch (Exception ex)
         {
+            InvalidateCache();
             try
             {
                 Logger.Log($"Config save failed: {ex.GetType().Name}: {ex.Message}");
@@ -480,6 +506,14 @@ public sealed class ConfigService : IConfigService, IDisposable
                 );
             }
             catch { }
+        }
+    }
+
+    private void InvalidateCache()
+    {
+        lock (_cacheLock)
+        {
+            _cache = null;
         }
     }
 

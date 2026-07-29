@@ -1,3 +1,4 @@
+using System.Reflection;
 using Moq;
 using Xunit;
 
@@ -109,5 +110,25 @@ public class ConfigServiceTests
     public void IsValidWebSocketHeartbeatTimeout_Tests(int timeoutSeconds, bool expected)
     {
         Assert.Equal(expected, ConfigService.IsValidWebSocketHeartbeatTimeout(timeoutSeconds));
+    }
+
+    [Fact]
+    public void LoadOrDefault_ReturnsDistinctClones()
+    {
+        using var service = new ConfigService();
+        var cached = new AppConfig { AutoPaste = true };
+        var cacheField = typeof(ConfigService).GetField(
+            "_cache",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        );
+        Assert.NotNull(cacheField);
+        cacheField.SetValue(service, cached);
+
+        var first = service.LoadOrDefault();
+        var second = service.LoadOrDefault();
+
+        Assert.NotSame(first, second);
+        first.AutoPaste = false;
+        Assert.True(service.LoadOrDefault().AutoPaste);
     }
 }

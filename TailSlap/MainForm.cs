@@ -181,11 +181,11 @@ public class MainForm : Form
         // Wire keyboard hook events to TypelessController
         _keyboardHook.OnKeyDown += () =>
         {
-            SafeFireAndForget(_typelessController.HandleKeyDownAsync());
+            _ = Task.Run(() => SafeFireAndForget(_typelessController.HandleKeyDownAsync()));
         };
         _keyboardHook.OnKeyUp += () =>
         {
-            SafeFireAndForget(_typelessController.HandleKeyUpAsync());
+            _ = Task.Run(() => SafeFireAndForget(_typelessController.HandleKeyUpAsync()));
         };
 
         _menu = new ContextMenuStrip();
