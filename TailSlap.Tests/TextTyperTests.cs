@@ -303,6 +303,7 @@ public class TextTyperTests
     {
         // Arrange
         var mockClip = CreateMockClipboardService();
+        mockClip.Setup(c => c.SetTextAsync("hello world")).ReturnsAsync(true);
         mockClip.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
         var typer = CreateTextTyper(mockClip);
 
@@ -315,6 +316,11 @@ public class TextTyperTests
 
         // Assert — the baseline should be reset because window changed
         Assert.Equal("", GetBaselineText(typer));
+        Assert.True(result.WindowChanged);
+        Assert.False(result.DeliverySuccess);
+        Assert.True(result.TextOnClipboard);
+        Assert.Equal("hello world", result.Text);
+        mockClip.Verify(c => c.SetTextAsync("hello world"), Times.Once);
     }
 
     #endregion

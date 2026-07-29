@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -18,13 +17,6 @@ public class TextTyper
     private string _baselineText = "";
     private IntPtr _targetWindow = IntPtr.Zero;
     private readonly object _stateLock = new();
-
-    #region P/Invoke Declarations
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-
-    #endregion
 
     /// <summary>
     /// Result of a text typing operation.
@@ -84,7 +76,7 @@ public class TextTyper
             return new TypeResult { DeliverySuccess = true, Text = text ?? "" };
         }
 
-        var currentWindow = foregroundWindow ?? GetForegroundWindow();
+        var currentWindow = foregroundWindow ?? NativeMethods.GetForegroundWindow();
         bool windowChanged = false;
 
         lock (_stateLock)
@@ -115,12 +107,21 @@ public class TextTyper
 
         if (windowChanged)
         {
+            bool clipboardSet = await _clip.SetTextAsync(text).ConfigureAwait(false);
+
+            if (autoPaste)
+            {
+                NotificationService.ShowInfo(
+                    "Window changed before text could be typed. The text is on your clipboard — paste manually with Ctrl+V."
+                );
+            }
+
             return new TypeResult
             {
                 WindowChanged = true,
                 DeliverySuccess = false,
                 Text = text,
-                TextOnClipboard = await _clip.SetTextAsync(text).ConfigureAwait(false),
+                TextOnClipboard = clipboardSet,
             };
         }
 
@@ -214,6 +215,7 @@ public class TextTyper
                 // Use SendKeys for short ASCII text (preserves clipboard)
                 try
                 {
+                    NativeInputSimulator.WaitForModifierRelease(timeoutMs: 500);
                     TypeTextDirectly(newText);
                     deliverySuccess = true;
                 }
@@ -414,7 +416,7 @@ public class TextTyper
             if (_targetWindow == IntPtr.Zero)
                 return false;
 
-            var current = GetForegroundWindow();
+            var current = NativeMethods.GetForegroundWindow();
             return current != _targetWindow;
         }
     }

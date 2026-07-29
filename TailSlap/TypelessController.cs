@@ -417,9 +417,20 @@ public sealed class TypelessController : ITypelessController
                 // Type the accumulated text into the focused application
                 try
                 {
-                    await _textTyper
+                    var typeResult = await _textTyper
                         .TypeAsync(fullText.ToString(), autoPaste: cfg.Transcriber.AutoPaste)
                         .ConfigureAwait(false);
+
+                    if (!typeResult.DeliverySuccess)
+                    {
+                        try
+                        {
+                            Logger.Log(
+                                $"TypelessController: TextTyper delivery failed for SSE chunk (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
+                            );
+                        }
+                        catch { }
+                    }
                 }
                 catch (Exception typeEx)
                 {
@@ -501,7 +512,21 @@ public sealed class TypelessController : ITypelessController
         {
             if (cfg.Transcriber.AutoPaste)
             {
-                await _textTyper.TypeAsync(finalText, autoPaste: true).ConfigureAwait(false);
+                var typeResult = await _textTyper
+                    .TypeAsync(finalText, autoPaste: true)
+                    .ConfigureAwait(false);
+
+                if (!typeResult.DeliverySuccess)
+                {
+                    try
+                    {
+                        Logger.Log(
+                            $"TypelessController: TextTyper delivery failed for enhanced final text (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
+                        );
+                    }
+                    catch { }
+                }
+
                 return;
             }
 

@@ -383,9 +383,20 @@ public sealed class TranscriptionController : ITranscriptionController
 
                 try
                 {
-                    await _textTyper
+                    var typeResult = await _textTyper
                         .TypeAsync(fullText.ToString(), autoPaste: cfg.Transcriber.AutoPaste)
                         .ConfigureAwait(false);
+
+                    if (!typeResult.DeliverySuccess)
+                    {
+                        try
+                        {
+                            Logger.Log(
+                                $"TranscriptionController: TextTyper delivery failed for streaming chunk (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
+                            );
+                        }
+                        catch { }
+                    }
                 }
                 catch (Exception typeEx)
                 {
@@ -466,9 +477,20 @@ public sealed class TranscriptionController : ITranscriptionController
             return;
         }
 
-        await _textTyper
+        var typeResult = await _textTyper
             .TypeAsync(finalText, autoPaste: cfg.Transcriber.AutoPaste)
             .ConfigureAwait(false);
+
+        if (!typeResult.DeliverySuccess)
+        {
+            try
+            {
+                Logger.Log(
+                    $"TranscriptionController: TextTyper delivery failed for enhanced delta (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
+                );
+            }
+            catch { }
+        }
     }
 
     private void PersistHistoryEntries(

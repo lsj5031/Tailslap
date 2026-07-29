@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -72,9 +71,6 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     public event Action? OnStopped;
     public event Action<string, bool>? OnTranscription;
     public event Action<float>? OnRmsLevel;
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
 
     private sealed class PendingOrderedRealtimeUpdate
     {
@@ -234,7 +230,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 catch { }
             };
 
-            _streamingTargetWindow = GetForegroundWindow();
+            _streamingTargetWindow = NativeMethods.GetForegroundWindow();
             _streamingStartTime = DateTime.UtcNow;
             Logger.Log($"StartAsync: Target window captured: 0x{_streamingTargetWindow:X}");
 
@@ -778,7 +774,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 }
                 _realtimeTranscriptionText = text;
                 _lastTypedLength = 0;
-                _streamingTargetWindow = GetForegroundWindow();
+                _streamingTargetWindow = NativeMethods.GetForegroundWindow();
                 return;
             }
 
@@ -870,7 +866,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         if (_streamingTargetWindow == IntPtr.Zero)
             return true;
 
-        var current = GetForegroundWindow();
+        var current = NativeMethods.GetForegroundWindow();
         if (current != _streamingTargetWindow)
         {
             Logger.Log(
@@ -899,6 +895,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     {
         try
         {
+            NativeInputSimulator.WaitForModifierRelease(timeoutMs: 500);
             NativeInputSimulator.TypeTextDirectly(text);
         }
         catch (Exception ex)
