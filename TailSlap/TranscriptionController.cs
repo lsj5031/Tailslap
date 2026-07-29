@@ -15,6 +15,7 @@ public sealed class TranscriptionController : ITranscriptionController
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly ClipboardHelper _clipboardHelper;
     private readonly TextTyper _textTyper;
+    private readonly Func<AppConfig, string, CancellationToken, Task<RecordingStats>> _recordFunc;
 
     private bool _isTranscribing;
     private bool _isRecording;
@@ -37,6 +38,30 @@ public sealed class TranscriptionController : ITranscriptionController
         ITextRefinerFactory textRefinerFactory,
         TextTyper textTyper
     )
+        : this(
+            config,
+            clipboardHelper,
+            remoteTranscriberFactory,
+            audioRecorderFactory,
+            history,
+            textRefinerFactory,
+            textTyper,
+            null!
+        )
+    {
+        _recordFunc = DefaultRecordAsync;
+    }
+
+    internal TranscriptionController(
+        IConfigService config,
+        ClipboardHelper clipboardHelper,
+        IRemoteTranscriberFactory remoteTranscriberFactory,
+        IAudioRecorderFactory audioRecorderFactory,
+        IHistoryService history,
+        ITextRefinerFactory textRefinerFactory,
+        TextTyper textTyper,
+        Func<AppConfig, string, CancellationToken, Task<RecordingStats>> recordFunc
+    )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _clipboardHelper =
@@ -50,6 +75,7 @@ public sealed class TranscriptionController : ITranscriptionController
         _textRefinerFactory =
             textRefinerFactory ?? throw new ArgumentNullException(nameof(textRefinerFactory));
         _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
+        _recordFunc = recordFunc;
     }
 
     public async Task<bool> TriggerTranscribeAsync()
@@ -148,7 +174,12 @@ public sealed class TranscriptionController : ITranscriptionController
             {
                 Logger.Log("Starting audio recording from microphone");
                 _isRecording = true;
-                recordingStats = await RecordAudioAsync(audioFilePath, cfg).ConfigureAwait(false);
+                recordingStats = await _recordFunc(
+                        cfg,
+                        audioFilePath,
+                        _recordingCts?.Token ?? CancellationToken.None
+                    )
+                    .ConfigureAwait(false);
 
                 if (recordingStats.SilenceDetected)
                 {
@@ -263,7 +294,11 @@ public sealed class TranscriptionController : ITranscriptionController
         }
     }
 
-    private async Task<RecordingStats> RecordAudioAsync(string audioFilePath, AppConfig cfg)
+    private async Task<RecordingStats> DefaultRecordAsync(
+        AppConfig cfg,
+        string audioFilePath,
+        CancellationToken ct
+    )
     {
         Logger.Log(
             $"RecordAudioAsync started. PreferredMic: {cfg.Transcriber.PreferredMicrophoneIndex}, EnableVAD: {cfg.Transcriber.EnableVAD}, VADThreshold: {cfg.Transcriber.SilenceThresholdMs}ms"
@@ -298,7 +333,7 @@ public sealed class TranscriptionController : ITranscriptionController
                 .RecordAsync(
                     audioFilePath,
                     maxDurationMs: 0,
-                    ct: _recordingCts?.Token ?? CancellationToken.None,
+                    ct: ct,
                     enableVAD: cfg.Transcriber.EnableVAD,
                     silenceThresholdMs: cfg.Transcriber.SilenceThresholdMs
                 )

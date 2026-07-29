@@ -97,7 +97,11 @@ public class TranscriptionControllerTests
 
     private static TranscriptionController CreateController(
         TestableStreamingTextTyper textTyper,
-        Mock<IClipboardService>? clipboardService = null
+        Mock<IClipboardService>? clipboardService = null,
+        Mock<IConfigService>? configService = null,
+        Mock<IRemoteTranscriberFactory>? transcriberFactory = null,
+        Mock<IHistoryService>? historyService = null,
+        Func<AppConfig, string, CancellationToken, Task<RecordingStats>>? recordFunc = null
     )
     {
         clipboardService ??= new Mock<IClipboardService>();
@@ -105,15 +109,47 @@ public class TranscriptionControllerTests
         clipboardService.Setup(c => c.PasteAsync()).ReturnsAsync(true);
         clipboardService.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
 
+        configService ??= new Mock<IConfigService>();
+        transcriberFactory ??= new Mock<IRemoteTranscriberFactory>();
+        historyService ??= new Mock<IHistoryService>();
+
         return new TranscriptionController(
-            new Mock<IConfigService>().Object,
+            configService.Object,
             new ClipboardHelper(clipboardService.Object),
-            new Mock<IRemoteTranscriberFactory>().Object,
+            transcriberFactory.Object,
             new Mock<IAudioRecorderFactory>().Object,
-            new Mock<IHistoryService>().Object,
+            historyService.Object,
             new Mock<ITextRefinerFactory>().Object,
-            textTyper
+            textTyper,
+            recordFunc
+                ?? ((_, _, _) =>
+                    Task.FromResult(
+                        new RecordingStats { DurationMs = 1000, BytesRecorded = 32000 }
+                    ))
         );
+    }
+
+    private static Mock<IConfigService> CreateConfigService(
+        bool enabled = true,
+        bool streamResults = false
+    )
+    {
+        var config = CreateConfig(streamResults);
+        config.Transcriber.Enabled = enabled;
+        var mock = new Mock<IConfigService>();
+        mock.Setup(c => c.CreateValidatedCopy()).Returns(config);
+        return mock;
+    }
+
+    private static Mock<IRemoteTranscriberFactory> CreateNonStreamingFactory(string result)
+    {
+        var transcriber = new Mock<IRemoteTranscriber>();
+        transcriber
+            .Setup(t => t.TranscribeAudioAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
+        var factory = new Mock<IRemoteTranscriberFactory>();
+        factory.Setup(f => f.Create(It.IsAny<TranscriberConfig>())).Returns(transcriber.Object);
+        return factory;
     }
 
     [Fact]
@@ -184,6 +220,152 @@ public class TranscriptionControllerTests
 
         clipboardService.Verify(c => c.SetTextAsync("hello world"), Times.Once);
         Assert.Empty(textTyper.TypedTexts);
+    }
+
+    [Fact]
+    public async Task TriggerTranscribeAsync_WhenDisabled_ReturnsFalseWithoutRecording()
+    {
+        var recordCalled = false;
+        var clipboard = new Mock<IClipboardService>();
+        var controller = CreateController(
+            new TestableStreamingTextTyper(clipboard.Object),
+            clipboard,
+            CreateConfigService(enabled: false),
+            recordFunc: (_, _, _) =>
+            {
+                recordCalled = true;
+                return Task.FromResult(new RecordingStats());
+            }
+        );
+
+        var result = await controller.TriggerTranscribeAsync();
+
+        Assert.False(result);
+        Assert.False(recordCalled);
+        Assert.False(controller.IsRecording);
+        Assert.False(controller.IsTranscribing);
+    }
+
+    [Fact]
+    public async Task TriggerTranscribeAsync_SecondPress_CancelsRecording()
+    {
+        var recordingStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var recordingStopped = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var clipboard = new Mock<IClipboardService>();
+        var controller = CreateController(
+            new TestableStreamingTextTyper(clipboard.Object),
+            clipboard,
+            CreateConfigService(),
+            CreateNonStreamingFactory("result"),
+            recordFunc: async (_, _, ct) =>
+            {
+                recordingStarted.SetResult();
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, ct);
+                }
+                catch (OperationCanceledException) { }
+                recordingStopped.SetResult();
+                return new RecordingStats { DurationMs = 1000, BytesRecorded = 32000 };
+            }
+        );
+
+        var firstPress = controller.TriggerTranscribeAsync();
+        await recordingStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var secondResult = await controller.TriggerTranscribeAsync();
+        await recordingStopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var firstResult = await firstPress;
+
+        Assert.False(secondResult);
+        Assert.True(firstResult);
+        Assert.False(controller.IsRecording);
+        Assert.False(controller.IsTranscribing);
+    }
+
+    [Fact]
+    public async Task TriggerTranscribeAsync_WhileTranscribing_ReturnsFalse()
+    {
+        var transcriptionStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var releaseTranscription = new TaskCompletionSource<string>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var transcriber = new Mock<IRemoteTranscriber>();
+        transcriber
+            .Setup(t => t.TranscribeAudioAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                transcriptionStarted.SetResult();
+                return releaseTranscription.Task;
+            });
+        var factory = new Mock<IRemoteTranscriberFactory>();
+        factory.Setup(f => f.Create(It.IsAny<TranscriberConfig>())).Returns(transcriber.Object);
+        var clipboard = new Mock<IClipboardService>();
+        var controller = CreateController(
+            new TestableStreamingTextTyper(clipboard.Object),
+            clipboard,
+            CreateConfigService(),
+            factory
+        );
+
+        var first = controller.TriggerTranscribeAsync();
+        await transcriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var secondResult = await controller.TriggerTranscribeAsync();
+        releaseTranscription.SetResult("done");
+
+        Assert.False(secondResult);
+        Assert.True(await first);
+        transcriber.Verify(
+            t => t.TranscribeAudioAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once
+        );
+    }
+
+    [Fact]
+    public async Task TriggerTranscribeAsync_Success_RaisesEventsInOrder()
+    {
+        var events = new List<string>();
+        var clipboard = new Mock<IClipboardService>();
+        var controller = CreateController(
+            new TestableStreamingTextTyper(clipboard.Object),
+            clipboard,
+            CreateConfigService(),
+            CreateNonStreamingFactory("result")
+        );
+        controller.OnStarted += () => events.Add("started");
+        controller.OnProcessingStarted += () => events.Add("processing");
+        controller.OnCompleted += () => events.Add("completed");
+
+        Assert.True(await controller.TriggerTranscribeAsync());
+
+        Assert.Equal(new[] { "started", "processing", "completed" }, events);
+    }
+
+    [Fact]
+    public async Task TriggerTranscribeAsync_Success_PersistsHistoryWithRecordingDuration()
+    {
+        var history = new Mock<IHistoryService>();
+        var clipboard = new Mock<IClipboardService>();
+        var controller = CreateController(
+            new TestableStreamingTextTyper(clipboard.Object),
+            clipboard,
+            CreateConfigService(),
+            CreateNonStreamingFactory("history text"),
+            history,
+            (_, _, _) =>
+                Task.FromResult(
+                    new RecordingStats { DurationMs = 2345, BytesRecorded = 64000 }
+                )
+        );
+
+        Assert.True(await controller.TriggerTranscribeAsync());
+
+        history.Verify(h => h.AppendTranscription("history text", 2345), Times.Once);
     }
 
     private static async Task<string> InvokeStreamingTranscriptionAsync(
