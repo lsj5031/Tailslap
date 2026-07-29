@@ -10,7 +10,13 @@ using TailSlap;
 
 public sealed class RealtimeTranscriber : IRealtimeTranscriber
 {
-    private readonly record struct QueueItem(byte[]? Buffer, int Count, bool IsStop);
+    private readonly record struct QueueItem(
+        byte[]? Buffer,
+        int Count,
+        bool IsStop,
+        bool Pooled,
+        bool IsPing
+    );
 
     private readonly string _wsEndpoint;
     private readonly TimeSpan _connectionTimeout;
@@ -114,6 +120,16 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                     FullMode = BoundedChannelFullMode.DropOldest,
                     SingleReader = true,
                     SingleWriter = false,
+                },
+                item =>
+                {
+                    if (item.Pooled && item.Buffer != null)
+                        ArrayPool<byte>.Shared.Return(item.Buffer);
+
+                    Interlocked.Increment(ref _chunksSkipped);
+
+                    if (item.IsStop)
+                        Logger.Log("RealtimeTranscriber: stop marker dropped from send queue");
                 }
             );
 
@@ -147,7 +163,11 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
             var rented = ArrayPool<byte>.Shared.Rent(pcm16Data.Count);
             Buffer.BlockCopy(pcm16Data.Array!, pcm16Data.Offset, rented, 0, pcm16Data.Count);
 
-            if (!_sendChannel.Writer.TryWrite(new QueueItem(rented, pcm16Data.Count, false)))
+            if (
+                !_sendChannel.Writer.TryWrite(
+                    new QueueItem(rented, pcm16Data.Count, IsStop: false, Pooled: true, IsPing: false)
+                )
+            )
             {
                 ArrayPool<byte>.Shared.Return(rented);
                 Interlocked.Increment(ref _chunksSkipped);
@@ -199,6 +219,17 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                                     )
                                     .ConfigureAwait(false);
                             }
+                            else if (item.IsPing)
+                            {
+                                await _ws.SendAsync(
+                                        ArraySegment<byte>.Empty,
+                                        WebSocketMessageType.Binary,
+                                        endOfMessage: true,
+                                        sendCts.Token
+                                    )
+                                    .ConfigureAwait(false);
+                                Logger.Log("Heartbeat: Ping sent");
+                            }
                             else if (item.Buffer != null)
                             {
                                 await _ws.SendAsync(
@@ -208,7 +239,8 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                                         sendCts.Token
                                     )
                                     .ConfigureAwait(false);
-                                ArrayPool<byte>.Shared.Return(item.Buffer);
+                                if (item.Pooled)
+                                    ArrayPool<byte>.Shared.Return(item.Buffer);
                                 Interlocked.Increment(ref _chunksSent);
                             }
 
@@ -220,7 +252,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                             // Send timeout or cancellation
                             Logger.Log("SendLoopAsync: Send timeout");
                             Interlocked.Increment(ref _consecutiveErrors);
-                            if (item.Buffer != null)
+                            if (item.Pooled && item.Buffer != null)
                                 ArrayPool<byte>.Shared.Return(item.Buffer);
 
                             if (_consecutiveErrors >= MaxConsecutiveErrors)
@@ -238,7 +270,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                             // We might just be reconnecting or temporary glitch
                             Logger.Log($"SendLoopAsync: Send failed - {ex.Message}");
                             Interlocked.Increment(ref _consecutiveErrors);
-                            if (item.Buffer != null)
+                            if (item.Pooled && item.Buffer != null)
                                 ArrayPool<byte>.Shared.Return(item.Buffer);
 
                             if (_consecutiveErrors >= MaxConsecutiveErrors)
@@ -254,7 +286,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                     else
                     {
                         // WebSocket not open, clean up the buffer
-                        if (item.Buffer != null)
+                        if (item.Pooled && item.Buffer != null)
                             ArrayPool<byte>.Shared.Return(item.Buffer);
                     }
                 }
@@ -292,34 +324,21 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                     return;
                 }
 
-                // Send ping frame (WebSocket ping)
-                try
-                {
-                    using var pingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                    pingCts.CancelAfter(TimeSpan.FromSeconds(5));
-
-                    // Send an empty binary frame as a keepalive/ping
-                    await _ws.SendAsync(
-                            ArraySegment<byte>.Empty,
-                            WebSocketMessageType.Binary,
-                            endOfMessage: true,
-                            pingCts.Token
+                // Queue an empty binary frame as a keepalive/ping so all sends remain serialized.
+                if (
+                    _sendChannel == null
+                    || !_sendChannel.Writer.TryWrite(
+                        new QueueItem(
+                            Buffer: null,
+                            Count: 0,
+                            IsStop: false,
+                            Pooled: false,
+                            IsPing: true
                         )
-                        .ConfigureAwait(false);
-
-                    Logger.Log("Heartbeat: Ping sent");
-                }
-                catch (OperationCanceledException)
+                    )
+                )
                 {
-                    Logger.Log("Heartbeat: Ping timeout");
-                    await HandleConnectionLostAsync("Ping timeout");
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log($"Heartbeat: Ping failed - {ex.Message}");
-                    await HandleConnectionLostAsync($"Ping failed: {ex.Message}");
-                    return;
+                    Logger.Log("Heartbeat: Ping could not be queued");
                 }
             }
         }
@@ -368,7 +387,16 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
             {
                 var silence = new byte[32000]; // 1s silence
                 await _sendChannel
-                    .Writer.WriteAsync(new QueueItem(silence, silence.Length, true), ct)
+                    .Writer.WriteAsync(
+                        new QueueItem(
+                            silence,
+                            silence.Length,
+                            IsStop: true,
+                            Pooled: false,
+                            IsPing: false
+                        ),
+                        ct
+                    )
                     .ConfigureAwait(false);
             }
         }
