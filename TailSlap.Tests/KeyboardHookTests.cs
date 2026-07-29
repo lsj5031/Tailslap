@@ -450,6 +450,35 @@ public class KeyboardHookTests
         Assert.False(keyUpFired);
     }
 
+    [Fact]
+    public void ForceStop_StandardHotkeySuppressesAutoRepeatUntilPrimaryKeyReleased()
+    {
+        using var hook = new KeyboardHook(CreateTestHotkey(0x0003, 0x54));
+        int keyDownCount = 0;
+        hook.OnKeyDown += () => keyDownCount++;
+
+        SimulateKeyDown(hook, 0x0003, 0x54);
+        hook.ForceStop();
+        SimulateKeyDown(hook, 0x0003, 0x54);
+
+        Assert.Equal(1, keyDownCount);
+    }
+
+    [Fact]
+    public void ForceStop_StandardHotkeyReArmsAfterPrimaryKeyRelease()
+    {
+        using var hook = new KeyboardHook(CreateTestHotkey(0x0003, 0x54));
+        int keyDownCount = 0;
+        hook.OnKeyDown += () => keyDownCount++;
+
+        SimulateKeyDown(hook, 0x0003, 0x54);
+        hook.ForceStop();
+        SimulateKeyUp(hook, 0x54);
+        SimulateKeyDown(hook, 0x0003, 0x54);
+
+        Assert.Equal(2, keyDownCount);
+    }
+
     #region RightAltOnly modifier-only hotkey tests
 
     private const uint VK_RMENU = 0xA5;

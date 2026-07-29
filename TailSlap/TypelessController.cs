@@ -250,6 +250,10 @@ public sealed class TypelessController : ITypelessController
             {
                 return;
             }
+
+            // Atomically claim this recording so concurrent key-up callbacks cannot
+            // stop and transcribe the same session more than once.
+            _state = ControllerState.Processing;
         }
 
         // Stop recording by cancelling the CTS
@@ -289,12 +293,6 @@ public sealed class TypelessController : ITypelessController
             CleanupTempFile();
             ReturnToIdle();
             return;
-        }
-
-        // Transition to Processing
-        lock (_stateLock)
-        {
-            _state = ControllerState.Processing;
         }
 
         try

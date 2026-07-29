@@ -479,6 +479,70 @@ public class TypelessControllerTests
     }
 
     [Fact]
+    public async Task HandleKeyUp_ConcurrentCalls_TranscribesAndCompletesOnce()
+    {
+        var recordingStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var releaseRecording = new TaskCompletionSource<RecordingStats>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var transcriptionStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var releaseTranscription = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        async IAsyncEnumerable<string> ControlledStream()
+        {
+            transcriptionStarted.TrySetResult();
+            await releaseTranscription.Task;
+            yield return "result";
+        }
+
+        var mockTranscriber = new Mock<IRemoteTranscriber>();
+        mockTranscriber
+            .Setup(t =>
+                t.TranscribeStreamingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())
+            )
+            .Returns(ControlledStream());
+        var mockTranscriberFactory = new Mock<IRemoteTranscriberFactory>();
+        mockTranscriberFactory
+            .Setup(f => f.Create(It.IsAny<TranscriberConfig>()))
+            .Returns(mockTranscriber.Object);
+
+        var controller = CreateController(
+            transcriberFactoryMock: mockTranscriberFactory,
+            recordFunc: (cfg, path, ct) =>
+            {
+                CreateDummyWavFile(path);
+                recordingStarted.TrySetResult();
+                return releaseRecording.Task;
+            }
+        );
+        int completedCount = 0;
+        controller.OnCompleted += () => Interlocked.Increment(ref completedCount);
+
+        await controller.HandleKeyDownAsync();
+        await recordingStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Task firstKeyUp = controller.HandleKeyUpAsync();
+        Task secondKeyUp = controller.HandleKeyUpAsync();
+        releaseRecording.SetResult(new RecordingStats { DurationMs = 1500 });
+
+        await transcriptionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseTranscription.SetResult();
+        await Task.WhenAll(firstKeyUp, secondKeyUp);
+
+        mockTranscriber.Verify(
+            t => t.TranscribeStreamingAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once
+        );
+        Assert.Equal(1, completedCount);
+    }
+
+    [Fact]
     public async Task HandleKeyUp_ShortRecording_DiscardsWithoutTranscription()
     {
         var mockTranscriberFactory = CreateMockTranscriberFactory(

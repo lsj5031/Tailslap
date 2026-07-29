@@ -66,6 +66,7 @@ public sealed class KeyboardHook : IDisposable
 
     private IntPtr _hookId = IntPtr.Zero;
     private HookProc? _hookCallback;
+    private readonly object _syncLock = new();
     private HotkeyConfig _config;
     private bool _disposed;
     private bool _isRecordingActive;
@@ -209,8 +210,17 @@ public sealed class KeyboardHook : IDisposable
     /// </summary>
     public void ForceStop()
     {
-        if (!_isRecordingActive)
-            return;
+        bool fireKeyUp;
+        lock (_syncLock)
+        {
+            if (!_isRecordingActive)
+                return;
+
+            _isRecordingActive = false;
+            _primaryKeyHeld = false;
+            _forceStopped = true;
+            fireKeyUp = true;
+        }
 
         try
         {
@@ -218,11 +228,9 @@ public sealed class KeyboardHook : IDisposable
         }
         catch { }
 
-        _isRecordingActive = false;
-        _primaryKeyHeld = false;
-        _forceStopped = true;
         StopMaxDurationTimer();
-        OnKeyUp?.Invoke();
+        if (fireKeyUp)
+            OnKeyUp?.Invoke();
     }
 
     public void Dispose()
@@ -262,24 +270,33 @@ public sealed class KeyboardHook : IDisposable
         if (!MatchesConfig(currentModifiers, vk))
             return;
 
-        // Auto-repeat suppression: ignore repeated key-down while key is held
-        if (_primaryKeyHeld)
-            return;
+        bool fireKeyDown;
+        lock (_syncLock)
+        {
+            // Prevent re-trigger after ForceStop until the primary key is released
+            if (_forceStopped)
+                return;
 
-        _primaryKeyHeld = true;
-        _isRecordingActive = true;
-        _lastKnownModifiers = currentModifiers;
-        _keyDownTimestamp = DateTime.UtcNow;
+            // Auto-repeat suppression: ignore repeated key-down while key is held
+            if (_primaryKeyHeld)
+                return;
+
+            _primaryKeyHeld = true;
+            _isRecordingActive = true;
+            _lastKnownModifiers = currentModifiers;
+            _keyDownTimestamp = DateTime.UtcNow;
+            fireKeyDown = true;
+        }
 
         StartMaxDurationTimer();
-
         try
         {
             Logger.Log("KeyboardHook: configured hotkey key-down detected");
         }
         catch { }
 
-        OnKeyDown?.Invoke();
+        if (fireKeyDown)
+            OnKeyDown?.Invoke();
     }
 
     /// <summary>
@@ -306,28 +323,33 @@ public sealed class KeyboardHook : IDisposable
         if (!modifiersHeld)
             return;
 
-        // Prevent re-trigger after ForceStop until all required modifiers are released
-        if (_forceStopped)
-            return;
+        bool fireKeyDown;
+        lock (_syncLock)
+        {
+            // Prevent re-trigger after ForceStop until all required modifiers are released
+            if (_forceStopped)
+                return;
 
-        // Auto-repeat suppression
-        if (_primaryKeyHeld)
-            return;
+            // Auto-repeat suppression
+            if (_primaryKeyHeld)
+                return;
 
-        _primaryKeyHeld = true;
-        _isRecordingActive = true;
-        _lastKnownModifiers = currentModifiers;
-        _keyDownTimestamp = DateTime.UtcNow;
+            _primaryKeyHeld = true;
+            _isRecordingActive = true;
+            _lastKnownModifiers = currentModifiers;
+            _keyDownTimestamp = DateTime.UtcNow;
+            fireKeyDown = true;
+        }
 
         StartMaxDurationTimer();
-
         try
         {
             Logger.Log("KeyboardHook: modifier-only hotkey activated");
         }
         catch { }
 
-        OnKeyDown?.Invoke();
+        if (fireKeyDown)
+            OnKeyDown?.Invoke();
     }
 
     /// <summary>
@@ -350,21 +372,30 @@ public sealed class KeyboardHook : IDisposable
         if (vk != _config.Key)
             return;
 
-        // Only fire if we had an active recording
-        if (!_primaryKeyHeld)
-            return;
+        bool fireKeyUp;
+        lock (_syncLock)
+        {
+            // Re-arm a force-stopped standard hotkey only after its primary key is released.
+            _forceStopped = false;
 
-        _primaryKeyHeld = false;
-        _isRecordingActive = false;
+            // Only fire if we had an active recording
+            if (!_primaryKeyHeld)
+                return;
+
+            _primaryKeyHeld = false;
+            _isRecordingActive = false;
+            fireKeyUp = true;
+        }
+
         StopMaxDurationTimer();
-
         try
         {
             Logger.Log("KeyboardHook: configured hotkey key-up detected");
         }
         catch { }
 
-        OnKeyUp?.Invoke();
+        if (fireKeyUp)
+            OnKeyUp?.Invoke();
     }
 
     /// <summary>
@@ -377,56 +408,62 @@ public sealed class KeyboardHook : IDisposable
     /// </summary>
     internal void ProcessModifierChange(uint currentModifiers, uint vk)
     {
-        _lastKnownModifiers = currentModifiers;
-
-        // Clear force-stopped latch when required modifiers are released
-        if (_forceStopped)
+        bool fireKeyUp = false;
+        lock (_syncLock)
         {
-            if (_config.RightAltOnly)
-            {
-                if (!_rightAltHeld)
-                    _forceStopped = false;
-            }
-            else if ((_config.Modifiers & currentModifiers) != _config.Modifiers)
-            {
-                _forceStopped = false;
-            }
-        }
+            _lastKnownModifiers = currentModifiers;
 
-        // For modifier-only hotkeys, releasing any required modifier triggers key-up
-        if (IsModifierOnlyHotkey && _primaryKeyHeld)
-        {
-            bool released;
-
-            if (_config.RightAltOnly)
+            // Clear force-stopped latch when required modifiers are released
+            if (_forceStopped)
             {
-                // Track right Alt release from _rightAltHeld AND vk.
-                // _rightAltHeld is set to false by HookCallback BEFORE this method runs
-                // (when vk==VK_RMENU on key-up). We also check vk directly as a safety net.
-                released = !_rightAltHeld || vk == VK_RMENU;
-            }
-            else
-            {
-                released = (_config.Modifiers & currentModifiers) != _config.Modifiers;
-            }
-
-            if (released)
-            {
-                _primaryKeyHeld = false;
-                _isRecordingActive = false;
-                StopMaxDurationTimer();
-
-                try
+                if (_config.RightAltOnly)
                 {
-                    Logger.Log(
-                        "KeyboardHook: modifier-only hotkey deactivated (modifier released)"
-                    );
+                    if (!_rightAltHeld)
+                        _forceStopped = false;
                 }
-                catch { }
+                else if ((_config.Modifiers & currentModifiers) != _config.Modifiers)
+                {
+                    _forceStopped = false;
+                }
+            }
 
-                OnKeyUp?.Invoke();
+            // For modifier-only hotkeys, releasing any required modifier triggers key-up
+            if (IsModifierOnlyHotkey && _primaryKeyHeld)
+            {
+                bool released;
+
+                if (_config.RightAltOnly)
+                {
+                    // Track right Alt release from _rightAltHeld AND vk.
+                    // _rightAltHeld is set to false by HookCallback BEFORE this method runs
+                    // (when vk==VK_RMENU on key-up). We also check vk directly as a safety net.
+                    released = !_rightAltHeld || vk == VK_RMENU;
+                }
+                else
+                {
+                    released = (_config.Modifiers & currentModifiers) != _config.Modifiers;
+                }
+
+                if (released)
+                {
+                    _primaryKeyHeld = false;
+                    _isRecordingActive = false;
+                    fireKeyUp = true;
+                }
             }
         }
+
+        if (!fireKeyUp)
+            return;
+
+        StopMaxDurationTimer();
+        try
+        {
+            Logger.Log("KeyboardHook: modifier-only hotkey deactivated (modifier released)");
+        }
+        catch { }
+
+        OnKeyUp?.Invoke();
     }
 
     /// <summary>
