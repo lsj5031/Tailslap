@@ -1093,7 +1093,7 @@ public sealed class SettingsForm : Form
         {
             Text = _cfg.Transcriber.Language ?? "",
             Dock = DockStyle.Fill,
-            PlaceholderText = "e.g. en, zh — blank = auto (openai provider)",
+            PlaceholderText = "e.g. en, zh — blank = provider auto-detect",
         };
         panel.Controls.Add(
             new Label

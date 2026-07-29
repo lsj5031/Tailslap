@@ -155,7 +155,7 @@ public sealed class TranscriberConfig
     // Operational default for local glm-asr / OpenAI-protocol stacks is "openai"; "custom" remains supported.
     public string RealtimeProvider { get; set; } = "openai";
 
-    /// <summary>BCP-47 language hint for OpenAI-protocol realtime (empty = provider auto-detect).</summary>
+    /// <summary>BCP-47 language hint for HTTP and OpenAI-protocol realtime transcription (empty = provider auto-detect).</summary>
     public string Language { get; set; } = "";
 
     /// <summary>Optional vocabulary / domain prompt for OpenAI-protocol realtime session.</summary>

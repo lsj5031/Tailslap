@@ -33,7 +33,7 @@ public sealed class RemoteTranscriberTests
     }
 
     [Fact]
-    public async Task TranscribeAudioAsync_SendsExpectedMultipartRequest()
+    public async Task TranscribeAudioAsync_ConfiguredLanguage_SendsLanguageAndModel()
     {
         CapturedRequest? captured = null;
         using var fixture = new RemoteTranscriberFixture(
@@ -42,7 +42,8 @@ public sealed class RemoteTranscriberTests
                 captured = request;
                 return JsonResponse("""{"text":"ok"}""");
             },
-            apiKey: "secret-token"
+            apiKey: "secret-token",
+            language: "  en-US  "
         );
 
         await fixture.Transcriber.TranscribeAudioAsync(fixture.AudioPath);
@@ -58,6 +59,76 @@ public sealed class RemoteTranscriberTests
         Assert.Contains($"filename={Path.GetFileName(fixture.AudioPath)}", captured.Content);
         Assert.Contains("name=model", captured.Content);
         Assert.Contains("test-model", captured.Content);
+        Assert.Contains("name=language", captured.Content);
+        Assert.Contains("en-US", captured.Content);
+    }
+
+    [Fact]
+    public async Task TranscribeAudioAsync_BlankLanguage_OmitsLanguageAndPreservesModel()
+    {
+        CapturedRequest? captured = null;
+        using var fixture = new RemoteTranscriberFixture(
+            request =>
+            {
+                captured = request;
+                return JsonResponse("""{"text":"ok"}""");
+            },
+            language: "   "
+        );
+
+        await fixture.Transcriber.TranscribeAudioAsync(fixture.AudioPath);
+
+        Assert.NotNull(captured);
+        Assert.Contains("name=model", captured!.Content);
+        Assert.Contains("test-model", captured.Content);
+        Assert.DoesNotContain("name=language", captured.Content);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_ConfiguredLanguage_SendsLanguageModelAndStream()
+    {
+        CapturedRequest? captured = null;
+        using var fixture = new RemoteTranscriberFixture(
+            request =>
+            {
+                captured = request;
+                return SseResponse("data: [DONE]\n\n");
+            },
+            language: " zh "
+        );
+
+        await CollectAsync(fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath));
+
+        Assert.NotNull(captured);
+        Assert.Contains("name=model", captured!.Content);
+        Assert.Contains("test-model", captured.Content);
+        Assert.Contains("name=language", captured.Content);
+        Assert.Contains("zh", captured.Content);
+        Assert.Contains("name=stream", captured.Content);
+        Assert.Contains("true", captured.Content);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_ConfiguredLanguage_SendsLanguageAndModel()
+    {
+        CapturedRequest? captured = null;
+        using var fixture = new RemoteTranscriberFixture(
+            request =>
+            {
+                captured = request;
+                return JsonResponse("""{"text":"connected"}""");
+            },
+            language: " fr "
+        );
+
+        var result = await fixture.Transcriber.TestConnectionAsync();
+
+        Assert.Equal("connected", result);
+        Assert.NotNull(captured);
+        Assert.Contains("name=model", captured!.Content);
+        Assert.Contains("test-model", captured.Content);
+        Assert.Contains("name=language", captured.Content);
+        Assert.Contains("fr", captured.Content);
     }
 
     [Fact]
@@ -240,7 +311,8 @@ public sealed class RemoteTranscriberTests
 
         public RemoteTranscriberFixture(
             Func<CapturedRequest, HttpResponseMessage> responseFactory,
-            string? apiKey = null
+            string? apiKey = null,
+            string? language = null
         )
         {
             AudioPath = Path.GetTempFileName();
@@ -256,6 +328,7 @@ public sealed class RemoteTranscriberTests
                 BaseUrl = "http://unit.test/v1",
                 Model = "test-model",
                 TimeoutSeconds = 5,
+                Language = language ?? "",
             };
             if (apiKey != null)
             {

@@ -79,11 +79,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
 
             using var formData = new MultipartFormDataContent();
             formData.Add(audioContent, "file", "connection_test.wav");
-
-            if (!string.IsNullOrEmpty(_config.Model))
-            {
-                formData.Add(new StringContent(_config.Model), "model");
-            }
+            AddCommonMultipartFields(formData);
 
             // Create request and add Authorization header (must be on HttpRequestMessage, not content)
             using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
@@ -212,10 +208,10 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
 
                 using var formData = new MultipartFormDataContent();
                 formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
+                AddCommonMultipartFields(formData);
 
                 if (!string.IsNullOrEmpty(_config.Model))
                 {
-                    formData.Add(new StringContent(_config.Model), "model");
                     Logger.Log($"Added model to request: {_config.Model}");
                 }
 
@@ -395,11 +391,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
 
         using var formData = new MultipartFormDataContent();
         formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
-
-        if (!string.IsNullOrEmpty(_config.Model))
-        {
-            formData.Add(new StringContent(_config.Model), "model");
-        }
+        AddCommonMultipartFields(formData);
 
         // Request streaming response
         formData.Add(new StringContent("true"), "stream");
@@ -554,6 +546,20 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         finally
         {
             response?.Dispose();
+        }
+    }
+
+    private void AddCommonMultipartFields(MultipartFormDataContent formData)
+    {
+        if (!string.IsNullOrEmpty(_config.Model))
+        {
+            formData.Add(new StringContent(_config.Model), "model");
+        }
+
+        var language = _config.Language?.Trim();
+        if (!string.IsNullOrEmpty(language))
+        {
+            formData.Add(new StringContent(language), "language");
         }
     }
 
