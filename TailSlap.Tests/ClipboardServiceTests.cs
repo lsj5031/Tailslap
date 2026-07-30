@@ -49,18 +49,14 @@ public class ClipboardServiceTests
     }
 
     [Fact]
-    public void CaptureSelectionOrClipboardAsync_ReturnsTask()
+    public void CaptureSelectionOrClipboardAsync_HasExpectedReturnType()
     {
-        // Arrange
-        var service = new ClipboardService(CreateMockConfigService().Object);
+        var method = typeof(ClipboardService).GetMethod(
+            nameof(ClipboardService.CaptureSelectionOrClipboardAsync)
+        );
 
-        // Act
-        var task = service.CaptureSelectionOrClipboardAsync();
-
-        // Assert
-        Assert.IsType<Task<string>>(task);
-
-        // Note: the operation requires actual window focus which we can't simulate in unit test
+        Assert.NotNull(method);
+        Assert.Equal(typeof(Task<string>), method.ReturnType);
     }
 
     [Fact]
