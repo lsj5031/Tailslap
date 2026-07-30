@@ -25,10 +25,7 @@ public static class Dpapi
                 Logger.Log($"DPAPI Protect failed: {ex.GetType().Name}");
             }
             catch { }
-            if (
-                notifyOnFailure
-                && Interlocked.Exchange(ref _protectFailureNotified, 1) == 0
-            )
+            if (notifyOnFailure && Interlocked.Exchange(ref _protectFailureNotified, 1) == 0)
             {
                 try
                 {
@@ -60,10 +57,7 @@ public static class Dpapi
                 Logger.Log($"DPAPI Unprotect failed: {ex.GetType().Name}");
             }
             catch { }
-            if (
-                notifyOnFailure
-                && Interlocked.Exchange(ref _unprotectFailureNotified, 1) == 0
-            )
+            if (notifyOnFailure && Interlocked.Exchange(ref _unprotectFailureNotified, 1) == 0)
             {
                 try
                 {

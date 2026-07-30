@@ -34,14 +34,7 @@ public sealed class TranscriptionController : ITranscriptionController
         TextTyper textTyper,
         ITranscriptionResultSink resultSink
     )
-        : this(
-            config,
-            remoteTranscriberFactory,
-            audioRecorderFactory,
-            textTyper,
-            resultSink,
-            null!
-        )
+        : this(config, remoteTranscriberFactory, audioRecorderFactory, textTyper, resultSink, null!)
     {
         _recordFunc = DefaultRecordAsync;
     }

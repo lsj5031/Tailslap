@@ -11,8 +11,8 @@ public sealed class RemoteTranscriberTests
     [Fact]
     public async Task TranscribeAudioAsync_TopLevelText_ReturnsText()
     {
-        using var fixture = new RemoteTranscriberFixture(
-            _ => JsonResponse("""{"text":"hello world"}""")
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            JsonResponse("""{"text":"hello world"}""")
         );
 
         var result = await fixture.Transcriber.TranscribeAudioAsync(fixture.AudioPath);
@@ -23,8 +23,8 @@ public sealed class RemoteTranscriberTests
     [Fact]
     public async Task TranscribeAudioAsync_OpenAiChoiceMessage_ReturnsContent()
     {
-        using var fixture = new RemoteTranscriberFixture(
-            _ => JsonResponse("""{"choices":[{"message":{"content":"choice text"}}]}""")
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            JsonResponse("""{"choices":[{"message":{"content":"choice text"}}]}""")
         );
 
         var result = await fixture.Transcriber.TranscribeAudioAsync(fixture.AudioPath);
@@ -50,10 +50,7 @@ public sealed class RemoteTranscriberTests
 
         Assert.NotNull(captured);
         Assert.Equal(HttpMethod.Post, captured!.Method);
-        Assert.Equal(
-            "http://unit.test/v1/audio/transcriptions",
-            captured.RequestUri?.AbsoluteUri
-        );
+        Assert.Equal("http://unit.test/v1/audio/transcriptions", captured.RequestUri?.AbsoluteUri);
         Assert.Equal("Bearer secret-token", captured.Authorization);
         Assert.Contains("name=file", captured.Content);
         Assert.Contains($"filename={Path.GetFileName(fixture.AudioPath)}", captured.Content);
@@ -148,13 +145,12 @@ public sealed class RemoteTranscriberTests
     [Fact]
     public async Task TranscribeAudioAsync_HttpFailure_ThrowsHttpErrorWithoutRawBody()
     {
-        using var fixture = new RemoteTranscriberFixture(
-            _ =>
-                new HttpResponseMessage(HttpStatusCode.BadGateway)
-                {
-                    Content = new StringContent("private upstream details"),
-                }
-        );
+        using var fixture = new RemoteTranscriberFixture(_ => new HttpResponseMessage(
+            HttpStatusCode.BadGateway
+        )
+        {
+            Content = new StringContent("private upstream details"),
+        });
 
         var error = await Assert.ThrowsAsync<TranscriberException>(() =>
             fixture.Transcriber.TranscribeAudioAsync(fixture.AudioPath)
@@ -169,8 +165,8 @@ public sealed class RemoteTranscriberTests
     [Fact]
     public async Task TranscribeStreamingAsync_SseChunks_YieldsUntilDone()
     {
-        using var fixture = new RemoteTranscriberFixture(
-            _ => SseResponse("data: hello \n\ndata: world\n\ndata: [DONE]\n\ndata: ignored\n\n")
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse("data: hello \n\ndata: world\n\ndata: [DONE]\n\ndata: ignored\n\n")
         );
 
         var chunks = await CollectAsync(
@@ -183,8 +179,8 @@ public sealed class RemoteTranscriberTests
     [Fact]
     public async Task TranscribeStreamingAsync_DataWithoutSpace_YieldsText()
     {
-        using var fixture = new RemoteTranscriberFixture(
-            _ => SseResponse("data:first\ndata: second\ndata:[DONE]\n")
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse("data:first\ndata: second\ndata:[DONE]\n")
         );
 
         var chunks = await CollectAsync(
@@ -197,8 +193,8 @@ public sealed class RemoteTranscriberTests
     [Fact]
     public async Task TranscribeStreamingAsync_ErrorEvent_ThrowsFingerprintError()
     {
-        using var fixture = new RemoteTranscriberFixture(
-            _ => SseResponse("data: [Error: private backend detail]\n\n")
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse("data: [Error: private backend detail]\n\n")
         );
 
         var error = await Assert.ThrowsAsync<TranscriberException>(async () =>
@@ -213,8 +209,8 @@ public sealed class RemoteTranscriberTests
     [Fact]
     public async Task TranscribeStreamingAsync_NonStreamingJson_YieldsFullText()
     {
-        using var fixture = new RemoteTranscriberFixture(
-            _ => JsonResponse("""{"transcription":"fallback text"}""")
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            JsonResponse("""{"transcription":"fallback text"}""")
         );
 
         var chunks = await CollectAsync(
@@ -228,13 +224,11 @@ public sealed class RemoteTranscriberTests
     public async Task TranscribeAudioAsync_MissingFile_ThrowsBeforeHttpRequest()
     {
         var requests = 0;
-        using var fixture = new RemoteTranscriberFixture(
-            _ =>
-            {
-                requests++;
-                return JsonResponse("""{"text":"unused"}""");
-            }
-        );
+        using var fixture = new RemoteTranscriberFixture(_ =>
+        {
+            requests++;
+            return JsonResponse("""{"text":"unused"}""");
+        });
         var missingPath = fixture.AudioPath + ".missing";
 
         await Assert.ThrowsAsync<FileNotFoundException>(() =>

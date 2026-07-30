@@ -174,7 +174,9 @@ public class RealtimeTranscriptionControllerTests
         );
         Assert.NotNull(method);
 
-        var result = Assert.IsType<string>(method!.Invoke(null, new object[] { new string('x', 250) }));
+        var result = Assert.IsType<string>(
+            method!.Invoke(null, new object[] { new string('x', 250) })
+        );
 
         Assert.Equal(203, result.Length);
         Assert.Equal(new string('x', 200) + "...", result);

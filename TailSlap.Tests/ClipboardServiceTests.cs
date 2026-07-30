@@ -110,11 +110,7 @@ public class ClipboardServiceTests
     {
         Assert.True(dataObject.GetDataPresent(format, autoConvert: false));
         Assert.True(
-            dataObject.TryGetData<MemoryStream>(
-                format,
-                autoConvert: false,
-                out var stream
-            )
+            dataObject.TryGetData<MemoryStream>(format, autoConvert: false, out var stream)
         );
         Assert.NotNull(stream);
         Assert.Equal(expected, BitConverter.ToInt32(stream.ToArray(), 0));

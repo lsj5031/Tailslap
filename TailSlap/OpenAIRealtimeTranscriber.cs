@@ -643,7 +643,9 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         if (
             string.IsNullOrWhiteSpace(errorCode)
             || errorCode.Length > 64
-            || errorCode.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '_' and not '-' and not '.')
+            || errorCode.Any(c =>
+                !char.IsAsciiLetterOrDigit(c) && c is not '_' and not '-' and not '.'
+            )
         )
         {
             return null;

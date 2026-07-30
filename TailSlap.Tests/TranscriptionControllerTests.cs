@@ -128,10 +128,12 @@ public class TranscriptionControllerTests
             textTyper,
             resultSink,
             recordFunc
-                ?? ((_, _, _) =>
-                    Task.FromResult(
-                        new RecordingStats { DurationMs = 1000, BytesRecorded = 32000 }
-                    ))
+                ?? (
+                    (_, _, _) =>
+                        Task.FromResult(
+                            new RecordingStats { DurationMs = 1000, BytesRecorded = 32000 }
+                        )
+                )
         );
     }
 
@@ -326,9 +328,7 @@ public class TranscriptionControllerTests
             CreateNonStreamingFactory("history text"),
             history,
             (_, _, _) =>
-                Task.FromResult(
-                    new RecordingStats { DurationMs = 2345, BytesRecorded = 64000 }
-                )
+                Task.FromResult(new RecordingStats { DurationMs = 2345, BytesRecorded = 64000 })
         );
 
         Assert.True(await controller.TriggerTranscribeAsync());
@@ -355,5 +355,4 @@ public class TranscriptionControllerTests
                 method!.Invoke(controller, new object[] { transcriber, audioFilePath, cfg })!;
         return await task;
     }
-
 }

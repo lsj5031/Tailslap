@@ -114,7 +114,10 @@ public class TranscriptionResultSinkTests
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
         clipboard.Verify(c => c.PasteAsync(), Times.Once);
         history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
-        history.Verify(h => h.Append(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        history.Verify(
+            h => h.Append(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never
+        );
     }
 
     [Fact]
@@ -293,7 +296,10 @@ public class TranscriptionResultSinkTests
 
         clipboard.Verify(c => c.SetTextAsync(It.IsAny<string>()), Times.Never);
         history.Verify(h => h.AppendTranscription("raw", 202), Times.Once);
-        history.Verify(h => h.Append(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        history.Verify(
+            h => h.Append(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never
+        );
     }
 
     [Fact]
@@ -326,13 +332,7 @@ public class TranscriptionResultSinkTests
         var clipboard = new Mock<IClipboardService>();
         var typer = new RecordingTextTyper(clipboard.Object);
         CancellationToken observedToken = default;
-        var sink = CreateSink(
-            history,
-            clipboard,
-            typer,
-            "raw improved",
-            ct => observedToken = ct
-        );
+        var sink = CreateSink(history, clipboard, typer, "raw improved", ct => observedToken = ct);
         using var cts = new CancellationTokenSource();
 
         await sink.ProcessAsync(

@@ -46,9 +46,7 @@ public class HistoryServiceTests
             Assert.Equal("transcribed text", entry.Text);
             Assert.Equal(5000, entry.RecordingDurationMs);
             Assert.True(
-                File.Exists(
-                    Path.Combine(baseDirectory, "transcription-history.jsonl.encrypted")
-                )
+                File.Exists(Path.Combine(baseDirectory, "transcription-history.jsonl.encrypted"))
             );
         }
         finally
@@ -71,9 +69,7 @@ public class HistoryServiceTests
 
             Assert.False(File.Exists(Path.Combine(baseDirectory, "history.jsonl.encrypted")));
             Assert.False(
-                File.Exists(
-                    Path.Combine(baseDirectory, "transcription-history.jsonl.encrypted")
-                )
+                File.Exists(Path.Combine(baseDirectory, "transcription-history.jsonl.encrypted"))
             );
         }
         finally
@@ -148,8 +144,8 @@ public class HistoryServiceTests
             for (var index = 0; index < appends.Length; index++)
             {
                 var capturedIndex = index;
-                appends[index] = Task.Run(
-                    () => service.AppendTranscription($"transcription {capturedIndex}", capturedIndex)
+                appends[index] = Task.Run(() =>
+                    service.AppendTranscription($"transcription {capturedIndex}", capturedIndex)
                 );
             }
 
@@ -244,11 +240,7 @@ public class HistoryServiceTests
 
     private static string CreateTempDirectory()
     {
-        var path = Path.Combine(
-            Path.GetTempPath(),
-            "TailSlap.Tests",
-            Guid.NewGuid().ToString("N")
-        );
+        var path = Path.Combine(Path.GetTempPath(), "TailSlap.Tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
     }

@@ -5,10 +5,19 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.1.0] - 2026-07-30
+
+### Added
+- **Delivery verification and diagnostics**: Text delivery now verifies paste outcomes, reports failures, excludes delivered text from clipboard history, fingerprints realtime errors without exposing transcript content, and surfaces DPAPI protection failures.
+- **Expanded reliability coverage**: Added tests for transcription HTTP and toggle flows, realtime buffering and send behavior, shared result handling, clipboard delivery, native input, history isolation, and configuration caching.
 
 ### Changed
-- **Runtime migration**: Migrated to .NET 10 LTS. Framework-dependent builds now require the .NET 10 Desktop Runtime.
+- **Shared transcription results**: Toggle, typeless, and realtime modes now use a common result sink, while HTTP transcription requests include the configured language hint.
+- **Runtime and documentation**: Migrated to .NET 10 LTS, guarded the WebRtcVad native publish dependency, and updated setup, contributor, troubleshooting, and release documentation. Framework-dependent builds now require the .NET 10 Desktop Runtime.
+
+### Fixed
+- **Realtime ownership and delivery**: OpenAI-protocol realtime buffering and legacy custom realtime sends now have serialized ownership, and delivery waits for modifier release before typing.
+- **Configuration and history safety**: Keyboard-hook configuration uses a cached snapshot, history storage has a safe test seam with serialized file access, and delivery failures produce user-visible notifications.
 
 ## [3.0.9] - 2026-04-09
 

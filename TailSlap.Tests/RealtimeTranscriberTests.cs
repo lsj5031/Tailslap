@@ -30,10 +30,7 @@ public sealed class RealtimeTranscriberTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
         );
         Assert.NotNull(method);
-        method!.Invoke(
-            transcriber,
-            new object[] { """{"error":"secret server diagnostic"}""" }
-        );
+        method!.Invoke(transcriber, new object[] { """{"error":"secret server diagnostic"}""" });
 
         Assert.Equal(
             "The transcription server reported an error. Check the endpoint and model settings, then try again.",

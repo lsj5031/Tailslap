@@ -28,8 +28,7 @@ public sealed class ClipboardService : IClipboardService
 
     public ClipboardService(IConfigService configService)
     {
-        _configService =
-            configService ?? throw new ArgumentNullException(nameof(configService));
+        _configService = configService ?? throw new ArgumentNullException(nameof(configService));
     }
 
     /// <summary>

@@ -5,10 +5,10 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>3.0.9</Version>
-    <AssemblyVersion>3.0.9.0</AssemblyVersion>
-    <FileVersion>3.0.9.0</FileVersion>
-    <InformationalVersion>3.0.9</InformationalVersion>
+    <Version>3.1.0</Version>
+    <AssemblyVersion>3.1.0.0</AssemblyVersion>
+    <FileVersion>3.1.0.0</FileVersion>
+    <InformationalVersion>3.1.0</InformationalVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationIcon>Icons\favicon.ico</ApplicationIcon>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -61,6 +61,7 @@
   <Target Name="VerifyWebRtcVadNative" BeforeTargets="AssignTargetPaths">
     <Error
       Condition="!Exists('$(WebRtcVadNativePath)')"
-      Text="WebRtcVad native dependency was not found at '$(WebRtcVadNativePath)'. Restore WebRtcVadSharp $(WebRtcVadSharpVersion) before building or publishing." />
+      Text="WebRtcVad native dependency was not found at '$(WebRtcVadNativePath)'. Restore WebRtcVadSharp $(WebRtcVadSharpVersion) before building or publishing."
+    />
   </Target>
 </Project>

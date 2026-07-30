@@ -165,7 +165,13 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
 
             if (
                 !_sendChannel.Writer.TryWrite(
-                    new QueueItem(rented, pcm16Data.Count, IsStop: false, Pooled: true, IsPing: false)
+                    new QueueItem(
+                        rented,
+                        pcm16Data.Count,
+                        IsStop: false,
+                        Pooled: true,
+                        IsPing: false
+                    )
                 )
             )
             {
@@ -564,11 +570,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
             $"RealtimeTranscriber: Received text (final={msg.Final}, len={msg.Text?.Length ?? 0}, sha256={Hashing.Sha256Hex(msg.Text ?? string.Empty)})"
         );
         OnTranscription?.Invoke(
-            new RealtimeTranscriptionUpdate
-            {
-                Text = msg.Text ?? string.Empty,
-                IsFinal = msg.Final,
-            }
+            new RealtimeTranscriptionUpdate { Text = msg.Text ?? string.Empty, IsFinal = msg.Final }
         );
     }
 

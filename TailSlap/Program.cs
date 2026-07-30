@@ -101,32 +101,28 @@ internal static class Program
         services.AddSingleton<IAutoStartService, AutoStartServiceAdapter>();
         services.AddSingleton<TextTyper>();
         services.AddSingleton<ITranscriptionResultSink, TranscriptionResultSink>();
-        services.AddSingleton<ITypelessController>(sp =>
-            new TypelessController(
-                sp.GetRequiredService<IConfigService>(),
-                sp.GetRequiredService<IRemoteTranscriberFactory>(),
-                sp.GetRequiredService<IAudioRecorderFactory>(),
-                sp.GetRequiredService<TextTyper>(),
-                sp.GetRequiredService<ITranscriptionResultSink>()
-            )
-        );
-        services.AddSingleton<ITranscriptionController>(sp =>
-            new TranscriptionController(
-                sp.GetRequiredService<IConfigService>(),
-                sp.GetRequiredService<IRemoteTranscriberFactory>(),
-                sp.GetRequiredService<IAudioRecorderFactory>(),
-                sp.GetRequiredService<TextTyper>(),
-                sp.GetRequiredService<ITranscriptionResultSink>()
-            )
-        );
+        services.AddSingleton<ITypelessController>(sp => new TypelessController(
+            sp.GetRequiredService<IConfigService>(),
+            sp.GetRequiredService<IRemoteTranscriberFactory>(),
+            sp.GetRequiredService<IAudioRecorderFactory>(),
+            sp.GetRequiredService<TextTyper>(),
+            sp.GetRequiredService<ITranscriptionResultSink>()
+        ));
+        services.AddSingleton<ITranscriptionController>(sp => new TranscriptionController(
+            sp.GetRequiredService<IConfigService>(),
+            sp.GetRequiredService<IRemoteTranscriberFactory>(),
+            sp.GetRequiredService<IAudioRecorderFactory>(),
+            sp.GetRequiredService<TextTyper>(),
+            sp.GetRequiredService<ITranscriptionResultSink>()
+        ));
         services.AddSingleton<KeyboardHook>(sp =>
         {
             var config = sp.GetRequiredService<IConfigService>();
             var cfg = config.CreateValidatedCopy();
             return new KeyboardHook(cfg.TypelessHotkey);
         });
-        services.AddSingleton<IRealtimeTranscriptionController>(sp =>
-            new RealtimeTranscriptionController(
+        services.AddSingleton<IRealtimeTranscriptionController>(
+            sp => new RealtimeTranscriptionController(
                 sp.GetRequiredService<IConfigService>(),
                 sp.GetRequiredService<IClipboardService>(),
                 sp.GetRequiredService<IRealtimeTranscriberFactory>(),

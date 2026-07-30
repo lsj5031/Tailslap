@@ -52,11 +52,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
                 cancellationToken
             )
             .ConfigureAwait(false);
-        bool wasEnhanced = !string.Equals(
-            finalText,
-            request.RawText,
-            StringComparison.Ordinal
-        );
+        bool wasEnhanced = !string.Equals(finalText, request.RawText, StringComparison.Ordinal);
 
         await DeliverAsync(request, finalText, wasEnhanced, cancellationToken)
             .ConfigureAwait(false);
@@ -71,20 +67,14 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
         }
         catch (Exception ex)
         {
-            TryLog(
-                $"TranscriptionResultSink: Raw history save failed: {ex.GetType().Name}"
-            );
+            TryLog($"TranscriptionResultSink: Raw history save failed: {ex.GetType().Name}");
         }
 
         if (wasEnhanced)
         {
             try
             {
-                _history.Append(
-                    request.RawText,
-                    finalText,
-                    request.Config.Llm.Model
-                );
+                _history.Append(request.RawText, finalText, request.Config.Llm.Model);
                 TryLog(
                     $"TranscriptionResultSink: Refinement history saved, rawLen={request.RawText.Length}, finalLen={finalText.Length}, model={request.Config.Llm.Model}"
                 );
@@ -115,10 +105,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
                     if (!request.ResultsAlreadyStreamed)
                     {
                         bool delivered = await _clipboardHelper
-                            .SetTextAndPasteAsync(
-                                finalText,
-                                request.Config.Transcriber.AutoPaste
-                            )
+                            .SetTextAndPasteAsync(finalText, request.Config.Transcriber.AutoPaste)
                             .ConfigureAwait(false);
                         if (!delivered)
                         {
