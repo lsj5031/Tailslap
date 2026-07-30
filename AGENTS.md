@@ -5,13 +5,13 @@ This document contains internal development information for TailSlap contributor
 ## Build & Run Commands
 
 - **Build Release**: `dotnet build -c Release` (from TailSlap directory)
-- **Publish**: `dotnet publish -c Release` → output in `TailSlap\bin\Release\net9.0-windows\win-x64\publish\`
-- **Run**: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
+- **Publish**: `dotnet publish -c Release` → output in `TailSlap\bin\Release\net10.0-windows\win-x64\publish\`
+- **Run**: `TailSlap\bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`
 - **Self-contained build** (single file, ~80MB): `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
 
 ## Architecture
 
-- **Single WinForms desktop app** (.NET 9, net9.0-windows)
+- **Single WinForms desktop app** (.NET 10, net10.0-windows)
 - **Tray-only UI**: Hidden main form, runs as system tray icon with context menu
 - **Dependency Injection**: Microsoft.Extensions.DependencyInjection for service management and composition
 - **HttpClientFactory**: Centralized HTTP client with connection pooling, automatic decompression, configurable timeouts
@@ -108,7 +108,7 @@ All interface-driven, registered via DI:
 
 ## Code Style & Conventions
 
-- **Language**: C# 12 (.NET 9) with nullable reference types enabled (`<Nullable>enable</Nullable>`)
+- **Language**: C# 12 (.NET 10) with nullable reference types enabled (`<Nullable>enable</Nullable>`)
 - **Implicit usings** enabled (`<ImplicitUsings>enable</ImplicitUsings>`)
 - **Naming**: PascalCase for public members, `_camelCase` for private fields
 - **Classes**: Sealed where appropriate (ConfigService, TextRefiner, ClipboardService, etc.)

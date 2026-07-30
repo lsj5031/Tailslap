@@ -57,10 +57,10 @@ Be respectful, inclusive, and constructive in all interactions.
 
 ## Development Setup
 
-1. Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+1. Install [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 2. Clone the repo and open in Visual Studio 2022 or VS Code
 3. Build: `dotnet build`
-4. Run: `TailSlap\bin\Debug\net9.0-windows\win-x64\TailSlap.exe`
+4. Run: `TailSlap\bin\Debug\net10.0-windows\win-x64\TailSlap.exe`
 
 ## Areas for Contribution
 

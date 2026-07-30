@@ -20,10 +20,10 @@ jobs:
       with:
         persist-credentials: false
 
-    - name: Setup .NET 9
+    - name: Setup .NET 10
       uses: actions/setup-dotnet@v5
       with:
-        dotnet-version: '9.0.x'
+        dotnet-version: '10.0.x'
 
     - name: Restore dependencies
       run: dotnet restore -r win-x64
@@ -70,18 +70,20 @@ jobs:
         ### Downloads
         
         - `TailSlap-self-contained-win-x64.zip`: Recommended for most users. Runs without installing .NET.
-        - `TailSlap-framework-dependent-win-x64.zip`: Smaller download. Requires the .NET 9 Desktop Runtime to already be installed.
+        - `TailSlap-framework-dependent-win-x64.zip`: Smaller download. Requires the .NET 10 Desktop Runtime to already be installed.
         
         ### Installation
         
+        Upgrading from a previous version? The framework-dependent build now requires the .NET 10 Desktop Runtime.
+
         1. Download the asset that matches your setup.
-        2. If you chose the framework-dependent zip, install the .NET 9 Desktop Runtime first.
+        2. If you chose the framework-dependent zip, install the .NET 10 Desktop Runtime first.
         3. Extract the zip and run `TailSlap.exe`.
         
         ### Requirements
         
         - Windows 10 or later
-        - .NET 9 Desktop Runtime x64 only for the framework-dependent build
+        - .NET 10 Desktop Runtime x64 only for the framework-dependent build
         
         See [README.md](https://github.com/${{ github.repository }}/blob/master/README.md) for setup instructions.
         "@

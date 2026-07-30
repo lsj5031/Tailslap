@@ -70,7 +70,14 @@ public class ClipboardServiceTests
 
         DataObject dataObject = ClipboardService.BuildExcludedDataObject(text);
 
-        Assert.Equal(text, dataObject.GetData(DataFormats.UnicodeText));
+        Assert.True(
+            dataObject.TryGetData<string>(
+                DataFormats.UnicodeText,
+                autoConvert: false,
+                out var actualText
+            )
+        );
+        Assert.Equal(text, actualText);
         AssertDwordFormat(dataObject, "ExcludeClipboardContentFromMonitorProcessing", 1);
         AssertDwordFormat(dataObject, "CanIncludeInClipboardHistory", 0);
         AssertDwordFormat(dataObject, "CanUploadToCloudClipboard", 0);
@@ -102,9 +109,14 @@ public class ClipboardServiceTests
     private static void AssertDwordFormat(DataObject dataObject, string format, int expected)
     {
         Assert.True(dataObject.GetDataPresent(format, autoConvert: false));
-        var stream = Assert.IsType<MemoryStream>(
-            dataObject.GetData(format, autoConvert: false)
+        Assert.True(
+            dataObject.TryGetData<MemoryStream>(
+                format,
+                autoConvert: false,
+                out var stream
+            )
         );
+        Assert.NotNull(stream);
         Assert.Equal(expected, BitConverter.ToInt32(stream.ToArray(), 0));
     }
 }

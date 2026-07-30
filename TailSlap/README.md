@@ -23,7 +23,7 @@ A Windows system tray application for text refinement, toggle transcription, pus
 ## Requirements
 
 - Windows 10/11
-- .NET 9 Runtime (Download from https://dotnet.microsoft.com/download/dotnet/9.0)
+- .NET 10 Runtime (Download from https://dotnet.microsoft.com/download/dotnet/10.0)
 
 ## Installation
 
@@ -142,7 +142,7 @@ dotnet build -c Release
 dotnet publish -c Release
 ```
 
-Output: `bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
+Output: `bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`
 
 ## Troubleshooting
 
@@ -159,7 +159,7 @@ Output: `bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
 
 ### Icon not appearing
 - Check system tray overflow area (hidden icons)
-- Ensure .NET 9 Runtime is installed
+- Ensure .NET 10 Runtime is installed
 
 ## Security Notes
 

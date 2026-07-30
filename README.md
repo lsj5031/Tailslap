@@ -34,8 +34,8 @@
 
 1. Download one of these assets from the [releases page](https://github.com/lsj5031/Tailslap/releases):
    - `TailSlap-self-contained-win-x64.exe`: Recommended for most users. No separate .NET install required.
-   - `TailSlap-framework-dependent-win-x64.zip`: Smaller download, but requires the .NET 9 Desktop Runtime x64.
-2. If you chose the framework-dependent zip, install the [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) first.
+   - `TailSlap-framework-dependent-win-x64.zip`: Smaller download, but requires the .NET 10 Desktop Runtime x64.
+2. If you chose the framework-dependent zip, install the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) first.
 3. Run `TailSlap.exe`.
 4. The application will start automatically and appear in your system tray
 
@@ -188,7 +188,7 @@ Tooltip text pulses every 300ms with up to 3 dots for visual feedback.
 ## Building from Source
 
 ### Prerequisites
-1. Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+1. Install [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 
 ### Build Commands
 ```bash
@@ -199,10 +199,10 @@ dotnet build -c Release
 dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
-**Output**: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
+**Output**: `TailSlap\bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`
 
 **Technology Stack**: 
-- .NET 9 with Windows Forms
+- .NET 10 with Windows Forms
 - Dependency Injection with Microsoft.Extensions.DependencyInjection
 - HTTP Client Factory with connection pooling and compression
 - Windows DPAPI for encryption
@@ -238,4 +238,4 @@ All commits and pull requests are automatically built and tested via GitHub Acti
 
 ## Acknowledgments
 
-Built with [.NET 9](https://dotnet.microsoft.com/), [Windows Forms](https://docs.microsoft.com/windows-forms/), and [WebRTC VAD](https://github.com/np-quang/WebRtcVadSharp)
+Built with [.NET 10](https://dotnet.microsoft.com/), [Windows Forms](https://docs.microsoft.com/windows-forms/), and [WebRTC VAD](https://github.com/np-quang/WebRtcVadSharp)

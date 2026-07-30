@@ -4,15 +4,15 @@ A Windows system tray utility that enhances clipboard and text refinement with A
 
 ## Quickstart
 
-- **Setup**: Install [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+- **Setup**: Install [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 - **Dev**: `dotnet build -c Release` from repo root
 - **Test**: `dotnet test` (runs xUnit tests in TailSlap.Tests)
 - **Publish**: `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
-- **Run output**: `TailSlap\bin\Release\net9.0-windows\win-x64\publish\TailSlap.exe`
+- **Run output**: `TailSlap\bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`
 
 ## Architecture
 
-- **Framework**: .NET 9 Windows Forms (net9.0-windows)
+- **Framework**: .NET 10 Windows Forms (net10.0-windows)
 - **UI**: Tray-only hidden form with animated 8-frame icon
 - **DI**: Microsoft.Extensions.DependencyInjection
 - **HTTP**: HttpClientFactory with connection pooling
