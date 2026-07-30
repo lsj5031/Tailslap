@@ -13,11 +13,11 @@ Be respectful, inclusive, and constructive in all interactions.
 1. Check existing [issues](https://github.com/lsj5031/Tailslap/issues) to avoid duplicates
 2. Include a clear description and steps to reproduce
 3. Share your environment: Windows version, .NET runtime version, LLM provider used
-4. Attach logs from `%APPDATA%\TailSlap\app.log` if relevant
+4. Attach relevant logs from `%APPDATA%\TailSlap\logs\app.jsonl`. Before sharing, inspect and redact API keys, credential-bearing URLs or headers, transcripts, prompts, and other personal or sensitive data. A legacy `%APPDATA%\TailSlap\app.log` may still exist from older builds, but it is not the current log.
 
 ### Submitting Pull Requests
 
-1. **Fork and branch**: Create a feature branch from `main`
+1. **Fork and branch**: Create a feature branch from `master`
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -26,12 +26,15 @@ Be respectful, inclusive, and constructive in all interactions.
    - C# 12 with nullable reference types enabled
    - PascalCase for public members, `_camelCase` for private fields
    - Sealed classes by default
-   - No external NuGet dependencies beyond built-in .NET libraries
+   - Keep production dependencies minimal and justify additions. The app currently uses `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Http`, and `WebRtcVadSharp`, plus the `Microsoft.WindowsDesktop.App` framework.
 
 3. **Test your changes**:
    ```bash
    # Build release version
    dotnet build -c Release
+
+   # Run the full test suite in Release configuration
+   dotnet test -c Release
    
    # Publish self-contained single file
    dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
@@ -45,6 +48,7 @@ Be respectful, inclusive, and constructive in all interactions.
 
 5. **Before pushing**:
    - Ensure code compiles without warnings
+   - Run the full test suite with `dotnet test -c Release` and ensure it passes
    - No hardcoded secrets, API keys, or sensitive information
    - Format code consistently (VS Code format recommended)
    - Automated tests run via the `test` job in `.github/workflows/build.yml`

@@ -24,12 +24,17 @@ What actually happened instead.
 
 ## Environment
 - Windows Version: [e.g., Windows 11 22H2]
-- .NET Runtime Version: [e.g., .NET 9.0.0]
+- .NET Runtime Version: [e.g., .NET 10.0.0]
 - TailSlap Version: [e.g., 1.0.0]
 - LLM Provider: [e.g., OpenRouter, Ollama, OpenAI]
 
 ## Logs
-Please attach relevant logs from `%APPDATA%\TailSlap\app.log`:
+Please attach relevant logs from `%APPDATA%\TailSlap\logs\app.jsonl`. A legacy
+`%APPDATA%\TailSlap\app.log` may still exist from older builds, but it is not
+the current log.
+
+Before sharing logs, inspect and redact API keys, credential-bearing URLs or
+headers, transcripts, prompts, and other personal or sensitive data.
 
 ```
 [paste logs here]

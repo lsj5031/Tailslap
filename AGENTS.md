@@ -64,7 +64,7 @@ All interface-driven, registered via DI:
    - `IHistoryService` / `HistoryService`: **Encrypted** JSONL history (stream-based I/O for large files, max 50 entries) with Windows DPAPI protection
    - `Dpapi`: Windows DPAPI encryption for API keys (user-scoped)
    - `AutoStartService`: Registry-based Windows startup via HKEY_CURRENT_USER\Run
-   - `Logger`: File logging to `%APPDATA%\TailSlap\app.log` (no sensitive data logged - SHA256 fingerprints only); Span<T> optimized
+   - `Logger`: Structured JSONL logging to `%APPDATA%\TailSlap\logs\app.jsonl`; sensitive text should be represented by SHA256 fingerprints rather than plaintext
    - `NotificationService`: Balloon tips for user feedback (success/warning/error)
    - `DiagnosticsEventSource`: EventSource for ETW-based diagnostics and performance monitoring (14 events across 7 categories)
    - `ITypelessController` / `TypelessController`: Push-to-talk transcription state machine (Idle → Recording → Processing → Idle); events: `OnStarted`, `OnProcessingStarted`, `OnCompleted`
@@ -115,16 +115,17 @@ All interface-driven, registered via DI:
 - **JSON**: System.Text.Json with `PropertyNamingPolicy.CamelCase` and pretty-printing for config
 - **Error handling**: Explicit try-catch blocks with graceful fallbacks; show user-friendly notifications
 - **Async**: Prefer `async/await` with `ConfigureAwait(false)` for UI deadlock safety
-- **P/Invoke**: Declared in MainForm (hotkey registration), ClipboardService (clipboard access), and AudioRecorder (WinMM audio recording) with `DllImport` attributes
+- **P/Invoke**: Win32 interop is kept near the feature that owns it (for example hotkeys, clipboard/input, audio recording, and safe native handles). Search for `DllImport` before changing interop so new and existing declarations stay consistent.
 - **Validation**: Static helper methods in ConfigService (IsValidUrl, IsValidTemperature, IsValidMaxTokens, IsValidModelName)
 - **Logging**: Wrap all logging in try-catch to prevent crashes if log write fails; log fingerprints (SHA256) of text, not the text itself
 - **Notifications**: Use NotificationService for all user-facing messages (balloon tips)
 - **UI Forms**: Always use `using` statements for form disposal; dialog-based for modality
-- **Dependencies**: Minimal external NuGet—only Microsoft.Extensions.DependencyInjection (included via Microsoft.AspNetCore.App framework reference)
+- **Dependencies**: Keep production dependencies minimal and justify additions. The app currently references `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.Http`, and `WebRtcVadSharp`, plus the `Microsoft.WindowsDesktop.App` framework.
 
 ## Local Debug Notes
 
-- Runtime logs for current builds are in `%APPDATA%\TailSlap\logs\app.jsonl`. Prefer that over the legacy `%APPDATA%\TailSlap\app.log` when debugging realtime issues.
+- Runtime logs for current builds are in `%APPDATA%\TailSlap\logs\app.jsonl`. A legacy `%APPDATA%\TailSlap\app.log` may still exist from older builds, but current diagnostics should use the JSONL log.
+- Before sharing logs, inspect and redact API keys, URLs or headers containing credentials, transcripts, prompts, and other personal or sensitive data. Fingerprinting reduces exposure but does not make the entire log safe to publish unchanged.
 - Safe `jq` filter style for this JSONL schema: use `.msg? | strings` so non-string or missing message fields do not explode the query.
 - Useful realtime log command:
   `jq -r 'select((.msg? | strings) | test("OpenAIRealtimeTranscriber|RealtimeTranscriber|HandleRealtime|ProcessTranscriptionAsync|AudioRecorder.StartStreamingAsync|VAD\\[|StreamingRecovery")) | [.ts, .source, .msg] | @tsv' "%APPDATA%\\TailSlap\\logs\\app.jsonl"`

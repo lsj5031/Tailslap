@@ -33,10 +33,10 @@
 ## Installation
 
 1. Download one of these assets from the [releases page](https://github.com/lsj5031/Tailslap/releases):
-   - `TailSlap-self-contained-win-x64.exe`: Recommended for most users. No separate .NET install required.
+   - `TailSlap-self-contained-win-x64.zip`: Recommended for most users. No separate .NET install required.
    - `TailSlap-framework-dependent-win-x64.zip`: Smaller download, but requires the .NET 10 Desktop Runtime x64.
 2. If you chose the framework-dependent zip, install the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) first.
-3. Run `TailSlap.exe`.
+3. Extract the zip, then run `TailSlap.exe`.
 4. The application will start automatically and appear in your system tray
 
 ### Requirements
@@ -158,6 +158,11 @@ You can edit this file directly or use the Settings dialog in the system tray me
 
 Application logs are stored at:
 `%APPDATA%\TailSlap\logs\app.jsonl`
+
+A legacy `%APPDATA%\TailSlap\app.log` may still exist from older builds, but
+current diagnostics should use the JSONL log. Before sharing logs, inspect and
+redact API keys, credential-bearing URLs or headers, transcripts, prompts, and
+other personal or sensitive data.
 
 ## Troubleshooting
 
