@@ -18,7 +18,7 @@ TailSlap is a stockroom, not a dashboard: white cotton, black nylon, and safety-
 | Muted | `#6E6E6E` | Secondary text |
 | Faint | `#9E9EA2` | Placeholders / disabled text |
 | Rule | `#E2E0DA` | Hairlines, plate borders |
-| Orange | `#FF6A00` | Decorative accent: tag squares, REC text, lamps |
+| Orange | `#FF6A00` | Decorative accent: tag squares, lamps |
 | PrimaryFill | `#CC4A00` | Primary button plate (≥4.5:1 with white bold caps) |
 | PrimaryHover / Pressed | `#B04100` / `#9E3900` | Primary plate states |
 | OrangeSoft | `#FFF0E3` | Active-row tint |
@@ -26,8 +26,6 @@ TailSlap is a stockroom, not a dashboard: white cotton, black nylon, and safety-
 | Success | back `#EDF7ED` / text `#2E8232` | OK rows, lamps |
 | Warn | back `#FFF9E0` / text `#966800` | Warning rows, lamps |
 | Error | back `#FFF1F1` / text `#BE2D2D` | Error rows, lamps |
-| RecordRed | `#E0453C` | REC dot / recording |
-
 ### Type
 
 - **Body / headers**: Segoe UI. Bold caps for quoted tags and plate buttons (`UiTheme.Caps` wraps text in straight quotes).
@@ -48,9 +46,9 @@ TailSlap is a stockroom, not a dashboard: white cotton, black nylon, and safety-
 
 ## Layout & motion
 
-- DPI-aware everywhere: `DpiHelper.Scale` + `AutoScaleMode.Dpi`.
+- User-facing dialogs use `DpiHelper.Scale` + `AutoScaleMode.Dpi`; the hidden tray host and floating overlay use their own fixed native layout rules.
 - Docked composition: tag strip docked first (added last to the Controls collection so it takes the top edge), content fills below; bottom bars are `TableLayoutPanel`s stacking hazard → validation → button row.
-- Motion exists only in the floating overlay (waveform bars, spring entrance, width tween) and now carries a red REC dot + orange REC tag when recording; dialogs and forms are static (Operate mode: motion conveys state, nothing else).
+- Motion exists only in the floating overlay (waveform bars, spring entrance, width tween); dialogs and forms are static (Operate mode: motion conveys state, nothing else).
 
 ## Surfaces
 
@@ -62,7 +60,7 @@ TailSlap is a stockroom, not a dashboard: white cotton, black nylon, and safety-
 | Recent Errors & Warnings / Diagnostics | Logo header, severity rows, mono data, primary/secondary plate buttons |
 | Hotkey capture | Mono display plate, semantic validation tints, quoted hint, themed plates |
 | BrandedMessageBox | Hazard strip on warning/error, quoted-caps caption with orange tag + severity lamp, themed Yes/OK (primary) / No/Cancel (secondary) |
-| Recording overlay | Dark capsule (product commitment) with cyan waveform, red REC dot + orange REC tag while recording |
+| Recording overlay | Dark capsule (product commitment) with cyan waveform and recording status while active |
 
 ## Guardrails
 

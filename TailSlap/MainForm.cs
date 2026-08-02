@@ -410,21 +410,23 @@ public class MainForm : Form
         {
             using var httpClient = _httpClientFactory.CreateClient(HttpClientNames.Default);
             httpClient.Timeout = TimeSpan.FromSeconds(5);
-            var response = await httpClient.GetAsync(llmUrl + "/models");
-            if (response.IsSuccessStatusCode)
-            {
-                llmStatus = "Reachable";
-                llmSeverity = DiagnosticSeverity.Success;
-                results.AppendLine($"  URL: {llmUrl}");
-                results.AppendLine("  Status: ✓ Reachable");
-            }
-            else
-            {
-                llmStatus = $"Response ({(int)response.StatusCode})";
-                llmSeverity = DiagnosticSeverity.Warning;
-                results.AppendLine($"  URL: {llmUrl}");
-                results.AppendLine($"  Status: ⚠ Response ({(int)response.StatusCode})");
-            }
+            using var request = DiagnosticProbe.CreateGetRequest(
+                llmUrl + "/models",
+                _currentConfig.Llm.ApiKey
+            );
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead
+            );
+            var outcome = DiagnosticProbe.ClassifyHttpStatus(
+                (int)response.StatusCode,
+                postOnlyEndpoint: false,
+                apiKeyConfigured: !string.IsNullOrWhiteSpace(_currentConfig.Llm.ApiKey)
+            );
+            llmStatus = outcome.Status;
+            llmSeverity = outcome.Severity;
+            results.AppendLine($"  URL: {llmUrl}");
+            results.AppendLine($"  Status: {FormatDiagnosticStatus(outcome)}");
         }
         catch (Exception ex)
         {
@@ -455,28 +457,30 @@ public class MainForm : Form
 
         // Check Transcriber endpoint
         results.AppendLine("Transcription Endpoint:");
-        string transcriberUrl = _currentConfig.Transcriber.BaseUrl.TrimEnd('/');
+        string transcriberUrl = _currentConfig.Transcriber.TranscriptionEndpoint.ToString();
         string transcriberStatus = "";
         DiagnosticSeverity transcriberSeverity = DiagnosticSeverity.Info;
         try
         {
             using var httpClient = _httpClientFactory.CreateClient(HttpClientNames.Default);
             httpClient.Timeout = TimeSpan.FromSeconds(5);
-            var response = await httpClient.GetAsync(transcriberUrl);
-            if (response.IsSuccessStatusCode)
-            {
-                transcriberStatus = "Reachable";
-                transcriberSeverity = DiagnosticSeverity.Success;
-                results.AppendLine($"  URL: {transcriberUrl}");
-                results.AppendLine("  Status: ✓ Reachable");
-            }
-            else
-            {
-                transcriberStatus = $"Response ({(int)response.StatusCode})";
-                transcriberSeverity = DiagnosticSeverity.Warning;
-                results.AppendLine($"  URL: {transcriberUrl}");
-                results.AppendLine($"  Status: ⚠ Response ({(int)response.StatusCode})");
-            }
+            using var request = DiagnosticProbe.CreateGetRequest(
+                transcriberUrl,
+                _currentConfig.Transcriber.ApiKey
+            );
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead
+            );
+            var outcome = DiagnosticProbe.ClassifyHttpStatus(
+                (int)response.StatusCode,
+                postOnlyEndpoint: true,
+                apiKeyConfigured: !string.IsNullOrWhiteSpace(_currentConfig.Transcriber.ApiKey)
+            );
+            transcriberStatus = outcome.Status;
+            transcriberSeverity = outcome.Severity;
+            results.AppendLine($"  URL: {transcriberUrl}");
+            results.AppendLine($"  Status: {FormatDiagnosticStatus(outcome)}");
         }
         catch (Exception ex)
         {
@@ -505,45 +509,53 @@ public class MainForm : Form
         );
         results.AppendLine();
 
-        // Check WebSocket endpoint
-        results.AppendLine("WebSocket Endpoint:");
+        // Check the optional realtime WebSocket endpoint separately from HTTP transcription.
+        string realtimeProvider = string.IsNullOrWhiteSpace(
+            _currentConfig.Transcriber.RealtimeProvider
+        )
+            ? "unknown"
+            : _currentConfig.Transcriber.RealtimeProvider;
+        string wsSection = $"Realtime WebSocket ({realtimeProvider})";
+        results.AppendLine($"{wsSection}:");
         string wsUrl = _currentConfig.Transcriber.WebSocketUrl;
         string wsStatus = "";
         DiagnosticSeverity wsSeverity = DiagnosticSeverity.Info;
         results.AppendLine($"  URL: {wsUrl}");
-        try
+        if (!_currentConfig.Transcriber.Enabled)
         {
-            using var ws = new ClientWebSocket();
-            if (
-                string.Equals(
-                    _currentConfig.Transcriber.RealtimeProvider,
-                    "openai",
-                    StringComparison.OrdinalIgnoreCase
-                ) && !string.IsNullOrWhiteSpace(_currentConfig.Transcriber.ApiKey)
-            )
-            {
-                ws.Options.SetRequestHeader(
-                    "Authorization",
-                    $"Bearer {_currentConfig.Transcriber.ApiKey}"
-                );
-            }
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await ws.ConnectAsync(new Uri(wsUrl), cts.Token);
-            wsStatus = "Connectable";
-            wsSeverity = DiagnosticSeverity.Success;
-            results.AppendLine("  Status: ✓ Connectable");
-            await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+            wsStatus = "Not tested (transcription disabled)";
+            results.AppendLine($"  Status: {wsStatus}");
         }
-        catch (Exception ex)
+        else
         {
-            wsStatus = $"Cannot connect ({ex.GetType().Name})";
-            wsSeverity = DiagnosticSeverity.Error;
-            results.AppendLine($"  Status: ✗ Cannot connect ({ex.GetType().Name})");
+            try
+            {
+                using var ws = new ClientWebSocket();
+                if (!string.IsNullOrWhiteSpace(_currentConfig.Transcriber.ApiKey))
+                {
+                    ws.Options.SetRequestHeader(
+                        "Authorization",
+                        $"Bearer {_currentConfig.Transcriber.ApiKey}"
+                    );
+                }
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await ws.ConnectAsync(new Uri(wsUrl), cts.Token);
+                wsStatus = "Connectable";
+                wsSeverity = DiagnosticSeverity.Success;
+                results.AppendLine("  Status: ✓ Connectable");
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                wsStatus = $"Unavailable ({ex.GetType().Name})";
+                wsSeverity = DiagnosticSeverity.Warning;
+                results.AppendLine($"  Status: ⚠ {wsStatus} (realtime mode only)");
+            }
         }
         rows.Add(
             new DiagnosticRow
             {
-                Section = "WebSocket Endpoint",
+                Section = wsSection,
                 Label = "URL",
                 Value = wsUrl,
                 Monospace = true,
@@ -552,7 +564,7 @@ public class MainForm : Form
         rows.Add(
             new DiagnosticRow
             {
-                Section = "WebSocket Endpoint",
+                Section = wsSection,
                 Label = "Status",
                 Status = wsStatus,
                 Severity = wsSeverity,
@@ -633,8 +645,9 @@ public class MainForm : Form
             $"  VAD Enabled: {(_currentConfig.Transcriber.EnableVAD ? "Yes" : "No")}"
         );
         results.AppendLine(
-            $"  Streaming Enabled: {(_currentConfig.Transcriber.StreamResults ? "Yes" : "No")}"
+            $"  Toggle HTTP streaming: {(_currentConfig.Transcriber.StreamResults ? "Yes" : "No")}"
         );
+        results.AppendLine($"  Realtime provider: {realtimeProvider}");
         rows.Add(
             new DiagnosticRow
             {
@@ -679,8 +692,16 @@ public class MainForm : Form
             new DiagnosticRow
             {
                 Section = "Configuration",
-                Label = "Streaming Enabled",
+                Label = "Toggle HTTP streaming",
                 Value = _currentConfig.Transcriber.StreamResults ? "Yes" : "No",
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Configuration",
+                Label = "Realtime provider",
+                Value = realtimeProvider,
             }
         );
 
@@ -702,6 +723,17 @@ public class MainForm : Form
             );
         }
         Logger.Log("Diagnostics run:\n" + results.ToString());
+    }
+
+    private static string FormatDiagnosticStatus(DiagnosticHttpResult outcome)
+    {
+        return outcome.Severity switch
+        {
+            DiagnosticSeverity.Success => "✓ " + outcome.Status,
+            DiagnosticSeverity.Warning => "⚠ " + outcome.Status,
+            DiagnosticSeverity.Error => "✗ " + outcome.Status,
+            _ => outcome.Status,
+        };
     }
 
     private Icon[] LoadAnimationFrames()

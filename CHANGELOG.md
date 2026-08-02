@@ -5,6 +5,18 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Diagnostic regression coverage**: Added tests for authenticated endpoint probes, expected POST-only transcription responses, and authentication failure classification.
+
+### Changed
+- **Diagnostics accuracy**: LLM and transcription probes now use configured bearer authentication; the transcription check targets the derived `/audio/transcriptions` endpoint and treats `405 Method Not Allowed` as reachable. Optional realtime WebSocket failures are warnings, and disabled transcription skips the realtime check.
+- **Documentation accuracy**: Updated current build, publish-artifact, JSON camelCase, endpoint, delivery, diagnostics, and test-count documentation. Removed the obsolete session handoff snapshot.
+
+### Fixed
+- **Recording overlay duplication**: Removed the duplicate orange `REC` marker so recording shows one blue waveform/status treatment without overlapping labels.
+
 ## [3.1.0] - 2026-07-30
 
 ### Added

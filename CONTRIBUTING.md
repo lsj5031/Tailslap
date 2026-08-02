@@ -37,9 +37,9 @@ Be respectful, inclusive, and constructive in all interactions.
    dotnet test -c Release
    
    # Publish self-contained single file
-   dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+   dotnet publish TailSlap/TailSlap.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
    ```
-   Then run the published exe and verify the feature works
+   The self-contained publish includes `TailSlap.exe` plus `WebRtcVad.dll` and icon assets beside it. Run the published exe from the publish directory and verify the feature works.
 
 4. **Commit messages**: Clear, concise, present tense
    - `Add clipboard history feature`

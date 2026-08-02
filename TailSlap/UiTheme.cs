@@ -91,9 +91,6 @@ public static class UiTheme
     public static readonly Color ErrorBack = Color.FromArgb(255, 241, 241);
     public static readonly Color ErrorText = Color.FromArgb(190, 45, 45);
 
-    /// <summary>Record red — the REC dot / recording state.</summary>
-    public static readonly Color RecordRed = Color.FromArgb(224, 69, 60);
-
     // --- Fonts (cached for app lifetime; never dispose these) ---------------
     /// <summary>Standard body face — use instead of per-dialog `new Font(...)` to avoid GDI leaks.</summary>
     public static readonly Font BodyFont = CreateFont("Segoe UI", 9f, FontStyle.Regular);

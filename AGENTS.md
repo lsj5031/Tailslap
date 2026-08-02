@@ -4,10 +4,11 @@ This document contains internal development information for TailSlap contributor
 
 ## Build & Run Commands
 
-- **Build Release**: `dotnet build -c Release` (from TailSlap directory)
-- **Publish**: `dotnet publish -c Release` → output in `TailSlap\bin\Release\net10.0-windows\win-x64\publish\`
+- **Build Release**: `dotnet build -c Release` (from the repository root)
+- **Publish app**: `dotnet publish TailSlap\TailSlap.csproj -c Release` → output in `TailSlap\bin\Release\net10.0-windows\win-x64\publish\`
 - **Run**: `TailSlap\bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`
-- **Self-contained build** (single file, ~80MB): `dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
+- **Self-contained publish**: `dotnet publish TailSlap\TailSlap.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true`
+  produces the single-file `TailSlap.exe` plus the native `WebRtcVad.dll` and icon assets that are intentionally shipped beside it.
 
 ## Architecture
 
@@ -35,7 +36,7 @@ TailSlap has four hotkey-activated modes, each with a distinct workflow and hotk
 
 ### 3. Typeless / Push-to-Talk Transcription (Ctrl+Win hold default, user-customizable)
 - **Trigger**: Hold-to-record via low-level keyboard hook (`KeyboardHook`, WH_KEYBOARD_LL); hold modifiers to start recording, release to stop and transcribe
-- **Flow**: `KeyboardHook.OnKeyDown` → `TypelessController.HandleKeyDownAsync()` → records WAV via `AudioRecorder` → on modifier release, streams audio to transcription endpoint via `RemoteTranscriber` → SSE chunks typed incrementally via `TextTyper` → saved to transcription history
+- **Flow**: `KeyboardHook.OnKeyDown` → `TypelessController.HandleKeyDownAsync()` → records WAV via `AudioRecorder` → on modifier release, consumes SSE/NDJSON chunks from `RemoteTranscriber`, merges duplicate or cumulative snapshots, and delivers the final text once via `TextTyper` → saved to transcription history
 - **State machine**: `Idle → Recording → Processing → Idle` (events: `OnStarted`, `OnProcessingStarted`, `OnCompleted`)
 - **Minimum recording**: 500ms; shorter recordings are discarded with a warning
 - **Safety**: Max recording duration of 60s enforced by `KeyboardHook.ForceStop()`; auto-repeat suppression prevents duplicate recordings
@@ -56,9 +57,9 @@ All interface-driven, registered via DI:
 
    - `ITextRefiner` / `TextRefiner`: OpenAI-compatible LLM HTTP client with retry logic (2 attempts, 1s backoff)
    - `ITextRefinerFactory`: Factory for creating TextRefiner instances
-   - `IRemoteTranscriber` / `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio); supports SSE streaming (Requires [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
+   - `IRemoteTranscriber` / `RemoteTranscriber`: OpenAI-compatible transcription HTTP client (multipart form POST with WAV audio); supports full responses and optional SSE/NDJSON HTTP streaming
    - `IRemoteTranscriberFactory`: Factory for creating RemoteTranscriber instances
-   - `RealtimeTranscriber`: WebSocket-based client for real-time bi-directional audio streaming and transcription (Requires [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
+   - `RealtimeTranscriber` / `OpenAIRealtimeTranscriber`: WebSocket clients for the legacy custom and OpenAI-compatible realtime protocols; the backend is configurable and may be local, LAN-hosted, or hosted
    - `IClipboardService` / `ClipboardService`: Clipboard operations via Win32 P/Invoke (text capture, paste, fallback to `Ctrl+C`)
    - `IConfigService` / `ConfigService`: JSON config in `%APPDATA%\TailSlap\config.json` with validation methods; FileSystemWatcher for hot reload
    - `IHistoryService` / `HistoryService`: **Encrypted** JSONL history (stream-based I/O for large files, max 50 entries) with Windows DPAPI protection
@@ -72,7 +73,7 @@ All interface-driven, registered via DI:
    - `IRefinementController`: Text refinement workflow controller
    - `IRealtimeTranscriptionController` / `RealtimeTranscriptionController`: WebSocket-based real-time streaming transcription controller
    - `KeyboardHook`: Low-level keyboard hook (WH_KEYBOARD_LL) for push-to-talk hotkey detection; auto-repeat suppression, max recording duration safety net
-   - `TextTyper`: Hybrid text delivery via clipboard paste and SendKeys fallback
+   - `TextTyper`: Hybrid text delivery via clipboard paste, Unicode `SendInput`, and `SendKeys` fallback
    - `ClipboardHelper`: Clipboard read/capture with multiple fallback methods (WM_COPY, Ctrl+C, Ctrl+Insert)
    - `IAudioRecorderFactory`: Factory for creating AudioRecorder instances
 
@@ -101,7 +102,7 @@ All interface-driven, registered via DI:
   - Transcription: `%APPDATA%\TailSlap\transcription-history.jsonl.encrypted`
   - Encryption is transparent to users; history forms show decryption status
   - Plaintext history (if present from older versions) remains unencrypted in separate files
-  - Only the current Windows user can decrypt (not even administrators)
+  - Protected to the current Windows user; other Windows users cannot normally decrypt the files
 - **Log Files**: Never log sensitive text directly; use SHA256 fingerprints for debugging
 - **System Integration**: Leverages Windows DPAPI, no custom encryption keys or passwords
 - **Error Recovery**: Graceful degradation if encryption/decryption fails
@@ -129,10 +130,7 @@ All interface-driven, registered via DI:
 - Safe `jq` filter style for this JSONL schema: use `.msg? | strings` so non-string or missing message fields do not explode the query.
 - Useful realtime log command:
   `jq -r 'select((.msg? | strings) | test("OpenAIRealtimeTranscriber|RealtimeTranscriber|HandleRealtime|ProcessTranscriptionAsync|AudioRecorder.StartStreamingAsync|VAD\\[|StreamingRecovery")) | [.ts, .source, .msg] | @tsv' "%APPDATA%\\TailSlap\\logs\\app.jsonl"`
-- Current local realtime setup to remember:
-  `transcriber.realtimeProvider = "openai"` (also the **new-install default**)
-  `transcriber.baseUrl = "http://localhost:18000/v1/audio/transcriptions"`
-  `transcriber.model = "glm-nano-2512"`
-- `custom` realtime remains supported for legacy stream endpoints; prefer OpenAI-protocol for glm-asr-docker.
-- In this repo, "OpenAI mode" may therefore mean a local OpenAI-protocol backend rather than the hosted OpenAI API. Always confirm the actual `baseUrl` before debugging.
+- New installs default to `transcriber.realtimeProvider = "openai"`, `transcriber.baseUrl = "http://localhost:18000/v1"`, and `transcriber.model = "glm-nano-2512"`. The application derives the HTTP transcription path and OpenAI-protocol WebSocket path from `baseUrl`.
+- `custom` realtime remains supported for legacy stream endpoints. Any OpenAI-compatible local, LAN, or hosted backend may be used; always confirm the actual `baseUrl` and provider before debugging.
+- `WebSocketUrl` is a derived runtime property and is not persisted in `config.json`.
 - Realtime sessions are saved to encrypted transcription history on cleanup; optional LLM auto-enhance may place an improved draft on the clipboard.

@@ -1,24 +1,20 @@
 # TailSlap improvement plans
 
 Generated and maintained by the **improve** skill. Executors should update a
-plan's status when its commit is verified. The latest audit was planned against
-commit `f3016ac` on **2026-07-30**.
+plan's status when its commit is verified. This snapshot was reconciled against
+the current `master` worktree on **2026-08-03**.
 
 Default branch: **`master`**.
 
-## Reconciliation snapshot (2026-07-30)
+## Reconciliation snapshot (2026-08-03)
 
-- Plans **013–028** are DONE and reviewed on branch
-  `improve/execute-all-plans` at commit `d795793` in worktree
-  `T:\tailslap-lite-execute-all`. That branch contains 15 commits after
-  `f3016ac`; none has been merged into the current branch
-  `improve/direction-and-hygiene`.
-- The cumulative worktree passed `dotnet build -c Release` and
-  `dotnet test -c Release`: **304 tests passed on .NET 10**.
-- The current branch remains at `f3016ac`. Its independently spot-checked
-  baseline is **256 tests passed on .NET 9**; therefore the DONE labels below
-  describe reviewed work awaiting integration, not behavior available on the
-  current branch.
+- Plans **013–028** are DONE and landed in the current `master` history,
+  including the .NET 10 migration, WebRtcVad publish guard, shared result sink,
+  language hint, and documentation corrections.
+- The current code targets .NET 10 and the Release test suite contains **350
+  passing tests**.
+- The current worktree also includes diagnostics classification/auth fixes,
+  recording overlay cleanup, and this documentation accuracy pass.
 - Plan **029** remains BLOCKED because the operator did not authorize the paid
   hosted OpenAI live test. Its implementation gate still requires live HTTP
   and realtime evidence; documentation review alone is insufficient.
@@ -26,10 +22,10 @@ Default branch: **`master`**.
   Apple signing/notarization credentials, and the accepted plan 028 config
   transfer decision.
 
-**Executable now:** integrate or review `improve/execute-all-plans` in the
-commit order recorded below. Do not re-execute plans 013–028 from scratch unless
-that branch is discarded. Plan 029 is not executable without new operator
-authorization; plan 012 is not executable in the current Windows environment.
+The execution order below is retained as a historical dependency record. Do not
+re-execute plans 013–028 from scratch; they are already present on `master`.
+Plan 029 is not executable without new operator authorization, and plan 012 is
+not executable in the current Windows environment.
 
 ## Recommended execution order
 
@@ -71,22 +67,22 @@ All plans below are self-contained executor plans.
 
 | Plan | Title | Priority | Effort | Risk | Status |
 |------|-------|----------|--------|------|--------|
-| [013](013-paste-delivery-verification.md) | Verify paste delivery and eliminate known silent-failure classes | P1 | M | MED | DONE on execution branch; unmerged |
-| [014](014-unify-typing-paths.md) | Surface delivery failures and unify controller typing helpers | P1 | S-M | MED | DONE on execution branch; unmerged |
-| [015](015-keyboardhook-forcestop-and-race.md) | Close KeyboardHook ForceStop gaps and atomicity races | P1 | S-M | LOW | DONE on execution branch; unmerged |
-| [016](016-openai-realtime-buffer-fixes.md) | Fix OpenAI realtime ArrayPool and bounded-channel ownership | P1 | S | LOW | DONE on execution branch; unmerged |
-| [017](017-custom-realtime-send-path.md) | Serialize custom realtime WebSocket sends and buffer ownership | P2 | S | LOW | DONE on execution branch; unmerged |
-| [018](018-config-off-hook-thread.md) | Keep config disk I/O off the low-level keyboard hook thread | P1 | S-M | MED | DONE on execution branch; unmerged |
-| [019](019-historyservice-test-seam.md) | Isolate HistoryService tests and serialize file access | P1 | M | LOW | DONE on execution branch; revised for Windows trim replacement bug; unmerged |
-| [020](020-transcription-mode-tests.md) | Cover RemoteTranscriber, toggle state machine, and TextRefiner HTTP behavior | P2 | M | LOW | DONE on execution branch; revised with recording seam; unmerged |
-| [021](021-realtime-error-fingerprinting.md) | Fingerprint realtime errors and surface DPAPI key failures | P2 | S | LOW | DONE on execution branch; unmerged |
-| [022](022-clipboard-history-exclusion.md) | Exclude delivered text from Win+V and cloud clipboard | P2 | M | MED | DONE on execution branch; Win+V toggle and Notepad paste verified; unmerged |
-| [023](023-dotnet10-migration.md) | Migrate from unsupported .NET 9 STS to .NET 10 LTS | P2 | M | MED | DONE on execution branch; automated gates verified; unmerged |
-| [024](024-webrtcvad-build-guard.md) | Fail builds that omit the WebRtcVad native DLL | P2 | S | LOW | DONE on execution branch; unmerged |
-| [025](025-shared-result-sink.md) | Extract shared transcription enhancement, delivery, and persistence | P2 | M | MED | DONE on execution branch; unmerged |
-| [026](026-docs-correction-pass.md) | Correct logs, branch, dependency, P/Invoke, and release docs | P2 | S | LOW | DONE on execution branch; unmerged |
-| [027](027-language-hint-http.md) | Forward ASR language hints in HTTP transcription | P2 | S | LOW | DONE on execution branch; unmerged |
-| [028](028-config-export-import-design.md) | Design secure portable config export/import | P2 | S spike | LOW | DONE; accepted [decision](028-decision.md) is unmerged |
+| [013](013-paste-delivery-verification.md) | Verify paste delivery and eliminate known silent-failure classes | P1 | M | MED | DONE, landed on master |
+| [014](014-unify-typing-paths.md) | Surface delivery failures and unify controller typing helpers | P1 | S-M | MED | DONE, landed on master |
+| [015](015-keyboardhook-forcestop-and-race.md) | Close KeyboardHook ForceStop gaps and atomicity races | P1 | S-M | LOW | DONE, landed on master |
+| [016](016-openai-realtime-buffer-fixes.md) | Fix OpenAI realtime ArrayPool and bounded-channel ownership | P1 | S | LOW | DONE, landed on master |
+| [017](017-custom-realtime-send-path.md) | Serialize custom realtime WebSocket sends and buffer ownership | P2 | S | LOW | DONE, landed on master |
+| [018](018-config-off-hook-thread.md) | Keep config disk I/O off the low-level keyboard hook thread | P1 | S-M | MED | DONE, landed on master |
+| [019](019-historyservice-test-seam.md) | Isolate HistoryService tests and serialize file access | P1 | M | LOW | DONE, landed on master; revised for Windows trim replacement bug |
+| [020](020-transcription-mode-tests.md) | Cover RemoteTranscriber, toggle state machine, and TextRefiner HTTP behavior | P2 | M | LOW | DONE, landed on master; revised with recording seam |
+| [021](021-realtime-error-fingerprinting.md) | Fingerprint realtime errors and surface DPAPI key failures | P2 | S | LOW | DONE, landed on master |
+| [022](022-clipboard-history-exclusion.md) | Exclude delivered text from Win+V and cloud clipboard | P2 | M | MED | DONE, landed on master; Win+V toggle and Notepad paste verified |
+| [023](023-dotnet10-migration.md) | Migrate from unsupported .NET 9 STS to .NET 10 LTS | P2 | M | MED | DONE, landed on master; automated gates verified |
+| [024](024-webrtcvad-build-guard.md) | Fail builds that omit the WebRtcVad native DLL | P2 | S | LOW | DONE, landed on master |
+| [025](025-shared-result-sink.md) | Extract shared transcription enhancement, delivery, and persistence | P2 | M | MED | DONE, landed on master |
+| [026](026-docs-correction-pass.md) | Correct logs, branch, dependency, P/Invoke, and release docs | P2 | S | LOW | DONE, landed on master |
+| [027](027-language-hint-http.md) | Forward ASR language hints in HTTP transcription | P2 | S | LOW | DONE, landed on master |
+| [028](028-config-export-import-design.md) | Design secure portable config export/import | P2 | S spike | LOW | DONE, accepted [decision](028-decision.md) landed on master |
 | [029](029-hosted-openai-quickstart-spike.md) | Verify hosted OpenAI and add a no-Docker preset/quickstart | P2 | M | MED | BLOCKED, operator declined paid live test; [decision](029-decision.md) needs live evidence |
 
 ## Strategic roadmap
@@ -148,18 +144,13 @@ turned into plans. Re-audit only when the deferral trigger changes.
 - **009**: prompt presets without a config-schema change.
 - **010**: StreamResults clarified as toggle-only HTTP streaming.
 
-## Verification baselines
+## Verification baseline
 
-The isolated cumulative implementation branch recorded:
-
-```text
-dotnet test -c Release  →  304 passed on .NET 10
-```
-
-The current branch was spot-checked during reconciliation:
+The current `master` worktree records:
 
 ```text
-dotnet test -c Release --no-restore  →  256 passed on .NET 9
+dotnet build -c Release  →  0 warnings, 0 errors
+dotnet test -c Release  →  350 passed on .NET 10
 ```
 
 Every implementation plan requires the live suite to pass without reducing the

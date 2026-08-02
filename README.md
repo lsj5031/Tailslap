@@ -3,7 +3,7 @@
 <div align="center">
   <img src="TailSlap/Icons/icon.png" alt="TailSlap Logo" width="128" height="128">
   
-  **A Windows utility that enhances your clipboard and text refinement experience with AI-powered processing.**
+  **A Windows tray utility for clipboard refinement, dictation, and realtime transcription.**
   
   TailSlap runs in the system tray and allows you to quickly refine selected text using LLM services.
 </div>
@@ -12,7 +12,7 @@
 
 - **Text Refinement**: Process and enhance selected text with a hotkey (`Ctrl+Alt+R`)
 - **Toggle Transcription**: Press a hotkey to start recording, press again to stop and transcribe with optional LLM auto-enhancement (`Ctrl+Alt+T`)
-- **Push-to-Talk Transcription**: Hold `Ctrl+Win` to record audio, release to transcribe and type the result into your active application incrementally
+- **Push-to-Talk Transcription**: Hold `Ctrl+Win` to record audio, release to transcribe, and deliver the final result to your active application
 - **Real-time Streaming**: Type words as they are spoken with WebSocket streaming (`Ctrl+Alt+Y`)
   - **Streaming Mode**: Real-time transcription via WebSocket connection
   - **Voice Activity Detection**: Auto-stop recording after silence (configurable threshold)
@@ -26,7 +26,7 @@
   - Push-to-Talk: `Ctrl+Win` hold (default)
   - Real-time Streaming: `Ctrl+Alt+Y` (default)
 - **Encrypted History**: View and manage your refinement and transcription history (secured with DPAPI)
-- **Recording Overlay**: Floating capsule overlay with real-time audio waveform bars during push-to-talk recording
+- **Recording Overlay**: Floating capsule overlay with waveform bars while recording or streaming, and a status indicator while processing
 - **System Tray Integration**: Runs quietly in the background
 - **Auto-start Option**: Launch on Windows startup
 
@@ -42,9 +42,9 @@
 ### Requirements
 
 - **Windows 10 or later**
-- **Internet connection** for LLM processing (local Ollama doesn't require internet)
+- **A configured LLM/transcription endpoint**. Endpoints may be local, on a LAN, or hosted; internet access is only required for remote services.
 ### Real-time Backend Requirements
-- **WebSocket Streaming**: Requires a WebSocket-compatible transcription service
+- **WebSocket Streaming**: Requires a WebSocket-compatible transcription service when the realtime hotkey is used
 - **Recommended provider**: `openai` — OpenAI-compatible `ws://…/v1/realtime?intent=transcription` (default; works with [glm-asr-docker](https://github.com/lsj5031/glm-asr-docker))
 - **Legacy custom provider**: `custom` — `ws://…/v1/audio/transcriptions/stream` (still supported)
 - **Fallback**: Standard HTTP transcription also supported
@@ -60,7 +60,7 @@
 1. Press and hold the push-to-talk hotkey (default: `Ctrl+Win`)
 2. Speak into your microphone -- a floating capsule overlay appears at the bottom of the screen with real-time waveform bars driven by your audio level
 3. Release the hotkey to stop recording and start transcription
-4. Transcribed text is typed incrementally into your active application as SSE chunks arrive (tray icon animates slowly during transcription)
+4. The streamed response is merged and deduplicated, then the final transcription is delivered once to your active application (tray icon animates slowly during transcription)
 5. Results are saved to encrypted transcription history
 
 ### Toggle Transcription
@@ -79,8 +79,8 @@
 **Advanced Settings:**
 - **Stream Results**: For **toggle** transcription only — stream post-recording HTTP chunks into the app as they arrive. Live speech-to-text while talking uses the **Realtime** hotkey, not this checkbox.
 - **Realtime Provider**: Prefer `openai` (default). `custom` remains available for older stream endpoints.
-- **ASR Language / session prompt**: Optional OpenAI-protocol session hints (blank language = auto-detect)
-- **WebSocket Endpoint**: Built automatically from the base API endpoint for the selected realtime provider
+- **ASR Language / session prompt**: Optional language hint for HTTP and OpenAI-protocol realtime transcription, plus an optional realtime vocabulary prompt (blank language = provider auto-detect)
+- **WebSocket Endpoint**: A derived runtime endpoint built automatically from the base API endpoint and selected realtime provider; it is not a persisted JSON setting
 - **Silence Detection**: Configure threshold (default: 2000ms) to auto-stop recording
 - **Microphone Selection**: Choose preferred microphone device in Settings
 
@@ -115,38 +115,42 @@ You can edit this file directly or use the Settings dialog in the system tray me
 
 ### Configuration Options
 
+The JSON serializer writes camelCase property names. API keys are entered through Settings and stored as DPAPI-protected `apiKeyEncrypted` values; do not hand-edit them.
+
 #### LLM Configuration
-- `BaseUrl`: OpenAI-compatible endpoint (default: `http://localhost:11434/v1`)
-- `Model`: Model name (default: `llama3.1`)
-- `Temperature`: Sampling temperature (default: `0.2`)
-- `MaxTokens`: Maximum response tokens (optional)
-- `ApiKey`: Encrypted API key for cloud services
-- `HttpReferer`, `XTitle`: Optional HTTP headers
+- `baseUrl`: OpenAI-compatible endpoint (default: `http://localhost:11434/v1`)
+- `model`: Model name (default: `llama3.1`)
+- `temperature`: Sampling temperature (default: `0.2`)
+- `maxTokens`: Maximum response tokens (optional)
+- `apiKeyEncrypted`: DPAPI-protected API key written by Settings
+- `httpReferer`, `xTitle`: Optional HTTP headers
 
 #### Transcription Configuration
-- `BaseUrl`: OpenAI-style API root (default: `http://localhost:18000/v1`; app appends `/audio/transcriptions`)
-- `Model`: Transcription model (default: `glm-nano-2512`)
-- `ApiKey`: Encrypted API key (optional)
-- `TimeoutSeconds`: Request timeout (default: `30`)
-- `AutoPaste`: Automatically paste transcription results (default: `true`)
-- `EnableVAD`: Voice Activity Detection (default: `true`)
-- `SilenceThresholdMs`: Silence detection threshold in milliseconds (default: `2000`)
-- `PreferredMicrophoneIndex`: Microphone device selection (default: `-1` for system default)
-- `StreamResults`: Stream HTTP chunks for toggle transcription only (default: `false`). Live streaming uses the realtime hotkey.
-- `RealtimeProvider`: `openai` (default, recommended) or `custom` (legacy stream URL)
-- `Language`: Optional BCP-47 hint for OpenAI-protocol realtime (default empty = auto)
-- `RealtimeSessionPrompt`: Optional session vocabulary hint for OpenAI-protocol realtime
-- `WebSocketUrl`: Auto-constructed WebSocket endpoint for the selected streaming provider
+- `enabled`: Enable transcription hotkeys (default: `true`)
+- `baseUrl`: OpenAI-compatible API root (default: `http://localhost:18000/v1`; app derives `/audio/transcriptions`)
+- `model`: Transcription model (default: `glm-nano-2512`)
+- `apiKeyEncrypted`: DPAPI-protected API key written by Settings
+- `timeoutSeconds`: Request timeout (default: `30`)
+- `autoPaste`: Automatically paste transcription results (default: `true`)
+- `enableVAD`: Voice Activity Detection (default: `true`)
+- `silenceThresholdMs`: Silence detection threshold in milliseconds (default: `2000`)
+- `preferredMicrophoneIndex`: Microphone device selection (default: `-1` for system default)
+- `streamResults`: Request HTTP streaming for toggle transcription (default: `false`). Chunks are merged and delivered as one final result; live speech-to-text uses the realtime hotkey.
+- `realtimeProvider`: `openai` (default, recommended) or `custom` (legacy stream URL)
+- `language`: Optional BCP-47 hint for HTTP and OpenAI-protocol realtime (default empty = auto)
+- `realtimeSessionPrompt`: Optional session vocabulary hint for OpenAI-protocol realtime
+- `webSocketUrl`: Derived runtime value only; it is ignored when reading/writing JSON
 
 #### Hotkey Configuration
-- `Hotkey`: Text refinement hotkey (default: `Ctrl+Alt+R`)
-- `TranscriberHotkey`: Toggle transcription hotkey (default: `Ctrl+Alt+T`)
-- `TypelessHotkey`: Push-to-talk hotkey (default: `Ctrl+Win` hold, `Key = 0` means modifier-only)
-- `StreamingTranscriberHotkey`: Real-time streaming hotkey (default: `Ctrl+Alt+Y`)
+- `hotkey`: Text refinement hotkey (default: `Ctrl+Alt+R`)
+- `transcriberHotkey`: Toggle transcription hotkey (default: `Ctrl+Alt+T`)
+- `typelessHotkey`: Push-to-talk hotkey (default: `Ctrl+Win` hold, `key = 0` means modifier-only)
+- `streamingTranscriberHotkey`: Real-time streaming hotkey (default: `Ctrl+Alt+Y`)
 
 #### General Settings
-- `AutoPaste`: Auto-paste refined text (default: `true`)
-- `UseClipboardFallback`: Use Ctrl+C fallback when clipboard capture fails (default: `true`)
+- `autoPaste`: Auto-paste refined text (default: `true`)
+- `excludeFromClipboardHistory`: Exclude delivered text from Windows clipboard history (default: `true`)
+- `useClipboardFallback`: Use Ctrl+C fallback when clipboard capture fails (default: `true`)
 
 ## Privacy & Security
 - **End-to-End Encryption**: All history (refinement and transcription) is stored on disk using Windows DPAPI with `DataProtectionScope.CurrentUser`. Only the current Windows user can decrypt data.
@@ -174,6 +178,12 @@ other personal or sensitive data.
 - TailSlap will automatically try focused-control paste, standard paste shortcuts, and direct Unicode typing depending on the app.
 - If all delivery methods fail, the text is still left on the clipboard so you can paste it manually.
 
+### Diagnostics shows warnings even though a mode works
+- The LLM probe calls `GET /models` with the configured bearer key. A `401` or `403` means the endpoint rejected or requires authentication; it does not mean the microphone or transcription path failed.
+- The transcription probe calls the POST-only `/audio/transcriptions` endpoint with `GET`. A `405 Method Not Allowed` is expected and is reported as reachable.
+- Realtime WebSocket connectivity is optional. If the HTTP transcription modes work but realtime is unavailable, the diagnostic reports a warning for that mode only. If transcription is disabled, realtime is not tested.
+- Verify the configured `baseUrl` and `realtimeProvider` before changing a working setup. The app derives the HTTP and WebSocket paths from those values.
+
 ## Animation
 
 TailSlap uses a smooth 8-frame animated icon during text processing:
@@ -185,7 +195,7 @@ TailSlap uses a smooth 8-frame animated icon during text processing:
 The animation speed changes based on the active state:
 - **Recording** (push-to-talk): Fast at 50ms intervals with "TailSlap - Recording..." tooltip
 - **Transcribing**: Slow at 200ms intervals with "TailSlap - Transcribing..." tooltip
-- **Refining**: Medium at 75ms intervals with "TailSlap - Refining..." tooltip
+- **Refinement / processing**: Medium at 75ms intervals; the tray tooltip reflects the current processing state
 - **Streaming**: Medium at 75ms intervals with "TailSlap - Streaming..." tooltip
 
 Tooltip text pulses every 300ms with up to 3 dots for visual feedback.
@@ -201,10 +211,10 @@ Tooltip text pulses every 300ms with up to 3 dots for visual feedback.
 dotnet build -c Release
 
 # Publish self-contained single file
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish TailSlap/TailSlap.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
-**Output**: `TailSlap\bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`
+**Output**: `TailSlap\bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`. Self-contained publishes also include `WebRtcVad.dll` and the `Icons` directory beside the executable; those files are required at runtime.
 
 **Technology Stack**: 
 - .NET 10 with Windows Forms
