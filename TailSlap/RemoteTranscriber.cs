@@ -155,7 +155,9 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         }
         catch (Exception e)
         {
-            Logger.Log($"TestConnectionAsync unexpected error: {e.GetType().Name}: {e.Message}");
+            Logger.LogWarning(
+                $"TestConnectionAsync unexpected error: {e.GetType().Name}: {e.Message}"
+            );
             throw new TranscriberException(
                 TranscriberErrorType.Unknown,
                 $"Unexpected error during remote connection test: {e.Message}",
@@ -247,7 +249,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
 
                 if (response.StatusCode != System.Net.HttpStatusCode.OK)
                 {
-                    Logger.Log($"Error response fingerprint: {responseFingerprint}");
+                    Logger.LogWarning($"Error response fingerprint: {responseFingerprint}");
                     throw new TranscriberException(
                         TranscriberErrorType.HttpError,
                         $"Remote API returned error (HTTP {(int)response.StatusCode})",
@@ -269,7 +271,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 }
                 catch (JsonException e)
                 {
-                    Logger.Log($"JSON parsing failed: {e.Message}");
+                    Logger.LogWarning($"JSON parsing failed: {e.Message}");
                     throw new TranscriberException(
                         TranscriberErrorType.ParseError,
                         "Remote API returned invalid JSON",
@@ -284,7 +286,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 {
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"Transcription failed with retryable error: {ex.Message}; retrying in 1s"
                         );
                     }
@@ -309,7 +311,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 {
                     try
                     {
-                        Logger.Log($"Transcription timeout; retrying in 1s");
+                        Logger.LogWarning($"Transcription timeout; retrying in 1s");
                     }
                     catch { }
                     await Task.Delay(1000, ct).ConfigureAwait(false);
@@ -328,7 +330,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 {
                     try
                     {
-                        Logger.Log($"Transcription connection failed; retrying in 1s");
+                        Logger.LogWarning($"Transcription connection failed; retrying in 1s");
                     }
                     catch { }
                     await Task.Delay(1000, ct).ConfigureAwait(false);
@@ -338,7 +340,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
             }
             catch (Exception e)
             {
-                Logger.Log(
+                Logger.LogWarning(
                     $"TranscribeAudioAsync unexpected error: {e.GetType().Name}: {e.Message}"
                 );
                 throw new TranscriberException(
@@ -370,88 +372,16 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         var fileInfo = new FileInfo(audioFilePath);
         Logger.Log($"TranscribeStreamingAsync: file={audioFilePath}, size={fileInfo.Length} bytes");
 
-        using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
+        var result = await SendStreamingRequestAsync(audioFilePath, endpoint, ct)
+            .ConfigureAwait(false);
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
-
-        // Use FileStream for memory efficiency
-        using var fileStream = new FileStream(
-            audioFilePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            4096,
-            true
-        );
-        using var audioContent = new StreamContent(fileStream);
-        audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
-            "audio/wav"
-        );
-
-        using var formData = new MultipartFormDataContent();
-        formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
-        AddCommonMultipartFields(formData);
-
-        // Request streaming response
-        formData.Add(new StringContent("true"), "stream");
-
-        Logger.Log($"Posting streaming request to {endpoint}");
-
-        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        using (result.Response)
         {
-            Content = formData,
-        };
-        if (!string.IsNullOrEmpty(_config.ApiKey))
-        {
-            request.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
-        }
-
-        HttpResponseMessage? response = null;
-        try
-        {
-            response = await http.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    timeoutCts.Token
-                )
-                .ConfigureAwait(false);
-
-            Logger.Log(
-                $"Streaming response: HTTP {(int)response.StatusCode} {response.StatusCode}"
-            );
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorText = await response
-                    .Content.ReadAsStringAsync(timeoutCts.Token)
-                    .ConfigureAwait(false);
-                Logger.Log($"Streaming error response: {FingerprintPayload(errorText)}");
-                throw new TranscriberException(
-                    TranscriberErrorType.HttpError,
-                    $"Remote API returned error (HTTP {(int)response.StatusCode})",
-                    statusCode: (int)response.StatusCode,
-                    responseText: FingerprintPayload(errorText)
-                );
-            }
-
-            var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
-            Logger.Log($"Streaming content type: {contentType}");
-
-            // Check if response is actually streaming (SSE or chunked)
-            bool isStreaming =
-                contentType.Contains("text/event-stream")
-                || contentType.Contains("application/x-ndjson")
-                || response.Headers.TransferEncodingChunked == true;
-
-            if (!isStreaming)
+            if (!result.IsStreaming)
             {
                 // Server doesn't support streaming, fall back to reading full response
                 Logger.Log("Server returned non-streaming response, yielding full text");
-                var fullText = await response
-                    .Content.ReadAsStringAsync(timeoutCts.Token)
-                    .ConfigureAwait(false);
-                var text = ExtractTextFromResponseString(fullText);
+                var text = ExtractTextFromResponseString(result.NonStreamingText ?? "");
                 if (!string.IsNullOrEmpty(text))
                 {
                     yield return text;
@@ -459,15 +389,20 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 yield break;
             }
 
-            // Read SSE stream
-            // Format: "data: <text>\n\n" for each chunk, "data: [DONE]" at end
-            using var stream = await response
-                .Content.ReadAsStreamAsync(timeoutCts.Token)
+            // Read SSE / NDJSON stream.
+            // Formats accepted per line:
+            //   data: <plain text>          (glm-asr style plain-text chunks)
+            //   data: {json}                (OpenAI-style JSON events — text is extracted)
+            //   {json}                      (raw NDJSON line)
+            //   data: [DONE]                (stream end marker)
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+            using var stream = await result
+                .Response.Content.ReadAsStreamAsync(timeoutCts.Token)
                 .ConfigureAwait(false);
             using var reader = new StreamReader(stream, Encoding.UTF8);
 
             string? line;
-
             while (
                 (line = await reader.ReadLineAsync(timeoutCts.Token).ConfigureAwait(false)) != null
             )
@@ -480,73 +415,250 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                     continue;
                 }
 
-                // SSE format: "data: <plain text>"
+                string? payload = null;
                 if (line.StartsWith("data: ", StringComparison.Ordinal))
                 {
-                    var text = line.Substring(6); // "data: " is 6 chars
-
-                    // Check for stream end
-                    if (text == "[DONE]")
-                    {
-                        Logger.Log("Streaming completed with [DONE]");
-                        break;
-                    }
-
-                    // Check for error
-                    if (text.StartsWith("[Error:", StringComparison.Ordinal))
-                    {
-                        Logger.Log($"Streaming error chunk: {FingerprintPayload(text)}");
-                        throw new TranscriberException(
-                            TranscriberErrorType.HttpError,
-                            "Remote streaming error",
-                            responseText: FingerprintPayload(text)
-                        );
-                    }
-
-                    // Plain text chunk - yield directly
-                    if (!string.IsNullOrEmpty(text))
-                    {
-                        Logger.Log(
-                            $"Streaming chunk: len={text.Length}, sha256={Hashing.Sha256Hex(text)}"
-                        );
-                        yield return text;
-                    }
+                    payload = line.Substring(6); // "data: " is 6 chars
                 }
-                // Also handle "data:" without space (just in case)
                 else if (line.StartsWith("data:", StringComparison.Ordinal))
                 {
-                    var text = line.Substring(5).TrimStart();
-
-                    if (text == "[DONE]")
-                    {
-                        Logger.Log("Streaming completed with [DONE]");
-                        break;
-                    }
-
-                    if (text.StartsWith("[Error:", StringComparison.Ordinal))
-                    {
-                        Logger.Log($"Streaming error chunk: {FingerprintPayload(text)}");
-                        throw new TranscriberException(
-                            TranscriberErrorType.HttpError,
-                            "Remote streaming error",
-                            responseText: FingerprintPayload(text)
-                        );
-                    }
-
-                    if (!string.IsNullOrEmpty(text))
-                    {
-                        Logger.Log(
-                            $"Streaming chunk: len={text.Length}, sha256={Hashing.Sha256Hex(text)}"
-                        );
-                        yield return text;
-                    }
+                    payload = line.Substring(5).TrimStart();
                 }
+                else if (
+                    result.IsNdjson
+                    || line.TrimStart().StartsWith("{", StringComparison.Ordinal)
+                    || line.TrimStart().StartsWith("[", StringComparison.Ordinal)
+                )
+                {
+                    // Raw NDJSON line or a JSON payload without the "data:" prefix
+                    payload = line;
+                }
+
+                if (payload == null)
+                {
+                    continue; // e.g. "event: xxx" lines — ignored
+                }
+
+                // Check for stream end
+                if (payload == "[DONE]")
+                {
+                    Logger.Log("Streaming completed with [DONE]");
+                    yield break;
+                }
+
+                // Check for error
+                if (payload.StartsWith("[Error:", StringComparison.Ordinal))
+                {
+                    Logger.LogWarning($"Streaming error chunk: {FingerprintPayload(payload)}");
+                    throw new TranscriberException(
+                        TranscriberErrorType.HttpError,
+                        "Remote streaming error",
+                        responseText: FingerprintPayload(payload)
+                    );
+                }
+
+                if (!TryExtractTextFromChunk(payload, out var chunkText) || chunkText.Length == 0)
+                {
+                    continue;
+                }
+
+                Logger.Log(
+                    $"Streaming chunk: len={chunkText.Length}, sha256={Hashing.Sha256Hex(chunkText)}"
+                );
+                yield return chunkText;
             }
         }
-        finally
+    }
+
+    /// <summary>
+    /// Sends the streaming transcription request with retry for retryable
+    /// connection-phase failures (timeout / connection refused). Retries only
+    /// before any content has been streamed.
+    /// </summary>
+    private async Task<StreamingHttpResult> SendStreamingRequestAsync(
+        string audioFilePath,
+        Uri endpoint,
+        CancellationToken ct
+    )
+    {
+        int attempts = 2;
+        while (true)
         {
-            response?.Dispose();
+            HttpResponseMessage? response = null;
+            try
+            {
+                using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(_config.TimeoutSeconds));
+
+                // Use FileStream for memory efficiency
+                using var fileStream = new FileStream(
+                    audioFilePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    4096,
+                    true
+                );
+                using var audioContent = new StreamContent(fileStream);
+                audioContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                    "audio/wav"
+                );
+
+                using var formData = new MultipartFormDataContent();
+                formData.Add(audioContent, "file", Path.GetFileName(audioFilePath));
+                AddCommonMultipartFields(formData);
+
+                // Request streaming response
+                formData.Add(new StringContent("true"), "stream");
+
+                Logger.Log($"Posting streaming request to {endpoint}");
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                {
+                    Content = formData,
+                };
+                if (!string.IsNullOrEmpty(_config.ApiKey))
+                {
+                    request.Headers.Add("Authorization", $"Bearer {_config.ApiKey}");
+                }
+
+                // NOTE: the response is deliberately NOT disposed here — ownership is
+                // transferred to the caller (TranscribeStreamingAsync), which disposes it
+                // after consuming the stream. It is disposed in the catch/finally paths
+                // below if an error occurs before transfer.
+                response = await http.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        timeoutCts.Token
+                    )
+                    .ConfigureAwait(false);
+
+                Logger.Log(
+                    $"Streaming response: HTTP {(int)response.StatusCode} {response.StatusCode}"
+                );
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorText = await response
+                        .Content.ReadAsStringAsync(timeoutCts.Token)
+                        .ConfigureAwait(false);
+                    Logger.LogWarning($"Streaming error response: {FingerprintPayload(errorText)}");
+                    throw new TranscriberException(
+                        TranscriberErrorType.HttpError,
+                        $"Remote API returned error (HTTP {(int)response.StatusCode})",
+                        statusCode: (int)response.StatusCode,
+                        responseText: FingerprintPayload(errorText)
+                    );
+                }
+
+                var contentType = response.Content.Headers.ContentType?.MediaType ?? "";
+                Logger.Log($"Streaming content type: {contentType}");
+
+                // Check if response is actually streaming (SSE or chunked)
+                bool isStreaming =
+                    contentType.Contains("text/event-stream")
+                    || contentType.Contains("application/x-ndjson")
+                    || response.Headers.TransferEncodingChunked == true;
+                bool isNdjson = contentType.Contains("application/x-ndjson");
+
+                if (!isStreaming)
+                {
+                    var fullText = await response
+                        .Content.ReadAsStringAsync(timeoutCts.Token)
+                        .ConfigureAwait(false);
+                    return new StreamingHttpResult(response, false, isNdjson, fullText);
+                }
+
+                return new StreamingHttpResult(response, true, isNdjson, null);
+            }
+            catch (TranscriberException ex) when (ex.IsRetryable() && attempts > 1)
+            {
+                response?.Dispose();
+                attempts--;
+                Logger.LogWarning($"Streaming connection failed; retrying in 1s: {ex.Message}");
+                await Task.Delay(1000, ct).ConfigureAwait(false);
+            }
+            catch (HttpRequestException ex) when (attempts > 1)
+            {
+                response?.Dispose();
+                attempts--;
+                Logger.LogWarning($"Streaming connection error; retrying in 1s: {ex.Message}");
+                await Task.Delay(1000, ct).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested && attempts > 1)
+            {
+                response?.Dispose();
+                attempts--;
+                Logger.LogWarning(
+                    $"Streaming request timed out after {_config.TimeoutSeconds}s; retrying in 1s: {ex.Message}"
+                );
+                await Task.Delay(1000, ct).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                // Final attempt (or a timeout that cannot be retried): normalize to
+                // the TranscriberException contract used everywhere else.
+                response?.Dispose();
+                throw new TranscriberException(
+                    TranscriberErrorType.NetworkTimeout,
+                    $"Remote API request timed out after {_config.TimeoutSeconds}s at {_config.BaseUrl}",
+                    ex
+                );
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                response?.Dispose();
+                throw;
+            }
+            catch
+            {
+                response?.Dispose();
+                throw;
+            }
         }
+    }
+
+    private sealed record StreamingHttpResult(
+        HttpResponseMessage Response,
+        bool IsStreaming,
+        bool IsNdjson,
+        string? NonStreamingText
+    );
+
+    /// <summary>
+    /// Converts a single streaming payload into text. JSON payloads have their
+    /// text extracted so raw JSON is never typed into the target application;
+    /// plain-text payloads are passed through unchanged.
+    /// </summary>
+    private static bool TryExtractTextFromChunk(string payload, out string text)
+    {
+        var trimmed = payload.TrimStart();
+        if (trimmed.Length == 0)
+        {
+            text = "";
+            return true;
+        }
+
+        bool looksLikeJson = trimmed[0] == '{' || trimmed[0] == '[';
+        if (looksLikeJson)
+        {
+            var extracted = ExtractTextFromStreamChunk(payload);
+            if (!string.IsNullOrEmpty(extracted))
+            {
+                text = extracted;
+                return true;
+            }
+
+            Logger.LogWarning(
+                $"Streaming chunk is JSON without recognized text; skipping ({FingerprintPayload(payload)})"
+            );
+            text = "";
+            return false;
+        }
+
+        text = payload; // plain-text chunk
+        return true;
     }
 
     private void AddCommonMultipartFields(MultipartFormDataContent formData)
@@ -654,6 +766,36 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         }
         catch
         {
+            // Not pure JSON. If the body looks like SSE lines (some servers return
+            // SSE content with an application/json content type), extract the
+            // data: payloads instead of typing the raw stream into the target app.
+            if (
+                responseText.StartsWith("data:", StringComparison.Ordinal)
+                || responseText.Contains("\ndata:", StringComparison.Ordinal)
+            )
+            {
+                var sb = new StringBuilder();
+                foreach (var rawLine in responseText.Split('\n'))
+                {
+                    var line = rawLine.Trim();
+                    if (line.StartsWith("data: ", StringComparison.Ordinal))
+                        line = line.Substring(6);
+                    else if (line.StartsWith("data:", StringComparison.Ordinal))
+                        line = line.Substring(5).TrimStart();
+                    else
+                        continue;
+
+                    if (line == "[DONE]")
+                        break;
+                    if (line.StartsWith("[Error:", StringComparison.Ordinal))
+                        continue;
+
+                    if (TryExtractTextFromChunk(line, out var chunk) && chunk.Length > 0)
+                        sb.Append(chunk);
+                }
+                return sb.ToString();
+            }
+
             return responseText;
         }
     }
@@ -771,7 +913,7 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
 
         try
         {
-            Logger.Log(
+            Logger.LogWarning(
                 $"ExtractTextFromResponse: Could not find text in response structure: {FingerprintPayload(response.ToString())}"
             );
         }

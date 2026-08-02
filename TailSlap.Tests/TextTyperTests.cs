@@ -642,6 +642,95 @@ public class TextTyperTests
 
     #endregion
 
+    #region Stream Chunk Merging (duplicate-paste regression)
+
+    [Fact]
+    public void MergeStreamChunk_EmptyAccumulated_ReturnsChunk()
+    {
+        Assert.Equal("hello", TextTyper.MergeStreamChunk("", "hello"));
+    }
+
+    [Fact]
+    public void MergeStreamChunk_EmptyChunk_ReturnsAccumulated()
+    {
+        Assert.Equal("hello", TextTyper.MergeStreamChunk("hello", ""));
+    }
+
+    [Fact]
+    public void MergeStreamChunk_DisjointDelta_Appends()
+    {
+        Assert.Equal("hello world", TextTyper.MergeStreamChunk("hello ", "world"));
+    }
+
+    [Fact]
+    public void MergeStreamChunk_ResentSuffix_SkipsDuplicate()
+    {
+        // Server resends the tail chunk that is already fully present.
+        Assert.Equal("hello world", TextTyper.MergeStreamChunk("hello world", "world"));
+    }
+
+    [Fact]
+    public void MergeStreamChunk_ResentWholeChunk_SkipsDuplicate()
+    {
+        // Server resends the entire accumulated text as an identical chunk.
+        Assert.Equal("hello world", TextTyper.MergeStreamChunk("hello world", "hello world"));
+    }
+
+    [Fact]
+    public void MergeStreamChunk_FinalSnapshotSuperset_ReplacesAccumulated()
+    {
+        // The classic "pasted twice" pattern: partials accumulate "hello world",
+        // then the server sends the FULL transcript "hello world again". Blindly
+        // appending would yield "hello worldhello world again"; merging adopts the
+        // superset so the accumulated text is NOT duplicated.
+        Assert.Equal(
+            "hello world again",
+            TextTyper.MergeStreamChunk("hello world", "hello world again")
+        );
+    }
+
+    [Fact]
+    public void MergeStreamChunk_RevisedSnapshot_ReplacesStaleTranscript()
+    {
+        Assert.Equal(
+            "不用，我来看看到底行不行。",
+            TextTyper.MergeStreamChunk("不用，我来看到底行不行。", "不用，我来看看到底行不行。")
+        );
+    }
+
+    [Fact]
+    public void MergeStreamChunk_PartialOverlap_MergesAtBoundary()
+    {
+        // Server resent the boundary word "world " before continuing.
+        Assert.Equal(
+            "hello world again",
+            TextTyper.MergeStreamChunk("hello world ", "world again")
+        );
+    }
+
+    [Fact]
+    public void MergeStreamChunk_SnapshotEqualPrefix_KeepsLongest()
+    {
+        // Accumulated text is a prefix of the new snapshot — adopt the snapshot.
+        Assert.Equal(
+            "The paste seems weird. It pasted twice.",
+            TextTyper.MergeStreamChunk("The paste seems", "The paste seems weird. It pasted twice.")
+        );
+    }
+
+    [Fact]
+    public void MergeStreamChunk_MultipleResends_NoGrowth()
+    {
+        string acc = "hello";
+        for (int i = 0; i < 5; i++)
+        {
+            acc = TextTyper.MergeStreamChunk(acc, "hello");
+        }
+        Assert.Equal("hello", acc);
+    }
+
+    #endregion
+
     #region Common Prefix Algorithm
 
     [Fact]

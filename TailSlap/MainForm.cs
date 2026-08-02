@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -178,10 +179,26 @@ public class MainForm : Form
             });
         };
 
-        // Wire keyboard hook events to TypelessController
+        // Wire keyboard hook events to TypelessController.
+        // The hook callbacks run on the UI thread, so HandleKeyDownAsync is invoked
+        // synchronously: it is non-blocking (recording runs on a background task) and
+        // this guarantees the key-down's state transition is observed before any
+        // subsequent key-up is processed — otherwise a fast tap could start a
+        // recording whose key-up already passed ("push-to-talk doesn't stop").
         _keyboardHook.OnKeyDown += () =>
         {
-            _ = Task.Run(() => SafeFireAndForget(_typelessController.HandleKeyDownAsync()));
+            try
+            {
+                _typelessController.HandleKeyDownAsync();
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.LogWarning($"TypelessController key-down dispatch failed: {ex.Message}");
+                }
+                catch { }
+            }
         };
         _keyboardHook.OnKeyUp += () =>
         {
@@ -229,6 +246,7 @@ public class MainForm : Form
 
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Run Diagnostics...", null, async (_, __) => await RunDiagnosticsAsync());
+        _menu.Items.Add("Recent Errors & Warnings...", null, (_, __) => ShowRecentIssues());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Settings...", null, (_, __) => ShowSettings(_currentConfig));
         _menu.Items.Add(
@@ -238,12 +256,7 @@ public class MainForm : Form
             {
                 try
                 {
-                    var logPath = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                        "TailSlap",
-                        "logs",
-                        "app.jsonl"
-                    );
+                    var logPath = Logger.GetLogPath();
                     Process.Start(new ProcessStartInfo(logPath) { UseShellExecute = true });
                 }
                 catch
@@ -333,7 +346,7 @@ public class MainForm : Form
             {
                 try
                 {
-                    Logger.Log($"Animation tick error: {ex.Message}");
+                    Logger.LogWarning($"Animation tick error: {ex.Message}");
                 }
                 catch { }
             }
@@ -362,8 +375,27 @@ public class MainForm : Form
         };
     }
 
+    private void ShowRecentIssues()
+    {
+        try
+        {
+            // Make sure any in-memory log entries are written before reading.
+            Logger.Flush();
+            var issues = Logger.ReadRecentIssues(maxEntries: 200);
+            using var form = new RecentIssuesForm(issues);
+            form.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning($"Failed to open recent issues: {ex.GetType().Name}: {ex.Message}");
+            NotificationService.ShowError($"Could not read the log: {ex.Message}");
+        }
+    }
+
     private async Task RunDiagnosticsAsync()
     {
+        var runAt = DateTime.Now;
+        var rows = new List<DiagnosticRow>();
         var results = new StringBuilder();
         results.AppendLine("TailSlap Diagnostics");
         results.AppendLine("====================");
@@ -371,47 +403,114 @@ public class MainForm : Form
 
         // Check LLM endpoint
         results.AppendLine("LLM Endpoint:");
+        string llmUrl = _currentConfig.Llm.BaseUrl.TrimEnd('/');
+        string llmStatus = "";
+        DiagnosticSeverity llmSeverity = DiagnosticSeverity.Info;
         try
         {
             using var httpClient = _httpClientFactory.CreateClient(HttpClientNames.Default);
             httpClient.Timeout = TimeSpan.FromSeconds(5);
-            var llmUrl = _currentConfig.Llm.BaseUrl.TrimEnd('/');
             var response = await httpClient.GetAsync(llmUrl + "/models");
-            results.AppendLine($"  URL: {llmUrl}");
-            results.AppendLine(
-                $"  Status: {(response.IsSuccessStatusCode ? "✓ Reachable" : $"⚠ Response ({(int)response.StatusCode})")}"
-            );
+            if (response.IsSuccessStatusCode)
+            {
+                llmStatus = "Reachable";
+                llmSeverity = DiagnosticSeverity.Success;
+                results.AppendLine($"  URL: {llmUrl}");
+                results.AppendLine("  Status: ✓ Reachable");
+            }
+            else
+            {
+                llmStatus = $"Response ({(int)response.StatusCode})";
+                llmSeverity = DiagnosticSeverity.Warning;
+                results.AppendLine($"  URL: {llmUrl}");
+                results.AppendLine($"  Status: ⚠ Response ({(int)response.StatusCode})");
+            }
         }
         catch (Exception ex)
         {
+            llmStatus = $"Unreachable ({ex.GetType().Name})";
+            llmSeverity = DiagnosticSeverity.Error;
             results.AppendLine($"  URL: {_currentConfig.Llm.BaseUrl}");
             results.AppendLine($"  Status: ✗ Unreachable ({ex.GetType().Name})");
         }
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "LLM Endpoint",
+                Label = "URL",
+                Value = llmUrl,
+                Monospace = true,
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "LLM Endpoint",
+                Label = "Status",
+                Status = llmStatus,
+                Severity = llmSeverity,
+            }
+        );
         results.AppendLine();
 
         // Check Transcriber endpoint
         results.AppendLine("Transcription Endpoint:");
+        string transcriberUrl = _currentConfig.Transcriber.BaseUrl.TrimEnd('/');
+        string transcriberStatus = "";
+        DiagnosticSeverity transcriberSeverity = DiagnosticSeverity.Info;
         try
         {
             using var httpClient = _httpClientFactory.CreateClient(HttpClientNames.Default);
             httpClient.Timeout = TimeSpan.FromSeconds(5);
-            var transcriberUrl = _currentConfig.Transcriber.BaseUrl.TrimEnd('/');
             var response = await httpClient.GetAsync(transcriberUrl);
-            results.AppendLine($"  URL: {transcriberUrl}");
-            results.AppendLine(
-                $"  Status: {(response.IsSuccessStatusCode ? "✓ Reachable" : $"⚠ Response ({(int)response.StatusCode})")}"
-            );
+            if (response.IsSuccessStatusCode)
+            {
+                transcriberStatus = "Reachable";
+                transcriberSeverity = DiagnosticSeverity.Success;
+                results.AppendLine($"  URL: {transcriberUrl}");
+                results.AppendLine("  Status: ✓ Reachable");
+            }
+            else
+            {
+                transcriberStatus = $"Response ({(int)response.StatusCode})";
+                transcriberSeverity = DiagnosticSeverity.Warning;
+                results.AppendLine($"  URL: {transcriberUrl}");
+                results.AppendLine($"  Status: ⚠ Response ({(int)response.StatusCode})");
+            }
         }
         catch (Exception ex)
         {
+            transcriberStatus = $"Unreachable ({ex.GetType().Name})";
+            transcriberSeverity = DiagnosticSeverity.Error;
             results.AppendLine($"  URL: {_currentConfig.Transcriber.BaseUrl}");
             results.AppendLine($"  Status: ✗ Unreachable ({ex.GetType().Name})");
         }
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Transcription Endpoint",
+                Label = "URL",
+                Value = transcriberUrl,
+                Monospace = true,
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Transcription Endpoint",
+                Label = "Status",
+                Status = transcriberStatus,
+                Severity = transcriberSeverity,
+            }
+        );
         results.AppendLine();
 
         // Check WebSocket endpoint
         results.AppendLine("WebSocket Endpoint:");
-        results.AppendLine($"  URL: {_currentConfig.Transcriber.WebSocketUrl}");
+        string wsUrl = _currentConfig.Transcriber.WebSocketUrl;
+        string wsStatus = "";
+        DiagnosticSeverity wsSeverity = DiagnosticSeverity.Info;
+        results.AppendLine($"  URL: {wsUrl}");
         try
         {
             using var ws = new ClientWebSocket();
@@ -429,40 +528,96 @@ public class MainForm : Form
                 );
             }
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await ws.ConnectAsync(new Uri(_currentConfig.Transcriber.WebSocketUrl), cts.Token);
+            await ws.ConnectAsync(new Uri(wsUrl), cts.Token);
+            wsStatus = "Connectable";
+            wsSeverity = DiagnosticSeverity.Success;
             results.AppendLine("  Status: ✓ Connectable");
             await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
         }
         catch (Exception ex)
         {
+            wsStatus = $"Cannot connect ({ex.GetType().Name})";
+            wsSeverity = DiagnosticSeverity.Error;
             results.AppendLine($"  Status: ✗ Cannot connect ({ex.GetType().Name})");
         }
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "WebSocket Endpoint",
+                Label = "URL",
+                Value = wsUrl,
+                Monospace = true,
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "WebSocket Endpoint",
+                Label = "Status",
+                Status = wsStatus,
+                Severity = wsSeverity,
+            }
+        );
         results.AppendLine();
 
         // Check microphone
         results.AppendLine("Microphone:");
+        int deviceCount = 0;
+        string micStatus = "";
+        DiagnosticSeverity micSeverity = DiagnosticSeverity.Info;
         try
         {
-            int deviceCount = AudioRecorder.GetDeviceCount();
+            deviceCount = AudioRecorder.GetDeviceCount();
             results.AppendLine($"  Devices found: {deviceCount}");
             if (deviceCount > 0)
             {
+                micStatus = "Available";
+                micSeverity = DiagnosticSeverity.Success;
                 results.AppendLine("  Status: ✓ Available");
-                if (_currentConfig.Transcriber.PreferredMicrophoneIndex >= 0)
-                {
-                    results.AppendLine(
-                        $"  Preferred device index: {_currentConfig.Transcriber.PreferredMicrophoneIndex}"
-                    );
-                }
             }
             else
             {
+                micStatus = "No microphones found";
+                micSeverity = DiagnosticSeverity.Error;
                 results.AppendLine("  Status: ✗ No microphones found");
             }
         }
         catch (Exception ex)
         {
+            micStatus = $"Error checking ({ex.GetType().Name})";
+            micSeverity = DiagnosticSeverity.Error;
             results.AppendLine($"  Status: ✗ Error checking ({ex.GetType().Name})");
+        }
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Microphone",
+                Label = "Devices found",
+                Value = deviceCount.ToString(),
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Microphone",
+                Label = "Status",
+                Status = micStatus,
+                Severity = micSeverity,
+            }
+        );
+        if (_currentConfig.Transcriber.PreferredMicrophoneIndex >= 0)
+        {
+            rows.Add(
+                new DiagnosticRow
+                {
+                    Section = "Microphone",
+                    Label = "Preferred device index",
+                    Value = _currentConfig.Transcriber.PreferredMicrophoneIndex.ToString(),
+                }
+            );
+            results.AppendLine(
+                $"  Preferred device index: {_currentConfig.Transcriber.PreferredMicrophoneIndex}"
+            );
         }
         results.AppendLine();
 
@@ -480,13 +635,72 @@ public class MainForm : Form
         results.AppendLine(
             $"  Streaming Enabled: {(_currentConfig.Transcriber.StreamResults ? "Yes" : "No")}"
         );
-
-        BrandedMessageBox.Show(
-            results.ToString(),
-            "TailSlap Diagnostics",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Configuration",
+                Label = "LLM Enabled",
+                Value = _currentConfig.Llm.Enabled ? "Yes" : "No",
+            }
         );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Configuration",
+                Label = "LLM Model",
+                Value = _currentConfig.Llm.Model,
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Configuration",
+                Label = "Transcription Enabled",
+                Value = _currentConfig.Transcriber.Enabled ? "Yes" : "No",
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Configuration",
+                Label = "Transcription Model",
+                Value = _currentConfig.Transcriber.Model,
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Configuration",
+                Label = "VAD Enabled",
+                Value = _currentConfig.Transcriber.EnableVAD ? "Yes" : "No",
+            }
+        );
+        rows.Add(
+            new DiagnosticRow
+            {
+                Section = "Configuration",
+                Label = "Streaming Enabled",
+                Value = _currentConfig.Transcriber.StreamResults ? "Yes" : "No",
+            }
+        );
+
+        try
+        {
+            using var form = new DiagnosticsForm(rows, runAt);
+            form.ShowDialog(this);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(
+                $"Failed to open diagnostics form: {ex.GetType().Name}: {ex.Message}"
+            );
+            BrandedMessageBox.Show(
+                results.ToString(),
+                "TailSlap Diagnostics",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
+        }
         Logger.Log("Diagnostics run:\n" + results.ToString());
     }
 
@@ -1071,7 +1285,7 @@ public class MainForm : Form
     private static void SafeFireAndForget(Task task)
     {
         task.ContinueWith(
-            t => Logger.Log($"Unhandled async error: {t.Exception}"),
+            t => Logger.Error($"Unhandled async error: {t.Exception}"),
             TaskContinuationOptions.OnlyOnFaulted
         );
     }
@@ -1119,7 +1333,7 @@ public class MainForm : Form
         }
         catch (Exception ex)
         {
-            Logger.Log($"Error during config hot-reload: {ex.Message}");
+            Logger.LogWarning($"Error during config hot-reload: {ex.Message}");
         }
     }
 
@@ -1154,7 +1368,7 @@ public class MainForm : Form
         {
             try
             {
-                Logger.Log($"Overlay show error: {ex.Message}");
+                Logger.LogWarning($"Overlay show error: {ex.Message}");
             }
             catch { }
         }
@@ -1186,7 +1400,7 @@ public class MainForm : Form
         {
             try
             {
-                Logger.Log($"Recording overlay show error: {ex.Message}");
+                Logger.LogWarning($"Recording overlay show error: {ex.Message}");
             }
             catch { }
         }
@@ -1218,7 +1432,7 @@ public class MainForm : Form
         {
             try
             {
-                Logger.Log($"Overlay show error: {ex.Message}");
+                Logger.LogWarning($"Overlay show error: {ex.Message}");
             }
             catch { }
         }
@@ -1250,7 +1464,7 @@ public class MainForm : Form
         {
             try
             {
-                Logger.Log($"Overlay show error: {ex.Message}");
+                Logger.LogWarning($"Overlay show error: {ex.Message}");
             }
             catch { }
         }
@@ -1314,12 +1528,14 @@ public class MainForm : Form
                 UnregisterHotKey(Handle, hotkeyId);
         }
         catch { }
-        if (mods == 0)
-            mods = 0x0003;
-        if (vk == 0)
-            vk = (uint)Keys.R;
+        // NOTE: do not silently rewrite mods==0/vk==0 here — a zero config is a
+        // misconfiguration that must be surfaced, not hidden. Settings validates
+        // hotkeys before saving.
         var ok = RegisterHotKey(Handle, hotkeyId, mods, vk);
-        Logger.Log($"RegisterHotKey mods={mods}, key={vk}, id={hotkeyId}, ok={ok}");
+        var lastError = ok ? 0 : Marshal.GetLastPInvokeError();
+        Logger.Log(
+            $"RegisterHotKey mods={mods}, key={vk}, id={hotkeyId}, ok={ok}, err={lastError}"
+        );
         if (!ok)
         {
             string keyName = ((Keys)vk).ToString();
@@ -1333,11 +1549,11 @@ public class MainForm : Form
             if ((mods & 0x0008) != 0)
                 modNames += "Win+";
 
-            var lastError = Marshal.GetLastWin32Error();
             var message =
                 lastError == 1409
                     ? $"Failed to register hotkey: {modNames}{keyName}. It is already registered by another application."
                     : $"Failed to register hotkey: {modNames}{keyName}. Windows error {lastError}.";
+            Logger.Error(message);
             NotificationService.ShowError(message);
         }
     }

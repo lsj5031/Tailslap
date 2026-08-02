@@ -129,7 +129,9 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                     Interlocked.Increment(ref _chunksSkipped);
 
                     if (item.IsStop)
-                        Logger.Log("RealtimeTranscriber: stop marker dropped from send queue");
+                        Logger.LogWarning(
+                            "RealtimeTranscriber: stop marker dropped from send queue"
+                        );
                 }
             );
 
@@ -141,7 +143,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"RealtimeTranscriber: Connection failed - {ex.Message}");
+            Logger.Error($"RealtimeTranscriber: Connection failed - {ex.Message}");
             OnError?.Invoke($"Connection failed: {ex.Message}");
             await CleanupWebSocketAsync();
             throw;
@@ -181,7 +183,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"RealtimeTranscriber: SendAudioChunkAsync failed - {ex.Message}");
+            Logger.LogWarning($"RealtimeTranscriber: SendAudioChunkAsync failed - {ex.Message}");
         }
         return Task.CompletedTask;
     }
@@ -256,14 +258,14 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                         catch (OperationCanceledException)
                         {
                             // Send timeout or cancellation
-                            Logger.Log("SendLoopAsync: Send timeout");
+                            Logger.LogWarning("SendLoopAsync: Send timeout");
                             Interlocked.Increment(ref _consecutiveErrors);
                             if (item.Pooled && item.Buffer != null)
                                 ArrayPool<byte>.Shared.Return(item.Buffer);
 
                             if (_consecutiveErrors >= MaxConsecutiveErrors)
                             {
-                                Logger.Log(
+                                Logger.Error(
                                     "SendLoopAsync: Too many consecutive errors, triggering disconnect"
                                 );
                                 _ = HandleConnectionLostAsync("Too many send failures");
@@ -274,14 +276,14 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                         {
                             // If send fails, log but keep loop running (unless cancelled)
                             // We might just be reconnecting or temporary glitch
-                            Logger.Log($"SendLoopAsync: Send failed - {ex.Message}");
+                            Logger.LogWarning($"SendLoopAsync: Send failed - {ex.Message}");
                             Interlocked.Increment(ref _consecutiveErrors);
                             if (item.Pooled && item.Buffer != null)
                                 ArrayPool<byte>.Shared.Return(item.Buffer);
 
                             if (_consecutiveErrors >= MaxConsecutiveErrors)
                             {
-                                Logger.Log(
+                                Logger.Error(
                                     "SendLoopAsync: Too many consecutive errors, triggering disconnect"
                                 );
                                 _ = HandleConnectionLostAsync("Too many send failures");
@@ -304,7 +306,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"SendLoopAsync error: {ex.Message}");
+            Logger.LogWarning($"SendLoopAsync error: {ex.Message}");
         }
     }
 
@@ -323,7 +325,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                 var timeSinceLastReceive = DateTime.UtcNow - _lastReceiveTime;
                 if (timeSinceLastReceive > _heartbeatTimeout)
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Heartbeat: No data received for {timeSinceLastReceive.TotalSeconds:F1}s, connection may be stale"
                     );
                     await HandleConnectionLostAsync("Connection timeout - no data received");
@@ -344,7 +346,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                     )
                 )
                 {
-                    Logger.Log("Heartbeat: Ping could not be queued");
+                    Logger.LogWarning("Heartbeat: Ping could not be queued");
                 }
             }
         }
@@ -354,13 +356,13 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"HeartbeatLoop error: {ex.Message}");
+            Logger.LogWarning($"HeartbeatLoop error: {ex.Message}");
         }
     }
 
     private async Task HandleConnectionLostAsync(string reason)
     {
-        Logger.Log($"RealtimeTranscriber: Connection lost - {reason}");
+        Logger.Error($"RealtimeTranscriber: Connection lost - {reason}");
 
         try
         {
@@ -368,7 +370,9 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"RealtimeTranscriber: OnConnectionLost handler error - {ex.Message}");
+            Logger.LogWarning(
+                $"RealtimeTranscriber: OnConnectionLost handler error - {ex.Message}"
+            );
         }
 
         await CleanupWebSocketAsync();
@@ -381,7 +385,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
 
         if (_ws?.State != WebSocketState.Open)
         {
-            Logger.Log("RealtimeTranscriber: Cannot send stop - not connected");
+            Logger.LogWarning("RealtimeTranscriber: Cannot send stop - not connected");
             return;
         }
 
@@ -408,7 +412,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"RealtimeTranscriber: StopAsync failed - {ex.Message}");
+            Logger.LogWarning($"RealtimeTranscriber: StopAsync failed - {ex.Message}");
         }
     }
 
@@ -435,14 +439,14 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                 }
                 catch (OperationCanceledException)
                 {
-                    Logger.Log("RealtimeTranscriber: Close timeout, aborting");
+                    Logger.LogWarning("RealtimeTranscriber: Close timeout, aborting");
                     _ws.Abort();
                 }
             }
         }
         catch (Exception ex)
         {
-            Logger.Log($"RealtimeTranscriber: DisconnectAsync error - {ex.Message}");
+            Logger.LogWarning($"RealtimeTranscriber: DisconnectAsync error - {ex.Message}");
         }
         finally
         {
@@ -482,13 +486,13 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                         break;
 
                     // Receive timeout
-                    Logger.Log("RealtimeTranscriber: Receive timeout");
+                    Logger.LogWarning("RealtimeTranscriber: Receive timeout");
                     await HandleConnectionLostAsync("Receive timeout");
                     break;
                 }
                 catch (WebSocketException ex)
                 {
-                    Logger.Log($"RealtimeTranscriber: WebSocket receive error - {ex.Message}");
+                    Logger.Error($"RealtimeTranscriber: WebSocket receive error - {ex.Message}");
                     OnError?.Invoke($"Connection error: {ex.Message}");
                     break;
                 }
@@ -514,7 +518,9 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
                         }
                         catch (JsonException ex)
                         {
-                            Logger.Log($"RealtimeTranscriber: JSON parse error - {ex.Message}");
+                            Logger.LogWarning(
+                                $"RealtimeTranscriber: JSON parse error - {ex.Message}"
+                            );
                         }
                     }
                 }
@@ -533,7 +539,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"RealtimeTranscriber: ReceiveLoop error - {ex.Message}");
+            Logger.LogWarning($"RealtimeTranscriber: ReceiveLoop error - {ex.Message}");
         }
         finally
         {
@@ -557,7 +563,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
 
         if (!string.IsNullOrEmpty(msg.Error))
         {
-            Logger.Log(
+            Logger.Error(
                 $"RealtimeTranscriber: Server error (len={msg.Error.Length}, sha256={Hashing.Sha256Hex(msg.Error)})"
             );
             OnError?.Invoke(
@@ -624,7 +630,7 @@ public sealed class RealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"RealtimeTranscriber: Cleanup error - {ex.Message}");
+            Logger.LogWarning($"RealtimeTranscriber: Cleanup error - {ex.Message}");
         }
     }
 

@@ -64,7 +64,8 @@ public class TranscriptionResultSinkTests
         Mock<IClipboardService> clipboard,
         RecordingTextTyper textTyper,
         string? enhancedText = null,
-        Action<CancellationToken>? captureToken = null
+        Action<CancellationToken>? captureToken = null,
+        Func<IntPtr>? getForegroundWindow = null
     )
     {
         clipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
@@ -88,7 +89,8 @@ public class TranscriptionResultSinkTests
             refinerFactory.Object,
             new ClipboardHelper(clipboard.Object),
             clipboard.Object,
-            textTyper
+            textTyper,
+            getForegroundWindow
         );
     }
 
@@ -323,6 +325,63 @@ public class TranscriptionResultSinkTests
         );
 
         history.Verify(h => h.Append("raw", "raw improved", "test-model"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TargetWindowChanged_LeavesTextOnClipboardWithoutPaste()
+    {
+        var history = new Mock<IHistoryService>();
+        var clipboard = new Mock<IClipboardService>();
+        var typer = new RecordingTextTyper(clipboard.Object);
+        var sink = CreateSink(
+            history,
+            clipboard,
+            typer,
+            getForegroundWindow: () => new IntPtr(0x99)
+        );
+
+        await sink.ProcessAsync(
+            new TranscriptionResultRequest(
+                "raw",
+                CreateConfig(autoPaste: true),
+                123,
+                TranscriptionDeliveryPolicy.DeliverFinalText,
+                TargetWindow: new IntPtr(0x11)
+            )
+        );
+
+        // Guard triggered: text is preserved on the clipboard, but no paste fires.
+        clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
+        clipboard.Verify(c => c.PasteAsync(), Times.Never);
+        history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TargetWindowUnchanged_PastesNormally()
+    {
+        var history = new Mock<IHistoryService>();
+        var clipboard = new Mock<IClipboardService>();
+        var typer = new RecordingTextTyper(clipboard.Object);
+        var sink = CreateSink(
+            history,
+            clipboard,
+            typer,
+            getForegroundWindow: () => new IntPtr(0x11)
+        );
+
+        await sink.ProcessAsync(
+            new TranscriptionResultRequest(
+                "raw",
+                CreateConfig(autoPaste: true),
+                123,
+                TranscriptionDeliveryPolicy.DeliverFinalText,
+                TargetWindow: new IntPtr(0x11)
+            )
+        );
+
+        clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
+        clipboard.Verify(c => c.PasteAsync(), Times.Once);
+        history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
     }
 
     [Fact]

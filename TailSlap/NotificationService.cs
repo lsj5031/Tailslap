@@ -56,11 +56,21 @@ public static class NotificationService
 
     public static void ShowWarning(string message, string title = "TailSlap")
     {
+        try
+        {
+            Logger.LogWarning(message);
+        }
+        catch { }
         EnqueueNotification(title, message, NotificationType.Warning, 4000);
     }
 
     public static void ShowError(string message, string title = "TailSlap")
     {
+        try
+        {
+            Logger.Error(message);
+        }
+        catch { }
         EnqueueNotification(title, message, NotificationType.Error, 5000);
     }
 
@@ -103,7 +113,9 @@ public static class NotificationService
             {
                 try
                 {
-                    Logger.Log($"Notification suppressed without UI context [{type}]: {message}");
+                    Logger.LogWarning(
+                        $"Notification suppressed without UI context [{type}]: {message}"
+                    );
                 }
                 catch { }
                 return;
@@ -175,7 +187,7 @@ public static class NotificationService
         {
             try
             {
-                Logger.Log($"NotificationService error: {ex.Message}");
+                Logger.LogWarning($"NotificationService error: {ex.Message}");
             }
             catch { }
             lock (_lockObject)
@@ -217,7 +229,7 @@ public static class NotificationService
             {
                 try
                 {
-                    Logger.Log($"Balloon tip failed: {ex.Message}");
+                    Logger.LogWarning($"Balloon tip failed: {ex.Message}");
                 }
                 catch { }
                 // Fallback to message box if balloon tip fails
@@ -235,7 +247,7 @@ public static class NotificationService
         {
             try
             {
-                Logger.Log($"Failed to show notification: {ex.Message}");
+                Logger.LogWarning($"Failed to show notification: {ex.Message}");
             }
             catch { }
             try

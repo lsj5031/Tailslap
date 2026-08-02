@@ -161,8 +161,11 @@ public class TranscriptionControllerTests
     }
 
     [Fact]
-    public async Task StreamingTranscription_TypesAccumulatedChunks()
+    public async Task StreamingTranscription_AccumulatesChunks_WithoutPerChunkTyping()
     {
+        // Regression: chunks used to trigger their own paste/SendKeys as they arrived
+        // ("keys keep pressing / words pasted one by one"). Now chunks are only
+        // accumulated; the single final delivery happens in the result sink.
         var clipboardService = new Mock<IClipboardService>();
         var textTyper = new TestableStreamingTextTyper(clipboardService.Object);
         var controller = CreateController(textTyper, clipboardService);
@@ -184,7 +187,7 @@ public class TranscriptionControllerTests
                 Times.Once
             );
             Assert.Equal("hello world", result);
-            Assert.Equal(new[] { "hello ", "hello world" }, textTyper.TypedTexts);
+            Assert.Empty(textTyper.TypedTexts);
         }
         finally
         {
@@ -352,7 +355,7 @@ public class TranscriptionControllerTests
 
         var task =
             (Task<string>)
-                method!.Invoke(controller, new object[] { transcriber, audioFilePath, cfg })!;
+                method!.Invoke(controller, new object[] { transcriber, audioFilePath, cfg, 1500 })!;
         return await task;
     }
 }

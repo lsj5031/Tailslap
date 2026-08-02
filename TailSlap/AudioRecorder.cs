@@ -158,7 +158,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Logger.Log(
+            Logger.LogWarning(
                 $"AudioRecorder: WebRTC VAD initialization failed, falling back to RMS - {ex.Message}"
             );
             _webRtcVad = null;
@@ -242,7 +242,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             );
             if (result != 0)
             {
-                Logger.Log($"AudioRecorder: waveInOpen FAILED with error {result}");
+                Logger.Error($"AudioRecorder: waveInOpen FAILED with error {result}");
                 _hWaveIn?.SetHandleAsInvalid();
                 throw new InvalidOperationException(
                     $"Failed to open waveIn device (deviceId={deviceId}, numDevices={numDevices}): error {result}"
@@ -297,7 +297,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             result = waveInStart(_hWaveIn);
             if (result != 0)
             {
-                Logger.Log($"AudioRecorder: waveInStart FAILED with error {result}");
+                Logger.Error($"AudioRecorder: waveInStart FAILED with error {result}");
                 throw new InvalidOperationException($"Failed to start recording: error {result}");
             }
             Logger.Log("AudioRecorder: Recording started successfully");
@@ -380,7 +380,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                 int stopResult = waveInStop(_hWaveIn);
                 if (stopResult != 0)
                 {
-                    Logger.Log($"AudioRecorder: waveInStop returned error {stopResult}");
+                    Logger.LogWarning($"AudioRecorder: waveInStop returned error {stopResult}");
                 }
             }
 
@@ -392,7 +392,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
             if (!buffersReturned)
             {
-                Logger.Log(
+                Logger.LogWarning(
                     "AudioRecorder: Buffers still queued after waveInStop; calling waveInReset for final drain"
                 );
                 ResetWaveIn("AudioRecorder");
@@ -427,7 +427,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Logger.Log(
+            Logger.Error(
                 $"AudioRecorder: EXCEPTION during recording: {ex.GetType().Name}: {ex.Message}"
             );
             throw;
@@ -463,7 +463,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         bool allReturned = IsAllBuffersReturned();
         if (!allReturned && logOnTimeout)
         {
-            Logger.Log(
+            Logger.LogWarning(
                 $"AudioRecorder: Timed out waiting for buffers to return after {timeoutMs}ms"
             );
         }
@@ -569,7 +569,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                             );
                             if (addResult != 0)
                             {
-                                Logger.Log(
+                                Logger.LogWarning(
                                     $"AudioRecorder: waveInAddBuffer FAILED for buffer {i}, error={addResult}"
                                 );
                             }
@@ -691,13 +691,13 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                             Marshal.SizeOf(typeof(WAVEHDR))
                         );
                         if (unprepResult != 0)
-                            Logger.Log(
+                            Logger.LogWarning(
                                 $"AudioRecorder.StopAsync: waveInUnprepareHeader[{i}] returned error {unprepResult}"
                             );
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"AudioRecorder.StopAsync: Exception unpreparing header {i}: {ex.Message}"
                         );
                     }
@@ -720,7 +720,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"AudioRecorder.StopAsync: Exception freeing buffer handle {i}: {ex.Message}"
                     );
                 }
@@ -749,7 +749,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
         if (resetResult != 0)
         {
-            Logger.Log($"{caller}: waveInReset returned error {resetResult}");
+            Logger.LogWarning($"{caller}: waveInReset returned error {resetResult}");
         }
 
         return resetResult;
@@ -845,7 +845,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         );
         if (result != 0)
         {
-            Logger.Log($"{caller}: waveInOpen FAILED with error {result}");
+            Logger.Error($"{caller}: waveInOpen FAILED with error {result}");
             _hWaveIn?.SetHandleAsInvalid();
             throw new InvalidOperationException(
                 $"Failed to open waveIn device (deviceId={deviceId}, numDevices={numDevices}): error {result}"
@@ -902,7 +902,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         result = waveInStart(_hWaveIn);
         if (result != 0)
         {
-            Logger.Log($"{caller}: waveInStart FAILED with error {result}");
+            Logger.Error($"{caller}: waveInStart FAILED with error {result}");
             throw new InvalidOperationException($"Failed to start recording: error {result}");
         }
 
@@ -918,12 +918,12 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                 int stopResult = waveInStop(_hWaveIn);
                 if (stopResult != 0)
                 {
-                    Logger.Log($"{caller}: waveInStop returned error {stopResult}");
+                    Logger.LogWarning($"{caller}: waveInStop returned error {stopResult}");
                 }
             }
             catch (Exception ex)
             {
-                Logger.Log($"{caller}: Exception stopping waveIn device: {ex.Message}");
+                Logger.LogWarning($"{caller}: Exception stopping waveIn device: {ex.Message}");
             }
 
             try
@@ -935,7 +935,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                Logger.Log($"{caller}: Exception resetting waveIn device: {ex.Message}");
+                Logger.LogWarning($"{caller}: Exception resetting waveIn device: {ex.Message}");
             }
 
             for (int i = 0; i < BUFFER_COUNT; i++)
@@ -951,14 +951,16 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                         );
                         if (unprepResult != 0)
                         {
-                            Logger.Log(
+                            Logger.LogWarning(
                                 $"{caller}: waveInUnprepareHeader[{i}] returned error {unprepResult}"
                             );
                         }
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log($"{caller}: Exception unpreparing header {i}: {ex.Message}");
+                        Logger.LogWarning(
+                            $"{caller}: Exception unpreparing header {i}: {ex.Message}"
+                        );
                     }
                 }
             }
@@ -978,7 +980,9 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log($"{caller}: Exception freeing buffer handle {i}: {ex.Message}");
+                    Logger.LogWarning(
+                        $"{caller}: Exception freeing buffer handle {i}: {ex.Message}"
+                    );
                 }
             }
 
@@ -989,7 +993,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
     private void ReopenStreamingCaptureDevice()
     {
-        Logger.Log("AudioRecorder.StreamingRecovery: Reopening capture device");
+        Logger.LogWarning("AudioRecorder.StreamingRecovery: Reopening capture device");
         ReleaseStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen");
         OpenStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen");
         _lastBufferTime = DateTime.Now;
@@ -1067,7 +1071,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Logger.Log(
+            Logger.Error(
                 $"AudioRecorder.StartStreamingAsync: EXCEPTION - {ex.GetType().Name}: {ex.Message}"
             );
             throw;
@@ -1285,7 +1289,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                         );
                         if (addResult != 0)
                         {
-                            Logger.Log(
+                            Logger.LogWarning(
                                 $"VAD[ERROR]: waveInAddBuffer failed for buffer {i}, error={addResult}, flags=0x{_waveHeaders[i].dwFlags:X}"
                             );
                         }
@@ -1294,7 +1298,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             }
             catch (Exception ex)
             {
-                Logger.Log($"VAD[ERROR]: Exception processing buffer {i}: {ex.Message}");
+                Logger.LogWarning($"VAD[ERROR]: Exception processing buffer {i}: {ex.Message}");
             }
         }
 
@@ -1306,7 +1310,9 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             int warningThresholdMs = Math.Max(500, expectedBufferCadenceMs * 2);
             if (gap > warningThresholdMs)
             {
-                Logger.Log($"VAD[WARN]: No buffers ready! Gap since last buffer: {gap:F0}ms");
+                Logger.LogWarning(
+                    $"VAD[WARN]: No buffers ready! Gap since last buffer: {gap:F0}ms"
+                );
 
                 // Recover quickly in realtime mode. With 200ms capture buffers,
                 // waiting multiple seconds before reopening loses too much speech.
@@ -1340,7 +1346,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
 
         _lastStreamingRecoveryAttempt = DateTime.Now;
-        Logger.Log(
+        Logger.LogWarning(
             $"AudioRecorder: Attempting streaming buffer recovery after {gapMs:F0}ms without buffers"
         );
 
@@ -1349,7 +1355,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             int stopResult = waveInStop(_hWaveIn);
             if (stopResult != 0)
             {
-                Logger.Log(
+                Logger.LogWarning(
                     $"AudioRecorder.StreamingRecovery: waveInStop returned error {stopResult}"
                 );
             }
@@ -1367,7 +1373,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
             if (!buffersReturned)
             {
-                Logger.Log(
+                Logger.LogWarning(
                     "AudioRecorder.StreamingRecovery: Timed out waiting for buffers; reopening capture device"
                 );
                 ReopenStreamingCaptureDevice();
@@ -1440,8 +1446,10 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Logger.Log($"AudioRecorder.StreamingRecovery: Exception - {ex.Message}");
-            Logger.Log("AudioRecorder.StreamingRecovery: Falling back to capture device reopen");
+            Logger.LogWarning($"AudioRecorder.StreamingRecovery: Exception - {ex.Message}");
+            Logger.LogWarning(
+                "AudioRecorder.StreamingRecovery: Falling back to capture device reopen"
+            );
 
             try
             {
@@ -1449,7 +1457,9 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             }
             catch (Exception reopenEx)
             {
-                Logger.Log($"AudioRecorder.StreamingRecovery: Reopen failed - {reopenEx.Message}");
+                Logger.Error(
+                    $"AudioRecorder.StreamingRecovery: Reopen failed - {reopenEx.Message}"
+                );
                 throw new InvalidOperationException(
                     "Streaming recovery failed after attempting to reopen the audio device.",
                     reopenEx

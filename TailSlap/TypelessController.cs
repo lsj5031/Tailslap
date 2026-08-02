@@ -39,6 +39,8 @@ public sealed class TypelessController : ITypelessController
     private Task? _recordingTask;
     private RecordingStats? _recordingStats;
     private AudioRecorder? _currentRecorder;
+    private IntPtr _targetWindow;
+    private readonly Func<IntPtr> _getForegroundWindow;
 
     public bool IsRecording
     {
@@ -77,7 +79,15 @@ public sealed class TypelessController : ITypelessController
         TextTyper textTyper,
         ITranscriptionResultSink resultSink
     )
-        : this(config, remoteTranscriberFactory, audioRecorderFactory, textTyper, resultSink, null!)
+        : this(
+            config,
+            remoteTranscriberFactory,
+            audioRecorderFactory,
+            textTyper,
+            resultSink,
+            null!,
+            null
+        )
     {
         _recordFunc = DefaultRecordAsync;
     }
@@ -91,7 +101,8 @@ public sealed class TypelessController : ITypelessController
         IAudioRecorderFactory audioRecorderFactory,
         TextTyper textTyper,
         ITranscriptionResultSink resultSink,
-        Func<AppConfig, string, CancellationToken, Task<RecordingStats>> recordFunc
+        Func<AppConfig, string, CancellationToken, Task<RecordingStats>> recordFunc,
+        Func<IntPtr>? getForegroundWindow = null
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -103,6 +114,7 @@ public sealed class TypelessController : ITypelessController
         _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
         _resultSink = resultSink ?? throw new ArgumentNullException(nameof(resultSink));
         _recordFunc = recordFunc; // null for production; set after by public constructor
+        _getForegroundWindow = getForegroundWindow ?? (() => NativeMethods.GetForegroundWindow());
     }
 
     /// <summary>
@@ -193,10 +205,18 @@ public sealed class TypelessController : ITypelessController
             return Task.CompletedTask;
         }
 
+        // Capture the target before the overlay/recorder can affect focus. The
+        // final delivery uses this handle to avoid pasting into another app.
+        IntPtr targetWindow = _getForegroundWindow();
+
         // Start recording
         lock (_stateLock)
         {
+            if (_state != ControllerState.Idle)
+                return Task.CompletedTask;
+
             _state = ControllerState.Recording;
+            _targetWindow = targetWindow;
         }
 
         // Reset the TextTyper baseline for this new transcription session
@@ -225,15 +245,19 @@ public sealed class TypelessController : ITypelessController
 
     public async Task HandleKeyUpAsync()
     {
+        IntPtr targetWindow;
         lock (_stateLock)
         {
             if (_state != ControllerState.Recording)
             {
+                // Idle: key-up without a recording (e.g. a stray Alt tap) — no-op.
+                // Processing: a key-up is not relevant.
                 return;
             }
 
             // Atomically claim this recording so concurrent key-up callbacks cannot
             // stop and transcribe the same session more than once.
+            targetWindow = _targetWindow;
             _state = ControllerState.Processing;
         }
 
@@ -288,20 +312,35 @@ public sealed class TypelessController : ITypelessController
 
         try
         {
-            await TranscribeAsync(tempWavPath, stats.DurationMs, cfg: _config.CreateValidatedCopy())
+            await TranscribeAsync(
+                    tempWavPath,
+                    stats.DurationMs,
+                    targetWindow,
+                    cfg: _config.CreateValidatedCopy()
+                )
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             try
             {
-                Logger.Log(
+                Logger.Error(
                     $"TypelessController: Transcription failed: {ex.GetType().Name}: {ex.Message}"
                 );
             }
             catch { }
 
             NotificationService.ShowError($"Transcription failed: {ex.Message}");
+
+            try
+            {
+                _resultSink.RecordFailure(
+                    partialText: null,
+                    durationMs: stats?.DurationMs ?? 0,
+                    errorSummary: ex.Message
+                );
+            }
+            catch { }
         }
         finally
         {
@@ -342,7 +381,7 @@ public sealed class TypelessController : ITypelessController
         {
             try
             {
-                Logger.Log(
+                Logger.Error(
                     $"TypelessController: Recording failed: {ex.GetType().Name}: {ex.Message}"
                 );
             }
@@ -358,13 +397,18 @@ public sealed class TypelessController : ITypelessController
         }
     }
 
-    private async Task TranscribeAsync(string wavPath, int durationMs, AppConfig cfg)
+    private async Task TranscribeAsync(
+        string wavPath,
+        int durationMs,
+        IntPtr targetWindow,
+        AppConfig cfg
+    )
     {
         if (!File.Exists(wavPath))
         {
             try
             {
-                Logger.Log("TypelessController: WAV file not found, skipping transcription");
+                Logger.LogWarning("TypelessController: WAV file not found, skipping transcription");
             }
             catch { }
 
@@ -383,7 +427,23 @@ public sealed class TypelessController : ITypelessController
                 if (string.IsNullOrEmpty(chunk))
                     continue;
 
-                fullText.Append(chunk);
+                // Merge instead of blindly appending: ASR servers often resend an
+                // identical chunk or send a final full-transcript snapshot, both of
+                // which would otherwise duplicate the delivered text ("pasted twice").
+                string previous = fullText.ToString();
+                string merged = TextTyper.MergeStreamChunk(previous, chunk);
+                if (merged.Length != previous.Length + chunk.Length)
+                {
+                    try
+                    {
+                        Logger.Log(
+                            $"TypelessController: SSE chunk deduplicated (resent/snapshot), grew by {merged.Length - previous.Length} chars instead of {chunk.Length}"
+                        );
+                    }
+                    catch { }
+                }
+                fullText.Clear();
+                fullText.Append(merged);
 
                 try
                 {
@@ -393,34 +453,9 @@ public sealed class TypelessController : ITypelessController
                 }
                 catch { }
 
-                // Type the accumulated text into the focused application
-                try
-                {
-                    var typeResult = await _textTyper
-                        .TypeAsync(fullText.ToString(), autoPaste: cfg.Transcriber.AutoPaste)
-                        .ConfigureAwait(false);
-
-                    if (!typeResult.DeliverySuccess)
-                    {
-                        try
-                        {
-                            Logger.Log(
-                                $"TypelessController: TextTyper delivery failed for SSE chunk (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
-                            );
-                        }
-                        catch { }
-                    }
-                }
-                catch (Exception typeEx)
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"TypelessController: Failed to type SSE chunk: {typeEx.Message}"
-                        );
-                    }
-                    catch { }
-                }
+                // No per-chunk delivery: every chunk used to trigger its own paste/SendKeys,
+                // which pressed keys in the target app repeatedly and pasted word-by-word.
+                // Instead we accumulate the full transcript and deliver ONCE below.
             }
         }
         catch (Exception ex)
@@ -430,7 +465,7 @@ public sealed class TypelessController : ITypelessController
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"TypelessController: Partial SSE results preserved ({fullText.Length} chars) after error: {ex.Message}"
                     );
                 }
@@ -462,7 +497,9 @@ public sealed class TypelessController : ITypelessController
                     transcriptionText,
                     cfg,
                     durationMs,
-                    TranscriptionDeliveryPolicy.DeliverOnlyIfEnhanced
+                    TranscriptionDeliveryPolicy.DeliverFinalText,
+                    ResultsAlreadyStreamed: false,
+                    TargetWindow: targetWindow
                 )
             )
             .ConfigureAwait(false);
@@ -497,6 +534,7 @@ public sealed class TypelessController : ITypelessController
         lock (_stateLock)
         {
             _state = ControllerState.Idle;
+            _targetWindow = IntPtr.Zero;
         }
 
         try

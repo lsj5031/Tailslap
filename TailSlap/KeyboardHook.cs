@@ -133,7 +133,7 @@ public sealed class KeyboardHook : IDisposable
                 + "The transcriber hotkey feature will be disabled.";
             try
             {
-                Logger.Log($"KeyboardHook.Install failed: {message}");
+                Logger.Error($"KeyboardHook.Install failed: {message}");
             }
             catch { }
 
@@ -224,13 +224,22 @@ public sealed class KeyboardHook : IDisposable
 
         try
         {
-            Logger.Log("KeyboardHook force stop triggered (max duration or external)");
+            Logger.LogWarning("KeyboardHook force stop triggered (max recording duration reached)");
         }
         catch { }
 
         StopMaxDurationTimer();
         if (fireKeyUp)
+        {
+            try
+            {
+                NotificationService.ShowWarning(
+                    "Recording stopped after reaching the maximum duration. The hotkey release was not detected — press and release the hotkey again."
+                );
+            }
+            catch { }
             OnKeyUp?.Invoke();
+        }
     }
 
     public void Dispose()
@@ -485,6 +494,17 @@ public sealed class KeyboardHook : IDisposable
         return vk == _config.Key && modifiers == _config.Modifiers;
     }
 
+    /// <summary>
+    /// Returns true for Win key-down messages when the configured hotkey uses Win.
+    /// Swallowing only key-down preserves normal key-up tracking and async state.
+    /// </summary>
+    internal bool ShouldSuppressWinKey(int message, uint vk)
+    {
+        return (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
+            && (vk == VK_LWIN || vk == VK_RWIN)
+            && (_config.Modifiers & MOD_WIN) != 0;
+    }
+
     #endregion
 
     #region Private Implementation
@@ -504,8 +524,13 @@ public sealed class KeyboardHook : IDisposable
                 if (vk == VK_RMENU)
                     _rightAltHeld = true;
 
-                uint currentModifiers = GetCurrentModifiers();
+                uint currentModifiers = GetCurrentModifiers() | GetModifierFlag(vk);
                 ProcessKeyDown(currentModifiers, vk);
+
+                // A configured Win hotkey must not open the Start menu and steal
+                // focus from the app that will receive the transcript.
+                if (ShouldSuppressWinKey(message, vk))
+                    return new IntPtr(1);
             }
             else if (message == WM_KEYUP || message == WM_SYSKEYUP)
             {
@@ -562,6 +587,18 @@ public sealed class KeyboardHook : IDisposable
         }
 
         return modifiers;
+    }
+
+    private static uint GetModifierFlag(uint vk)
+    {
+        return vk switch
+        {
+            VK_LCONTROL or VK_RCONTROL => MOD_CONTROL,
+            VK_LMENU or VK_RMENU => MOD_ALT,
+            VK_LSHIFT or VK_RSHIFT => MOD_SHIFT,
+            VK_LWIN or VK_RWIN => MOD_WIN,
+            _ => 0,
+        };
     }
 
     private static bool IsModifierKey(uint vk)

@@ -238,6 +238,132 @@ public sealed class RemoteTranscriberTests
         Assert.Equal(0, requests);
     }
 
+    [Fact]
+    public async Task TranscribeStreamingAsync_JsonDataChunks_ExtractsTextInsteadOfRawJson()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse(
+                "data: {\"text\":\"hello\"}\n\ndata: {\"text\":\" world\"}\n\ndata: [DONE]\n\n"
+            )
+        );
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "hello", " world" }, chunks);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_OpenAiDeltaChunks_ExtractsContent()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"
+            )
+        );
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "hi" }, chunks);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_UnrecognizedJsonChunk_IsNotYielded()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse("data: {\"foo\":\"bar\"}\n\ndata: [DONE]\n\n")
+        );
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Empty(chunks);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_RawNdjsonLines_ExtractsText()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ => new HttpResponseMessage(
+            HttpStatusCode.OK
+        )
+        {
+            Content = new StringContent(
+                "{\"text\":\"line one\"}\n{\"text\":\"line two\"}\n",
+                Encoding.UTF8,
+                "application/x-ndjson"
+            ),
+        });
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "line one", "line two" }, chunks);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_NonStreamingSseBody_ExtractsText()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ => new HttpResponseMessage(
+            HttpStatusCode.OK
+        )
+        {
+            Content = new StringContent(
+                "data: {\"text\":\"fallback\"}\n\ndata: [DONE]\n\n",
+                Encoding.UTF8,
+                "application/json"
+            ),
+        });
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "fallback" }, chunks);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_RetriesConnectionFailure_ThenSucceeds()
+    {
+        int calls = 0;
+        using var fixture = new RemoteTranscriberFixture(_ =>
+        {
+            calls++;
+            if (calls == 1)
+                throw new HttpRequestException("connection refused");
+            return SseResponse("data: hello\n\ndata: [DONE]\n\n");
+        });
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "hello" }, chunks);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_HttpError_DoesNotRetry()
+    {
+        int calls = 0;
+        using var fixture = new RemoteTranscriberFixture(_ =>
+        {
+            calls++;
+            return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        });
+
+        var error = await Assert.ThrowsAsync<TranscriberException>(async () =>
+            await CollectAsync(fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath))
+        );
+
+        Assert.Equal(TranscriberErrorType.HttpError, error.ErrorType);
+        Assert.Equal(1, calls);
+    }
+
     private static async Task<List<string>> CollectAsync(IAsyncEnumerable<string> source)
     {
         var results = new List<string>();

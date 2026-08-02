@@ -28,7 +28,7 @@ internal static class Program
         {
             try
             {
-                Logger.Log("UI Exception: " + e.Exception);
+                Logger.Error("UI Exception", e.Exception);
             }
             catch { }
         };
@@ -36,7 +36,7 @@ internal static class Program
         {
             try
             {
-                Logger.Log("Non-UI Exception: " + e.ExceptionObject);
+                Logger.Error("Non-UI Exception", e.ExceptionObject as Exception);
             }
             catch { }
         };

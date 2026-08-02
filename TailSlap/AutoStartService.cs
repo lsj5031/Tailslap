@@ -17,7 +17,7 @@ public static class AutoStartService
         {
             try
             {
-                Logger.Log($"AutoStart IsEnabled failed: {ex.GetType().Name}: {ex.Message}");
+                Logger.LogWarning($"AutoStart IsEnabled failed: {ex.GetType().Name}: {ex.Message}");
             }
             catch { }
             try
@@ -65,7 +65,9 @@ public static class AutoStartService
                 {
                     try
                     {
-                        Logger.Log("AutoStart Toggle failed: current process path is unavailable.");
+                        Logger.LogWarning(
+                            "AutoStart Toggle failed: current process path is unavailable."
+                        );
                     }
                     catch { }
                     try
@@ -89,7 +91,7 @@ public static class AutoStartService
         {
             try
             {
-                Logger.Log($"AutoStart Toggle failed: {ex.GetType().Name}: {ex.Message}");
+                Logger.Error($"AutoStart Toggle failed: {ex.GetType().Name}: {ex.Message}");
             }
             catch { }
             try

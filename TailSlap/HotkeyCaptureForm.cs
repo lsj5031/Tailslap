@@ -38,7 +38,7 @@ public sealed class HotkeyCaptureForm : Form
         MaximizeBox = true;
         MinimizeBox = true;
         Width = DpiHelper.Scale(560);
-        Height = DpiHelper.Scale(340);
+        Height = DpiHelper.Scale(360);
         KeyPreview = true;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScroll = true;
@@ -47,6 +47,8 @@ public sealed class HotkeyCaptureForm : Form
         SizeGripStyle = SizeGripStyle.Show;
         TopMost = true;
         Icon = MainForm.LoadMainIcon();
+        BackColor = UiTheme.Ground;
+        Font = UiTheme.BodyFont;
 
         var layout = new TableLayoutPanel
         {
@@ -86,8 +88,9 @@ public sealed class HotkeyCaptureForm : Form
             ReadOnly = true,
             Dock = DockStyle.Fill,
             TextAlign = HorizontalAlignment.Center,
-            Font = new Font("Segoe UI", DpiHelper.ScaleFont(14), FontStyle.Bold),
-            BackColor = SystemColors.Window,
+            Font = UiTheme.MonoBoldFont,
+            BackColor = UiTheme.Panel,
+            BorderStyle = BorderStyle.FixedSingle,
             Text = "Press a key combination...",
             Multiline = false,
         };
@@ -100,7 +103,7 @@ public sealed class HotkeyCaptureForm : Form
             MaximumSize = new Size(DpiHelper.Scale(720), 0),
             Dock = DockStyle.Fill,
             UseCompatibleTextRendering = true,
-            ForeColor = SystemColors.GrayText,
+            ForeColor = UiTheme.Faint,
             Margin = DpiHelper.Scale(new Padding(0, 4, 0, 6)),
         };
         layout.Controls.Add(_hint, 0, 2);
@@ -112,7 +115,7 @@ public sealed class HotkeyCaptureForm : Form
         {
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
-            Padding = DpiHelper.Scale(new Padding(10)),
+            Padding = DpiHelper.Scale(new Padding(0, 6, 0, 0)),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
@@ -139,9 +142,12 @@ public sealed class HotkeyCaptureForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         _clear.Click += (_, __) => ClearCapture();
+        UiTheme.StyleButton(_ok, UiTheme.ButtonKind.Primary);
+        UiTheme.StyleButton(_cancel, UiTheme.ButtonKind.Secondary);
+        UiTheme.StyleButton(_clear, UiTheme.ButtonKind.Secondary);
+        buttons.Controls.Add(_clear);
         buttons.Controls.Add(_cancel);
         buttons.Controls.Add(_ok);
-        buttons.Controls.Add(_clear);
 
         layout.Controls.Add(buttons, 0, 4);
         Controls.Add(layout);
@@ -159,9 +165,9 @@ public sealed class HotkeyCaptureForm : Form
         RightAltOnly = false;
         Display = string.Empty;
         _display.Text = "Press a key combination...";
-        _display.BackColor = SystemColors.Window;
+        _display.BackColor = UiTheme.Panel;
         _hint.Text = "Waiting for input...";
-        _hint.ForeColor = SystemColors.GrayText;
+        _hint.ForeColor = UiTheme.Faint;
         _ok.Enabled = false;
     }
 
@@ -269,9 +275,9 @@ public sealed class HotkeyCaptureForm : Form
 
     private void SetValidationState(bool isValid, string hint)
     {
-        _display.BackColor = isValid ? Color.LightGreen : Color.LightCoral;
+        _display.BackColor = isValid ? UiTheme.SuccessBack : UiTheme.ErrorBack;
         _hint.Text = isValid ? $"✓ {hint}" : $"⚠ {hint}";
-        _hint.ForeColor = isValid ? Color.Green : Color.Red;
+        _hint.ForeColor = isValid ? UiTheme.SuccessText : UiTheme.ErrorText;
         _ok.Enabled = isValid;
     }
 

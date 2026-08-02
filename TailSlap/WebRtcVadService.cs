@@ -94,7 +94,7 @@ public sealed class WebRtcVadService : IDisposable
             }
             catch (Exception ex)
             {
-                Logger.Log($"WebRtcVadService.HasSpeech: Error - {ex.Message}");
+                Logger.LogWarning($"WebRtcVadService.HasSpeech: Error - {ex.Message}");
                 return false;
             }
         }
@@ -133,7 +133,7 @@ public sealed class WebRtcVadService : IDisposable
             }
             catch (Exception ex)
             {
-                Logger.Log($"WebRtcVadService.AnalyzeDetailed: Error - {ex.Message}");
+                Logger.LogWarning($"WebRtcVadService.AnalyzeDetailed: Error - {ex.Message}");
                 return (false, 0, 0);
             }
         }

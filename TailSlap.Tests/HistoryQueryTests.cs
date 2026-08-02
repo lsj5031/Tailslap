@@ -37,7 +37,9 @@ public class HistoryQueryTests
                     new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
                     "llama",
                     "raw text",
-                    "polished text"
+                    "polished text",
+                    (string?)null,
+                    (string?)null
                 ),
             }
         );
@@ -53,10 +55,25 @@ public class HistoryQueryTests
     {
         var text = HistoryQuery.FormatTranscriptionExport(
             DateTime.UtcNow,
-            new[] { (DateTime.UtcNow, "spoken words", 1500) }
+            new[] { (DateTime.UtcNow, "spoken words", 1500, (string?)null, (string?)null) }
         );
 
         Assert.Contains("spoken words", text);
         Assert.Contains("durationMs=1500", text);
+    }
+
+    [Fact]
+    public void FormatTranscriptionExport_IncludesFailedStatusAndError()
+    {
+        var text = HistoryQuery.FormatTranscriptionExport(
+            DateTime.UtcNow,
+            new[]
+            {
+                (DateTime.UtcNow, "partial", 900, (string?)"failed", (string?)"connection refused"),
+            }
+        );
+
+        Assert.Contains("status=failed", text);
+        Assert.Contains("connection refused", text);
     }
 }

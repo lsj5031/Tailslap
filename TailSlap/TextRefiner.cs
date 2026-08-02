@@ -152,7 +152,7 @@ public sealed class TextRefiner : ITextRefiner
                     {
                         try
                         {
-                            Logger.Log("Retryable status; backing off 1s");
+                            Logger.LogWarning("Retryable status; backing off 1s");
                         }
                         catch { }
                         if (attempts > 0)
@@ -169,7 +169,7 @@ public sealed class TextRefiner : ITextRefiner
                         .ConfigureAwait(false);
                     var userFriendlyError = GetUserFriendlyError(resp.StatusCode, errorBody);
                     NotificationService.ShowError($"LLM request failed: {userFriendlyError}");
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"LLM error response: status={(int)resp.StatusCode}, len={errorBody.Length}, sha256={Hashing.Sha256Hex(errorBody)}"
                     );
                     throw new InvalidOperationException(
@@ -182,7 +182,7 @@ public sealed class TextRefiner : ITextRefiner
                 {
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"LLM output suspiciously short; retrying with recovery prompt. inputLen={(text ?? string.Empty).Length}, outputLen={result.Length}"
                         );
                     }
@@ -205,7 +205,7 @@ public sealed class TextRefiner : ITextRefiner
                 {
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"LLM output still suspiciously short after recovery. inputLen={(text ?? string.Empty).Length}, outputLen={result.Length}"
                         );
                     }
@@ -234,7 +234,7 @@ public sealed class TextRefiner : ITextRefiner
             {
                 try
                 {
-                    Logger.Log($"LLM exception: type={ex.GetType().Name}; retrying in 1s");
+                    Logger.LogWarning($"LLM exception: type={ex.GetType().Name}; retrying in 1s");
                 }
                 catch { }
                 DiagnosticsEventSource.Log.RefinementRetry(2 - attempts, ex.GetType().Name, 1000);

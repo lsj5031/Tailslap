@@ -16,30 +16,33 @@ public sealed class SettingsForm : Form
     }
 
     private const int HotkeyProbeId = 0x4A17;
+    private const int SettingsLabelColumnWidth = 150;
 
     private readonly AppConfig _cfg;
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly IRemoteTranscriberFactory _remoteTranscriberFactory;
 
-    private CheckBox _enabled;
-    private CheckBox _autoPaste;
-    private CheckBox _excludeFromClipboardHistory;
-    private CheckBox _clipboardFallback;
-    private TextBox _baseUrl;
-    private TextBox _model;
-    private TextBox _temperature;
-    private TextBox _maxTokens;
-    private TextBox _refinementPrompt;
+    // Fields assigned from Build* helpers; null! is the definite-assignment contract.
+    private CheckBox _enabled = null!;
+    private CheckBox _autoPaste = null!;
+    private CheckBox _excludeFromClipboardHistory = null!;
+    private CheckBox _clipboardFallback = null!;
+    private TextBox _baseUrl = null!;
+    private TextBox _model = null!;
+    private TextBox _temperature = null!;
+    private TextBox _maxTokens = null!;
+    private TextBox _refinementPrompt = null!;
     private ComboBox? _promptPresetDropdown;
-    private TextBox _apiKey;
-    private TextBox _referer;
-    private TextBox _xTitle;
-    private TextBox _llmHotkey;
-    private Button _resetButton;
-    private Button _testConnectionButton;
-    private Button _captureLlmHotkeyButton;
-    private Label _validationLabel;
-    private Label _llmTestResultLabel;
+    private TextBox _apiKey = null!;
+    private TextBox _referer = null!;
+    private TextBox _xTitle = null!;
+    private TextBox _llmHotkey = null!;
+    private Button _resetButton = null!;
+    private Button _testConnectionButton = null!;
+    private Button _captureLlmHotkeyButton = null!;
+    private Label _validationLabel = null!;
+    private Label _llmTestResultLabel = null!;
+    private HazardStrip _hazardStrip = null!;
 
     // Transcriber controls
     private CheckBox? _transcriberEnabled;
@@ -81,6 +84,72 @@ public sealed class SettingsForm : Form
     [DllImport("user32.dll")]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+    /// <summary>Compact in-grid builder for a two-column settings grid.</summary>
+    private sealed class GridBuilder
+    {
+        private readonly TableLayoutPanel _grid;
+        private int _row;
+
+        public GridBuilder(TableLayoutPanel grid)
+        {
+            _grid = grid;
+        }
+
+        public void Header(string text)
+        {
+            var tag = new Panel
+            {
+                BackColor = UiTheme.Orange,
+                Size = DpiHelper.Scale(new Size(8, 8)),
+                Margin = DpiHelper.Scale(new Padding(0, 12, 8, 0)),
+            };
+            var label = new Label
+            {
+                Text = UiTheme.Caps(text),
+                Font = UiTheme.CapsFont,
+                ForeColor = UiTheme.Ink,
+                AutoSize = true,
+                Margin = DpiHelper.Scale(new Padding(0, 10, 0, 2)),
+            };
+            var row = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Dock = DockStyle.Top,
+                Margin = new Padding(0),
+            };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(10)));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.Controls.Add(tag, 0, 0);
+            row.Controls.Add(label, 1, 0);
+            _grid.Controls.Add(row, 0, _row);
+            _grid.SetColumnSpan(row, 2);
+            _row++;
+        }
+
+        public void Add(
+            string caption,
+            Control control,
+            ContentAlignment align = ContentAlignment.MiddleLeft
+        )
+        {
+            _grid.Controls.Add(
+                new Label
+                {
+                    Text = caption,
+                    AutoSize = true,
+                    Dock = DockStyle.Fill,
+                    TextAlign = align,
+                },
+                0,
+                _row
+            );
+            _grid.Controls.Add(control, 1, _row);
+            _row++;
+        }
+    }
+
     public SettingsForm(
         AppConfig cfg,
         ITextRefinerFactory textRefinerFactory,
@@ -99,378 +168,66 @@ public sealed class SettingsForm : Form
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true;
         MinimizeBox = true;
-        Width = DpiHelper.Scale(680);
-        Height = DpiHelper.Scale(560);
+        Width = DpiHelper.Scale(720);
+        Height = DpiHelper.Scale(600);
         AutoScaleMode = AutoScaleMode.Dpi;
-        MinimumSize = new Size(DpiHelper.Scale(600), DpiHelper.Scale(500));
+        MinimumSize = new Size(DpiHelper.Scale(620), DpiHelper.Scale(520));
         SizeGripStyle = SizeGripStyle.Show;
         Icon = MainForm.LoadMainIcon();
+        BackColor = UiTheme.Ground;
+        Font = UiTheme.BodyFont;
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
 
-        // General tab
-        var general = new TableLayoutPanel
+        tabs.TabPages.Add(BuildGeneralPage());
+        tabs.TabPages.Add(BuildLlmPage());
+        tabs.TabPages.Add(BuildRecordingPage());
+        tabs.TabPages.Add(BuildAdvancedPage());
+
+        // Bottom bar: hazard strip + validation strip above the button plate row.
+        var bottomBar = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            ColumnCount = 2,
-            Padding = DpiHelper.Scale(new Padding(16)),
+            Dock = DockStyle.Bottom,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
             RowCount = 3,
+        };
+        bottomBar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        bottomBar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        bottomBar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _hazardStrip = new HazardStrip { Visible = false };
+        bottomBar.Controls.Add(_hazardStrip, 0, 0);
+
+        var validationRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        general.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(110)));
-        general.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _autoPaste = new CheckBox
-        {
-            Text = "Auto-paste refined text",
-            Checked = _cfg.AutoPaste,
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-        };
-        general.Controls.Add(
-            new Label
-            {
-                Text = "Auto Paste",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            0
-        );
-        general.Controls.Add(_autoPaste, 1, 0);
-        _excludeFromClipboardHistory = new CheckBox
-        {
-            Text = "Exclude delivered text from clipboard history",
-            Checked = _cfg.ExcludeFromClipboardHistory,
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-        };
-        general.Controls.Add(
-            new Label
-            {
-                Text = "Clipboard Privacy",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            1
-        );
-        general.Controls.Add(_excludeFromClipboardHistory, 1, 1);
-        _clipboardFallback = new CheckBox
-        {
-            Text = "Use clipboard when nothing is selected",
-            Checked = _cfg.UseClipboardFallback,
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-        };
-        general.Controls.Add(
-            new Label
-            {
-                Text = "Clipboard Fallback",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            2
-        );
-        general.Controls.Add(_clipboardFallback, 1, 2);
-
-        // LLM tab
-        var llm = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
             ColumnCount = 2,
-            Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 13,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            RowCount = 1,
+            Padding = DpiHelper.Scale(new Padding(12, 4, 12, 0)),
         };
-        llm.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(130)));
-        llm.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 12; i++)
-            llm.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        _enabled = new CheckBox
-        {
-            Text = "Enable LLM refinement",
-            Checked = _cfg.Llm.Enabled,
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-        };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Enabled",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            0
-        );
-        llm.Controls.Add(_enabled, 1, 0);
-        _baseUrl = new TextBox { Text = _cfg.Llm.BaseUrl, Dock = DockStyle.Fill };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Base URL",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            1
-        );
-        llm.Controls.Add(_baseUrl, 1, 1);
-        _model = new TextBox { Text = _cfg.Llm.Model, Dock = DockStyle.Fill };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Model",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            2
-        );
-        llm.Controls.Add(_model, 1, 2);
-        _temperature = new TextBox
-        {
-            Text = _cfg.Llm.Temperature.ToString("0.##"),
-            Dock = DockStyle.Fill,
-        };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Temperature",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            3
-        );
-        llm.Controls.Add(_temperature, 1, 3);
-        _maxTokens = new TextBox
-        {
-            Text = _cfg.Llm.MaxTokens?.ToString() ?? "",
-            Dock = DockStyle.Fill,
-        };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Max Tokens",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            4
-        );
-        llm.Controls.Add(_maxTokens, 1, 4);
-        _apiKey = new TextBox
-        {
-            UseSystemPasswordChar = true,
-            PlaceholderText = "Enter API key (leave blank to keep existing)",
-            Dock = DockStyle.Fill,
-        };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "API Key",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            5
-        );
-        llm.Controls.Add(_apiKey, 1, 5);
-        _refinementPrompt = new TextBox
-        {
-            Text = _cfg.Llm.GetEffectiveRefinementPrompt(),
-            Dock = DockStyle.Fill,
-            Multiline = true,
-            ScrollBars = ScrollBars.Vertical,
-            AcceptsReturn = true,
-            Height = DpiHelper.Scale(150),
-        };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Prompt",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.TopLeft,
-            },
-            0,
-            6
-        );
-        llm.Controls.Add(_refinementPrompt, 1, 6);
-
-        _promptPresetDropdown = new ComboBox
-        {
-            DropDownStyle = ComboBoxStyle.DropDownList,
-            Dock = DockStyle.Fill,
-        };
-        _promptPresetDropdown.Items.Add("(Choose a prompt preset…)");
-        foreach (var preset in PromptPresets.All)
-            _promptPresetDropdown.Items.Add(preset.Name);
-        _promptPresetDropdown.SelectedIndex = 0;
-        _promptPresetDropdown.SelectedIndexChanged += (_, __) =>
-        {
-            if (_promptPresetDropdown.SelectedIndex <= 0)
-                return;
-            var preset = PromptPresets.All[_promptPresetDropdown.SelectedIndex - 1];
-            _refinementPrompt.Text = preset.Body;
-        };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Prompt Preset",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            7
-        );
-        llm.Controls.Add(_promptPresetDropdown, 1, 7);
-
-        _referer = new TextBox
-        {
-            Text = _cfg.Llm.HttpReferer ?? string.Empty,
-            Dock = DockStyle.Fill,
-        };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "HTTP Referer",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            8
-        );
-        llm.Controls.Add(_referer, 1, 8);
-        _xTitle = new TextBox { Text = _cfg.Llm.XTitle ?? string.Empty, Dock = DockStyle.Fill };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "X-Title",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            9
-        );
-        llm.Controls.Add(_xTitle, 1, 9);
-        _llmHotkey = new TextBox
-        {
-            ReadOnly = true,
-            Text = GetHotkeyDisplay(_cfg.Hotkey),
-            Dock = DockStyle.Fill,
-        };
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Refinement Hotkey",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            10
-        );
-        llm.Controls.Add(_llmHotkey, 1, 10);
-        _captureLlmHotkeyButton = new Button
-        {
-            Text = "Change Hotkey",
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        _captureLlmHotkeyButton.Click += CaptureLlmHotkey;
-        llm.Controls.Add(_captureLlmHotkeyButton, 1, 11);
-        _testConnectionButton = new Button
-        {
-            Text = "Test LLM Connection",
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        _testConnectionButton.Click += TestConnection;
-        _llmTestResultLabel = new Label
-        {
-            Text = "",
-            AutoSize = true,
-            TextAlign = ContentAlignment.MiddleLeft,
-        };
-        var llmTestRow = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            WrapContents = false,
-        };
-        llmTestRow.Controls.Add(_testConnectionButton);
-        llmTestRow.Controls.Add(_llmTestResultLabel);
-        llm.Controls.Add(
-            new Label
-            {
-                Text = "Test Connection",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            12
-        );
-        llm.Controls.Add(llmTestRow, 1, 12);
-
-        // Add validation label and buttons
+        validationRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        validationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         _validationLabel = new Label
         {
             Text = "",
-            ForeColor = Color.Red,
             AutoSize = true,
-            Dock = DockStyle.Bottom,
-            Padding = DpiHelper.Scale(new Padding(10)),
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = UiTheme.Ink,
         };
-        _resetButton = new Button
-        {
-            Text = "Reset to Defaults",
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        _resetButton.Click += ResetToDefaults;
-
-        var generalPage = new TabPage("General") { AutoScroll = true };
-        generalPage.Controls.Add(general);
-        var llmPage = new TabPage("LLM Refinement") { AutoScroll = true };
-        llmPage.Controls.Add(llm);
-        var recording = CreateRecordingTab();
-        var recordingPage = new TabPage("Recording") { AutoScroll = true };
-        recordingPage.Controls.Add(recording);
-        var advanced = CreateAdvancedTab();
-        var advancedPage = new TabPage("Advanced") { AutoScroll = true };
-        advancedPage.Controls.Add(advanced);
-        tabs.TabPages.Add(generalPage);
-        tabs.TabPages.Add(llmPage);
-        tabs.TabPages.Add(recordingPage);
-        tabs.TabPages.Add(advancedPage);
+        validationRowLamp = UiTheme.Lamp(UiTheme.SuccessText);
+        validationRow.Controls.Add(validationRowLamp, 0, 0);
+        validationRow.Controls.Add(_validationLabel, 1, 0);
+        bottomBar.Controls.Add(validationRow, 0, 1);
 
         var buttons = new FlowLayoutPanel
         {
             FlowDirection = FlowDirection.RightToLeft,
-            Dock = DockStyle.Bottom,
-            Padding = DpiHelper.Scale(new Padding(10)),
+            Dock = DockStyle.Fill,
+            Padding = DpiHelper.Scale(new Padding(12, 6, 12, 10)),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             WrapContents = false,
@@ -489,14 +246,24 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
+        _resetButton = new Button
+        {
+            Text = "Reset to Defaults",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        _resetButton.Click += ResetToDefaults;
+        UiTheme.StyleButton(ok, UiTheme.ButtonKind.Primary);
+        UiTheme.StyleButton(cancel, UiTheme.ButtonKind.Secondary);
+        UiTheme.StyleButton(_resetButton, UiTheme.ButtonKind.Danger);
 
         buttons.Controls.Add(ok);
         buttons.Controls.Add(cancel);
         buttons.Controls.Add(_resetButton);
+        bottomBar.Controls.Add(buttons, 0, 2);
 
         Controls.Add(tabs);
-        Controls.Add(buttons);
-        Controls.Add(_validationLabel);
+        Controls.Add(bottomBar);
 
         AcceptButton = ok;
         CancelButton = cancel;
@@ -519,22 +286,232 @@ public sealed class SettingsForm : Form
         RefreshValidationState(null, EventArgs.Empty);
     }
 
-    private TableLayoutPanel CreateRecordingTab()
+    private TabPage BuildGeneralPage()
     {
+        var page = new TabPage("General") { AutoScroll = true };
+
+        var general = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 2,
+            Padding = DpiHelper.Scale(new Padding(0, 8, 0, 16)),
+            RowCount = 3,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        general.ColumnStyles.Add(
+            new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(SettingsLabelColumnWidth))
+        );
+        general.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int i = 0; i < 3; i++)
+            general.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        var g = new GridBuilder(general);
+        _autoPaste = new CheckBox
+        {
+            Text = "Auto-paste refined text",
+            Checked = _cfg.AutoPaste,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+        };
+        g.Add("Auto Paste", _autoPaste);
+
+        _excludeFromClipboardHistory = new CheckBox
+        {
+            Text = "Exclude delivered text from clipboard history",
+            Checked = _cfg.ExcludeFromClipboardHistory,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+        };
+        g.Add("Clipboard Privacy", _excludeFromClipboardHistory);
+
+        _clipboardFallback = new CheckBox
+        {
+            Text = "Use clipboard when nothing is selected",
+            Checked = _cfg.UseClipboardFallback,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+        };
+        g.Add("Clipboard Fallback", _clipboardFallback);
+
+        // Tag strip added last so it docks to the top edge first.
+        page.Controls.Add(general);
+        page.Controls.Add(UiTheme.TagStrip("General", bottomMargin: 2));
+        return page;
+    }
+
+    private TabPage BuildLlmPage()
+    {
+        var page = new TabPage("LLM Refinement") { AutoScroll = true };
+
+        var llm = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 2,
+            Padding = DpiHelper.Scale(new Padding(0, 8, 0, 16)),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        llm.ColumnStyles.Add(
+            new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(SettingsLabelColumnWidth))
+        );
+        llm.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        var b = new GridBuilder(llm);
+
+        b.Header("Core");
+        _enabled = new CheckBox
+        {
+            Text = "Enable LLM refinement",
+            Checked = _cfg.Llm.Enabled,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+        };
+        b.Add("Enabled", _enabled);
+
+        _baseUrl = new TextBox { Text = _cfg.Llm.BaseUrl, Dock = DockStyle.Fill };
+        b.Add("Base URL", _baseUrl);
+
+        _model = new TextBox { Text = _cfg.Llm.Model, Dock = DockStyle.Fill };
+        b.Add("Model", _model);
+
+        _temperature = new TextBox
+        {
+            Text = _cfg.Llm.Temperature.ToString("0.##"),
+            Dock = DockStyle.Fill,
+        };
+        b.Add("Temperature", _temperature);
+
+        _maxTokens = new TextBox
+        {
+            Text = _cfg.Llm.MaxTokens?.ToString() ?? "",
+            Dock = DockStyle.Fill,
+        };
+        b.Add("Max Tokens", _maxTokens);
+
+        _apiKey = new TextBox
+        {
+            UseSystemPasswordChar = true,
+            PlaceholderText = "Enter API key (leave blank to keep existing)",
+            Dock = DockStyle.Fill,
+        };
+        b.Add("API Key", _apiKey);
+
+        b.Header("Prompt");
+        _refinementPrompt = new TextBox
+        {
+            Text = _cfg.Llm.GetEffectiveRefinementPrompt(),
+            Dock = DockStyle.Fill,
+            Multiline = true,
+            ScrollBars = ScrollBars.Vertical,
+            AcceptsReturn = true,
+            Height = DpiHelper.Scale(150),
+        };
+        b.Add("Prompt", _refinementPrompt, ContentAlignment.TopLeft);
+
+        _promptPresetDropdown = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Dock = DockStyle.Fill,
+        };
+        _promptPresetDropdown.Items.Add("(Choose a prompt preset…)");
+        foreach (var preset in PromptPresets.All)
+            _promptPresetDropdown.Items.Add(preset.Name);
+        _promptPresetDropdown.SelectedIndex = 0;
+        _promptPresetDropdown.SelectedIndexChanged += (_, __) =>
+        {
+            if (_promptPresetDropdown.SelectedIndex <= 0)
+                return;
+            var preset = PromptPresets.All[_promptPresetDropdown.SelectedIndex - 1];
+            _refinementPrompt.Text = preset.Body;
+        };
+        b.Add("Prompt Preset", _promptPresetDropdown);
+
+        b.Header("HTTP Headers");
+        _referer = new TextBox
+        {
+            Text = _cfg.Llm.HttpReferer ?? string.Empty,
+            Dock = DockStyle.Fill,
+        };
+        b.Add("HTTP Referer", _referer);
+
+        _xTitle = new TextBox { Text = _cfg.Llm.XTitle ?? string.Empty, Dock = DockStyle.Fill };
+        b.Add("X-Title", _xTitle);
+
+        b.Header("Hotkey & Test");
+        _llmHotkey = new TextBox
+        {
+            ReadOnly = true,
+            Text = GetHotkeyDisplay(_cfg.Hotkey),
+            Dock = DockStyle.Fill,
+            Font = UiTheme.MonoBoldFont,
+            BackColor = UiTheme.Panel,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        b.Add("Refinement Hotkey", _llmHotkey);
+
+        _captureLlmHotkeyButton = new Button
+        {
+            Text = "Change Hotkey",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        _captureLlmHotkeyButton.Click += CaptureLlmHotkey;
+        UiTheme.StyleButton(_captureLlmHotkeyButton, UiTheme.ButtonKind.Secondary);
+        b.Add("", _captureLlmHotkeyButton);
+
+        _testConnectionButton = new Button
+        {
+            Text = "Test LLM Connection",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        _testConnectionButton.Click += TestConnection;
+        UiTheme.StyleButton(_testConnectionButton, UiTheme.ButtonKind.Secondary);
+        _llmTestResultLabel = new Label
+        {
+            Text = "",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = UiTheme.Ink,
+            Margin = DpiHelper.Scale(new Padding(8, 0, 0, 0)),
+        };
+        var llmTestRow = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.LeftToRight,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false,
+        };
+        llmTestRow.Controls.Add(_testConnectionButton);
+        llmTestRow.Controls.Add(_llmTestResultLabel);
+        b.Add("Test Connection", llmTestRow);
+
+        page.Controls.Add(llm);
+        page.Controls.Add(UiTheme.TagStrip("LLM Refinement", bottomMargin: 2));
+        return page;
+    }
+
+    private TabPage BuildRecordingPage()
+    {
+        var page = new TabPage("Recording") { AutoScroll = true };
+
         var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             ColumnCount = 2,
-            Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 21,
+            Padding = DpiHelper.Scale(new Padding(0, 8, 0, 16)),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
+        panel.ColumnStyles.Add(
+            new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(SettingsLabelColumnWidth))
+        );
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 21; i++)
-            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
+        var b = new GridBuilder(panel);
+
+        b.Header("Endpoint");
         _transcriberEnabled = new CheckBox
         {
             Text = "Enable Remote Transcription",
@@ -542,68 +519,24 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Enabled",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            0
-        );
-        panel.Controls.Add(_transcriberEnabled, 1, 0);
+        b.Add("Enabled", _transcriberEnabled);
 
         _transcriberBaseUrl = new TextBox
         {
             Text = _cfg.Transcriber.BaseUrl,
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "ASR Server URL",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            1
-        );
-        panel.Controls.Add(_transcriberBaseUrl, 1, 1);
+        b.Add("ASR Server URL", _transcriberBaseUrl);
 
         _transcriberModel = new TextBox { Text = _cfg.Transcriber.Model, Dock = DockStyle.Fill };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Model",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            2
-        );
-        panel.Controls.Add(_transcriberModel, 1, 2);
+        b.Add("Model", _transcriberModel);
 
         _transcriberTimeout = new TextBox
         {
             Text = _cfg.Transcriber.TimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Timeout (seconds)",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            3
-        );
-        panel.Controls.Add(_transcriberTimeout, 1, 3);
+        b.Add("Timeout (seconds)", _transcriberTimeout);
 
         _transcriberApiKey = new TextBox
         {
@@ -611,18 +544,7 @@ public sealed class SettingsForm : Form
             PlaceholderText = "Enter API key (leave blank to keep existing)",
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "API Key",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            4
-        );
-        panel.Controls.Add(_transcriberApiKey, 1, 4);
+        b.Add("API Key", _transcriberApiKey);
 
         _transcriberAutoPaste = new CheckBox
         {
@@ -631,18 +553,7 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Auto Paste",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            5
-        );
-        panel.Controls.Add(_transcriberAutoPaste, 1, 5);
+        b.Add("Auto Paste", _transcriberAutoPaste);
 
         _transcriberStreamResults = new CheckBox
         {
@@ -651,19 +562,9 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Stream Results",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            6
-        );
-        panel.Controls.Add(_transcriberStreamResults, 1, 6);
+        b.Add("Stream Results", _transcriberStreamResults);
 
+        b.Header("Silence Detection");
         _transcriberEnableVAD = new CheckBox
         {
             Text = "Stop recording after silence",
@@ -671,36 +572,14 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Silence Detection",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            7
-        );
-        panel.Controls.Add(_transcriberEnableVAD, 1, 7);
+        b.Add("Silence Detection", _transcriberEnableVAD);
 
         _transcriberSilenceThreshold = new TextBox
         {
             Text = _cfg.Transcriber.SilenceThresholdMs.ToString(),
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Silence Timeout (milliseconds)",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            8
-        );
-        panel.Controls.Add(_transcriberSilenceThreshold, 1, 8);
+        b.Add("Silence Timeout (milliseconds)", _transcriberSilenceThreshold);
 
         _transcriberVadSensitivity = new ComboBox
         {
@@ -715,27 +594,15 @@ public sealed class SettingsForm : Form
                 "High (Quiet Environment)",
             }
         );
-        // Map current settings to index based on activation threshold
         if (_cfg.Transcriber.VadActivationThreshold >= 800)
-            _transcriberVadSensitivity.SelectedIndex = 0; // Low Sensitivity (Noisy)
+            _transcriberVadSensitivity.SelectedIndex = 0;
         else if (_cfg.Transcriber.VadActivationThreshold >= 400)
-            _transcriberVadSensitivity.SelectedIndex = 1; // Medium
+            _transcriberVadSensitivity.SelectedIndex = 1;
         else
-            _transcriberVadSensitivity.SelectedIndex = 2; // High Sensitivity (Quiet)
+            _transcriberVadSensitivity.SelectedIndex = 2;
+        b.Add("VAD Sensitivity", _transcriberVadSensitivity);
 
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "VAD Sensitivity",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            9
-        );
-        panel.Controls.Add(_transcriberVadSensitivity, 1, 9);
-
+        b.Header("Source");
         _microphoneDropdown = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
@@ -749,18 +616,7 @@ public sealed class SettingsForm : Form
             _microphoneDropdown.SelectedIndex = _cfg.Transcriber.PreferredMicrophoneIndex;
         else if (_microphoneDropdown.Items.Count > 0)
             _microphoneDropdown.SelectedIndex = 0;
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Microphone",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            10
-        );
-        panel.Controls.Add(_microphoneDropdown, 1, 10);
+        b.Add("Microphone", _microphoneDropdown);
 
         _detectMicrophonesButton = new Button
         {
@@ -768,9 +624,11 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        _detectMicrophonesButton!.Click += DetectMicrophones;
-        panel.Controls.Add(_detectMicrophonesButton, 1, 11);
+        _detectMicrophonesButton.Click += DetectMicrophones;
+        UiTheme.StyleButton(_detectMicrophonesButton, UiTheme.ButtonKind.Secondary);
+        b.Add("", _detectMicrophonesButton);
 
+        b.Header("Auto-Enhance");
         _transcriberEnableAutoEnhance = new CheckBox
         {
             Text = "Polish long transcriptions with LLM",
@@ -778,56 +636,26 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Auto-Enhance",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            12
-        );
-        panel.Controls.Add(_transcriberEnableAutoEnhance, 1, 12);
+        b.Add("Auto-Enhance", _transcriberEnableAutoEnhance);
 
         _transcriberAutoEnhanceThreshold = new TextBox
         {
             Text = _cfg.Transcriber.AutoEnhanceThresholdChars.ToString(),
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Minimum text length for auto-enhance",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            13
-        );
-        panel.Controls.Add(_transcriberAutoEnhanceThreshold, 1, 13);
+        b.Add("Minimum text length for auto-enhance", _transcriberAutoEnhanceThreshold);
 
-        // Toggle Transcription Hotkey
+        b.Header("Hotkeys");
         _transcriberHotkey = new TextBox
         {
             ReadOnly = true,
             Text = GetHotkeyDisplay(_cfg.TranscriberHotkey),
             Dock = DockStyle.Fill,
+            Font = UiTheme.MonoBoldFont,
+            BackColor = UiTheme.Panel,
+            BorderStyle = BorderStyle.FixedSingle,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Toggle Transcription Hotkey",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            14
-        );
-        panel.Controls.Add(_transcriberHotkey, 1, 14);
+        b.Add("Toggle Transcription Hotkey", _transcriberHotkey);
 
         _captureTranscriberHotkeyButton = new Button
         {
@@ -835,22 +663,68 @@ public sealed class SettingsForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        _captureTranscriberHotkeyButton!.Click += CaptureTranscriberHotkey;
-        panel.Controls.Add(_captureTranscriberHotkeyButton, 1, 15);
+        _captureTranscriberHotkeyButton.Click += CaptureTranscriberHotkey;
+        UiTheme.StyleButton(_captureTranscriberHotkeyButton, UiTheme.ButtonKind.Secondary);
+        b.Add("", _captureTranscriberHotkeyButton);
 
-        // Test Connection
+        _typelessHotkey = new TextBox
+        {
+            ReadOnly = true,
+            Text = GetHotkeyDisplay(_cfg.TypelessHotkey),
+            Dock = DockStyle.Fill,
+            Font = UiTheme.MonoBoldFont,
+            BackColor = UiTheme.Panel,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        b.Add("Push-to-Talk Hotkey", _typelessHotkey);
+
+        _captureTypelessHotkeyButton = new Button
+        {
+            Text = "Change Hotkey",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        _captureTypelessHotkeyButton.Click += CaptureTypelessHotkey;
+        UiTheme.StyleButton(_captureTypelessHotkeyButton, UiTheme.ButtonKind.Secondary);
+        b.Add("", _captureTypelessHotkeyButton);
+
+        _streamingTranscriberHotkey = new TextBox
+        {
+            ReadOnly = true,
+            Text = GetHotkeyDisplay(_cfg.StreamingTranscriberHotkey),
+            Dock = DockStyle.Fill,
+            Font = UiTheme.MonoBoldFont,
+            BackColor = UiTheme.Panel,
+            BorderStyle = BorderStyle.FixedSingle,
+        };
+        b.Add("Realtime Streaming Hotkey", _streamingTranscriberHotkey);
+
+        _captureStreamingTranscriberHotkeyButton = new Button
+        {
+            Text = "Change Hotkey",
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        _captureStreamingTranscriberHotkeyButton.Click += CaptureStreamingTranscriberHotkey;
+        UiTheme.StyleButton(_captureStreamingTranscriberHotkeyButton, UiTheme.ButtonKind.Secondary);
+        b.Add("", _captureStreamingTranscriberHotkeyButton);
+
+        b.Header("Test");
         _testTranscriberConnectionButton = new Button
         {
             Text = "Test ASR Connection",
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        _testTranscriberConnectionButton!.Click += TestTranscriberConnection;
+        _testTranscriberConnectionButton.Click += TestTranscriberConnection;
+        UiTheme.StyleButton(_testTranscriberConnectionButton, UiTheme.ButtonKind.Secondary);
         _transcriberTestResultLabel = new Label
         {
             Text = "",
             AutoSize = true,
             TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = UiTheme.Ink,
+            Margin = DpiHelper.Scale(new Padding(8, 0, 0, 0)),
         };
         var transcriberTestRow = new FlowLayoutPanel
         {
@@ -861,208 +735,75 @@ public sealed class SettingsForm : Form
         };
         transcriberTestRow.Controls.Add(_testTranscriberConnectionButton);
         transcriberTestRow.Controls.Add(_transcriberTestResultLabel);
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Test Connection",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            16
-        );
-        panel.Controls.Add(transcriberTestRow, 1, 16);
+        b.Add("Test Connection", transcriberTestRow);
 
-        // Push-to-Talk (Typeless) Hotkey
-        _typelessHotkey = new TextBox
-        {
-            ReadOnly = true,
-            Text = GetHotkeyDisplay(_cfg.TypelessHotkey),
-            Dock = DockStyle.Fill,
-        };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Push-to-Talk Hotkey",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            17
-        );
-        panel.Controls.Add(_typelessHotkey, 1, 17);
-
-        _captureTypelessHotkeyButton = new Button
-        {
-            Text = "Change Hotkey",
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        _captureTypelessHotkeyButton!.Click += CaptureTypelessHotkey;
-        panel.Controls.Add(_captureTypelessHotkeyButton, 1, 18);
-
-        // Realtime Streaming Hotkey
-        _streamingTranscriberHotkey = new TextBox
-        {
-            ReadOnly = true,
-            Text = GetHotkeyDisplay(_cfg.StreamingTranscriberHotkey),
-            Dock = DockStyle.Fill,
-        };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Realtime Streaming Hotkey",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            19
-        );
-        panel.Controls.Add(_streamingTranscriberHotkey, 1, 19);
-
-        _captureStreamingTranscriberHotkeyButton = new Button
-        {
-            Text = "Change Hotkey",
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        _captureStreamingTranscriberHotkeyButton.Click += CaptureStreamingTranscriberHotkey;
-        panel.Controls.Add(_captureStreamingTranscriberHotkeyButton, 1, 20);
-
-        return panel;
+        page.Controls.Add(panel);
+        page.Controls.Add(UiTheme.TagStrip("Recording", bottomMargin: 2));
+        return page;
     }
 
-    private TableLayoutPanel CreateAdvancedTab()
+    private TabPage BuildAdvancedPage()
     {
+        var page = new TabPage("Advanced") { AutoScroll = true };
+
         var panel = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             ColumnCount = 2,
-            Padding = DpiHelper.Scale(new Padding(16)),
-            RowCount = 9,
+            Padding = DpiHelper.Scale(new Padding(0, 8, 0, 16)),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(140)));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int i = 0; i < 9; i++)
-            panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-        // WebSocket Timeout Settings header
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "WebSocket Settings",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font(this.Font, FontStyle.Bold),
-            },
-            0,
-            0
+        panel.ColumnStyles.Add(
+            new ColumnStyle(SizeType.Absolute, DpiHelper.Scale(SettingsLabelColumnWidth))
         );
-        panel.Controls.Add(new Label(), 1, 0);
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
+        var b = new GridBuilder(panel);
+
+        b.Header("WebSocket");
         _wsConnectionTimeout = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketConnectionTimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Connection Timeout (seconds)",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            1
-        );
-        panel.Controls.Add(_wsConnectionTimeout, 1, 1);
+        b.Add("Connection Timeout (seconds)", _wsConnectionTimeout);
 
         _wsReceiveTimeout = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketReceiveTimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Receive Timeout (seconds)",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            2
-        );
-        panel.Controls.Add(_wsReceiveTimeout, 1, 2);
+        b.Add("Receive Timeout (seconds)", _wsReceiveTimeout);
 
         _wsSendTimeout = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketSendTimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Send Timeout (seconds)",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            3
-        );
-        panel.Controls.Add(_wsSendTimeout, 1, 3);
+        b.Add("Send Timeout (seconds)", _wsSendTimeout);
 
         _wsHeartbeatInterval = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketHeartbeatIntervalSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Heartbeat Interval (seconds)",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            4
-        );
-        panel.Controls.Add(_wsHeartbeatInterval, 1, 4);
+        b.Add("Heartbeat Interval (seconds)", _wsHeartbeatInterval);
 
         _wsHeartbeatTimeout = new TextBox
         {
             Text = _cfg.Transcriber.WebSocketHeartbeatTimeoutSeconds.ToString(),
             Dock = DockStyle.Fill,
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Heartbeat Timeout (seconds)",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            5
-        );
-        panel.Controls.Add(_wsHeartbeatTimeout, 1, 5);
+        b.Add("Heartbeat Timeout (seconds)", _wsHeartbeatTimeout);
 
-        // Add validation handlers for WebSocket timeouts
         _wsConnectionTimeout.TextChanged += RefreshValidationState;
         _wsReceiveTimeout.TextChanged += RefreshValidationState;
         _wsSendTimeout.TextChanged += RefreshValidationState;
         _wsHeartbeatInterval.TextChanged += RefreshValidationState;
         _wsHeartbeatTimeout.TextChanged += RefreshValidationState;
 
+        b.Header("Realtime");
         _realtimeProviderDropdown = new ComboBox
         {
             DropDownStyle = ComboBoxStyle.DropDownList,
@@ -1076,18 +817,7 @@ public sealed class SettingsForm : Form
         )
             ? "custom"
             : "openai";
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Realtime Provider",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            6
-        );
-        panel.Controls.Add(_realtimeProviderDropdown, 1, 6);
+        b.Add("Realtime Provider", _realtimeProviderDropdown);
 
         _transcriberLanguage = new TextBox
         {
@@ -1095,18 +825,7 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Fill,
             PlaceholderText = "e.g. en, zh — blank = provider auto-detect",
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "ASR Language",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            7
-        );
-        panel.Controls.Add(_transcriberLanguage, 1, 7);
+        b.Add("ASR Language", _transcriberLanguage);
 
         _transcriberRealtimeSessionPrompt = new TextBox
         {
@@ -1114,20 +833,11 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Fill,
             PlaceholderText = "Domain-specific vocabulary hints for realtime",
         };
-        panel.Controls.Add(
-            new Label
-            {
-                Text = "Session Prompt (optional vocab hint)",
-                AutoSize = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            },
-            0,
-            8
-        );
-        panel.Controls.Add(_transcriberRealtimeSessionPrompt, 1, 8);
+        b.Add("Session Prompt (optional vocab hint)", _transcriberRealtimeSessionPrompt);
 
-        return panel;
+        page.Controls.Add(panel);
+        page.Controls.Add(UiTheme.TagStrip("Advanced", bottomMargin: 2));
+        return page;
     }
 
     private void RefreshMicrophoneList()
@@ -1172,7 +882,6 @@ public sealed class SettingsForm : Form
         _cfg.Llm.RefinementPrompt = string.IsNullOrWhiteSpace(_refinementPrompt.Text)
             ? LlmConfig.DefaultRefinementPrompt
             : _refinementPrompt.Text.Trim();
-        // Only update LLM API key if user actually entered something (preserve existing if blank)
 
         var k = _apiKey.Text.Trim();
         _cfg.Llm.ApiKey = string.IsNullOrWhiteSpace(k) ? _cfg.Llm.ApiKey : k;
@@ -1182,14 +891,11 @@ public sealed class SettingsForm : Form
         _cfg.Llm.XTitle = string.IsNullOrWhiteSpace(_xTitle.Text) ? null : _xTitle.Text.Trim();
         _cfg.UseClipboardFallback = _clipboardFallback.Checked;
 
-        // Apply transcriber changes
         _cfg.Transcriber.Enabled = _transcriberEnabled!.Checked;
         _cfg.Transcriber.BaseUrl = _transcriberBaseUrl!.Text.Trim();
         _cfg.Transcriber.Model = _transcriberModel!.Text.Trim();
         if (int.TryParse(_transcriberTimeout!.Text.Trim(), out var timeout))
             _cfg.Transcriber.TimeoutSeconds = timeout;
-        // Only update transcriber API key if user actually entered something (preserve existing if blank)
-
         var transcriberKey = _transcriberApiKey!.Text.Trim();
         _cfg.Transcriber.ApiKey = string.IsNullOrWhiteSpace(transcriberKey)
             ? _cfg.Transcriber.ApiKey
@@ -1204,22 +910,21 @@ public sealed class SettingsForm : Form
         )
             _cfg.Transcriber.SilenceThresholdMs = silenceMs;
 
-        // Apply VAD Sensitivity
         if (_transcriberVadSensitivity != null && _transcriberVadSensitivity.SelectedIndex >= 0)
         {
             switch (_transcriberVadSensitivity.SelectedIndex)
             {
-                case 0: // Low Sensitivity (Noisy Environment) - Hard to trigger, wide hysteresis
+                case 0:
                     _cfg.Transcriber.VadActivationThreshold = 900;
-                    _cfg.Transcriber.VadSustainThreshold = 250; // Much lower sustain to not stop too early
+                    _cfg.Transcriber.VadSustainThreshold = 250;
                     _cfg.Transcriber.VadSilenceThreshold = 120;
                     break;
-                case 1: // Medium (Default) - Balanced
+                case 1:
                     _cfg.Transcriber.VadActivationThreshold = 600;
-                    _cfg.Transcriber.VadSustainThreshold = 180; // Lower sustain to catch softer speech
+                    _cfg.Transcriber.VadSustainThreshold = 180;
                     _cfg.Transcriber.VadSilenceThreshold = 80;
                     break;
-                case 2: // High Sensitivity (Quiet Environment) - Easy to trigger
+                case 2:
                     _cfg.Transcriber.VadActivationThreshold = 300;
                     _cfg.Transcriber.VadSustainThreshold = 100;
                     _cfg.Transcriber.VadSilenceThreshold = 40;
@@ -1230,7 +935,6 @@ public sealed class SettingsForm : Form
         _cfg.Transcriber.PreferredMicrophoneIndex =
             _microphoneDropdown!.SelectedIndex >= 0 ? _microphoneDropdown.SelectedIndex : -1;
 
-        // Apply auto-enhance settings
         _cfg.Transcriber.EnableAutoEnhance = _transcriberEnableAutoEnhance!.Checked;
         if (
             int.TryParse(_transcriberAutoEnhanceThreshold!.Text.Trim(), out var thresholdChars)
@@ -1239,7 +943,6 @@ public sealed class SettingsForm : Form
         )
             _cfg.Transcriber.AutoEnhanceThresholdChars = thresholdChars;
 
-        // Apply WebSocket timeout settings
         if (
             int.TryParse(_wsConnectionTimeout!.Text.Trim(), out var wsConnTimeout)
             && wsConnTimeout >= 1
@@ -1291,16 +994,35 @@ public sealed class SettingsForm : Form
     private void RefreshValidationState(object? sender, EventArgs e)
     {
         var errors = GetAllValidationErrors();
-        _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
-        _validationLabel.ForeColor = errors.Count > 0 ? Color.Red : Color.Green;
+        bool hasErrors = errors.Count > 0;
+        _validationLabel.Text = hasErrors
+            ? "⚠ "
+                + string.Join(" · ", errors.Take(2))
+                + (errors.Count > 2 ? $" (+{errors.Count - 2} more)" : "")
+            : "✓ All settings valid";
+        _validationLabel.ForeColor = hasErrors ? UiTheme.ErrorText : UiTheme.SuccessText;
+        _hazardStrip.Visible = hasErrors;
+        // Keep the lamp in sync: green when valid, red when not.
+        if (validationRowLamp != null)
+            validationRowLamp.BackColor = hasErrors ? UiTheme.ErrorText : UiTheme.SuccessText;
     }
+
+    private Label? validationRowLamp;
 
     private bool ValidateAllInput()
     {
         var errors = GetAllValidationErrors();
-        _validationLabel.Text = errors.Count > 0 ? string.Join("\n", errors) : "";
-        _validationLabel.ForeColor = errors.Count > 0 ? Color.Red : Color.Green;
-        return errors.Count == 0;
+        bool hasErrors = errors.Count > 0;
+        _validationLabel.Text = hasErrors
+            ? "⚠ "
+                + string.Join(" · ", errors.Take(2))
+                + (errors.Count > 2 ? $" (+{errors.Count - 2} more)" : "")
+            : "✓ All settings valid";
+        _validationLabel.ForeColor = hasErrors ? UiTheme.ErrorText : UiTheme.SuccessText;
+        _hazardStrip.Visible = hasErrors;
+        if (validationRowLamp != null)
+            validationRowLamp.BackColor = hasErrors ? UiTheme.ErrorText : UiTheme.SuccessText;
+        return !hasErrors;
     }
 
     private System.Collections.Generic.List<string> GetAllValidationErrors()
@@ -1545,7 +1267,7 @@ public sealed class SettingsForm : Form
             );
 
             _llmTestResultLabel.Text = "\u2713 OK";
-            _llmTestResultLabel.ForeColor = Color.Green;
+            _llmTestResultLabel.ForeColor = UiTheme.SuccessText;
         }
         catch (Exception ex)
         {
@@ -1556,7 +1278,7 @@ public sealed class SettingsForm : Form
                 ? "API key is required"
                 : ex.Message;
             _llmTestResultLabel.Text = $"\u2717 {errorMsg}";
-            _llmTestResultLabel.ForeColor = Color.Red;
+            _llmTestResultLabel.ForeColor = UiTheme.ErrorText;
         }
         finally
         {
@@ -1588,7 +1310,7 @@ public sealed class SettingsForm : Form
             await testTranscriber.TestConnectionAsync();
 
             _transcriberTestResultLabel!.Text = "\u2713 OK";
-            _transcriberTestResultLabel!.ForeColor = Color.Green;
+            _transcriberTestResultLabel!.ForeColor = UiTheme.SuccessText;
         }
         catch (Exception ex)
         {
@@ -1598,7 +1320,7 @@ public sealed class SettingsForm : Form
                 errorMessage += ": " + ex.InnerException.Message;
             }
             _transcriberTestResultLabel!.Text = $"\u2717 {errorMessage}";
-            _transcriberTestResultLabel!.ForeColor = Color.Red;
+            _transcriberTestResultLabel!.ForeColor = UiTheme.ErrorText;
         }
         finally
         {
@@ -1776,7 +1498,6 @@ public sealed class SettingsForm : Form
         if ((hotkey.Modifiers & 0x0008) != 0)
             parts.Add("WIN");
 
-        // Modifier-only hotkey (Key == 0): display as "CTRL+WIN (hold)" etc.
         if (hotkey.Key == 0)
         {
             parts.Add("(hold)");
@@ -1844,7 +1565,6 @@ public sealed class SettingsForm : Form
             _transcriberAutoEnhanceThreshold!.Text =
                 defaultCfg.Transcriber.AutoEnhanceThresholdChars.ToString();
 
-            // Reset WebSocket timeout settings
             _wsConnectionTimeout!.Text =
                 defaultCfg.Transcriber.WebSocketConnectionTimeoutSeconds.ToString();
             _wsReceiveTimeout!.Text =
@@ -1867,7 +1587,6 @@ public sealed class SettingsForm : Form
             )
                 _microphoneDropdown.SelectedIndex = defaultCfg.Transcriber.PreferredMicrophoneIndex;
 
-            // Reset Hotkeys in the config object as well, since they aren't read back/saved in ApplyChanges like other fields
             _cfg.Hotkey.Modifiers = defaultCfg.Hotkey.Modifiers;
             _cfg.Hotkey.Key = defaultCfg.Hotkey.Key;
             _llmHotkey.Text = GetHotkeyDisplay(defaultCfg.Hotkey);

@@ -101,7 +101,7 @@ public sealed class TranscriptionController : ITranscriptionController
         }
         catch (Exception ex)
         {
-            Logger.Log($"CRITICAL: Transcription task failed at top level: {ex.Message}");
+            Logger.Error($"CRITICAL: Transcription task failed at top level: {ex.Message}");
             return false;
         }
         finally
@@ -121,7 +121,7 @@ public sealed class TranscriptionController : ITranscriptionController
         }
         catch (Exception ex)
         {
-            Logger.Log($"Error cancelling transcription task: {ex.Message}");
+            Logger.LogWarning($"Error cancelling transcription task: {ex.Message}");
         }
     }
 
@@ -193,7 +193,7 @@ public sealed class TranscriptionController : ITranscriptionController
                 NotificationService.ShowError(
                     "Failed to record audio from microphone. Please check your microphone permissions."
                 );
-                Logger.Log($"Audio recording failed: {ex.GetType().Name}: {ex.Message}");
+                Logger.Error($"Audio recording failed: {ex.GetType().Name}: {ex.Message}");
                 return;
             }
             finally
@@ -203,6 +203,11 @@ public sealed class TranscriptionController : ITranscriptionController
 
             OnProcessingStarted?.Invoke();
             NotificationService.ShowInfo("Sending to transcriber...");
+
+            // Capture the window the user was focused on when recording stopped.
+            // The single final paste must not land in a different app if the foreground
+            // changes while the transcription is running.
+            IntPtr targetWindow = NativeMethods.GetForegroundWindow();
 
             // Transcribe audio using remote API
             Logger.Log($"Creating RemoteTranscriber with BaseUrl: {cfg.Transcriber.BaseUrl}");
@@ -215,7 +220,8 @@ public sealed class TranscriptionController : ITranscriptionController
                 transcriptionText = await TranscribeRecordedAudioStreamingAsync(
                         transcriber,
                         audioFilePath,
-                        cfg
+                        cfg,
+                        recordingStats?.DurationMs ?? 0
                     )
                     .ConfigureAwait(false);
             }
@@ -224,7 +230,8 @@ public sealed class TranscriptionController : ITranscriptionController
                 transcriptionText = await TranscribeRecordedAudioAsync(
                         transcriber,
                         audioFilePath,
-                        cfg
+                        cfg,
+                        recordingStats?.DurationMs ?? 0
                     )
                     .ConfigureAwait(false);
             }
@@ -239,7 +246,8 @@ public sealed class TranscriptionController : ITranscriptionController
                         cfg,
                         recordingStats?.DurationMs ?? 0,
                         TranscriptionDeliveryPolicy.DeliverFinalText,
-                        ResultsAlreadyStreamed: cfg.Transcriber.StreamResults
+                        ResultsAlreadyStreamed: false,
+                        TargetWindow: targetWindow
                     )
                 )
                 .ConfigureAwait(false);
@@ -249,7 +257,17 @@ public sealed class TranscriptionController : ITranscriptionController
         catch (Exception ex)
         {
             NotificationService.ShowError("Transcription failed: " + ex.Message);
-            Logger.Log($"TranscribeSelectionAsync error: {ex.GetType().Name}: {ex.Message}");
+            Logger.Error($"TranscribeSelectionAsync error: {ex.GetType().Name}: {ex.Message}");
+
+            try
+            {
+                _resultSink.RecordFailure(
+                    partialText: null,
+                    durationMs: recordingStats?.DurationMs ?? 0,
+                    errorSummary: ex.Message
+                );
+            }
+            catch { }
         }
         finally
         {
@@ -328,7 +346,8 @@ public sealed class TranscriptionController : ITranscriptionController
     private async Task<string> TranscribeRecordedAudioAsync(
         IRemoteTranscriber transcriber,
         string audioFilePath,
-        AppConfig cfg
+        AppConfig cfg,
+        int durationMs
     )
     {
         try
@@ -349,16 +368,26 @@ public sealed class TranscriptionController : ITranscriptionController
         }
         catch (TranscriberException ex)
         {
-            Logger.Log(
+            Logger.Error(
                 $"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
             );
             NotificationService.ShowError($"Transcription failed: {ex.Message}");
+            try
+            {
+                _resultSink.RecordFailure(null, durationMs, ex.Message);
+            }
+            catch { }
             return "";
         }
         catch (Exception ex)
         {
-            Logger.Log($"Unexpected exception: {ex.GetType().Name}: {ex.Message}");
+            Logger.Error($"Unexpected exception: {ex.GetType().Name}: {ex.Message}");
             NotificationService.ShowError($"Transcription failed: {ex.Message}");
+            try
+            {
+                _resultSink.RecordFailure(null, durationMs, ex.Message);
+            }
+            catch { }
             return "";
         }
     }
@@ -366,7 +395,8 @@ public sealed class TranscriptionController : ITranscriptionController
     private async Task<string> TranscribeRecordedAudioStreamingAsync(
         IRemoteTranscriber transcriber,
         string audioFilePath,
-        AppConfig cfg
+        AppConfig cfg,
+        int durationMs
     )
     {
         var fullText = new StringBuilder();
@@ -384,47 +414,46 @@ public sealed class TranscriptionController : ITranscriptionController
                 if (string.IsNullOrEmpty(chunk))
                     continue;
 
-                fullText.Append(chunk);
+                // Merge instead of blindly appending: ASR servers often resend an
+                // identical chunk or send a final full-transcript snapshot, both of
+                // which would otherwise duplicate the delivered text ("pasted twice").
+                string previous = fullText.ToString();
+                string merged = TextTyper.MergeStreamChunk(previous, chunk);
+                if (merged.Length != previous.Length + chunk.Length)
+                {
+                    Logger.Log(
+                        $"TranscriptionController: Streaming chunk deduplicated (resent/snapshot), grew by {merged.Length - previous.Length} chars instead of {chunk.Length}"
+                    );
+                }
+                fullText.Clear();
+                fullText.Append(merged);
 
                 Logger.Log(
                     $"Streaming transcription chunk received: len={chunk.Length}, total={fullText.Length}"
                 );
 
-                try
-                {
-                    var typeResult = await _textTyper
-                        .TypeAsync(fullText.ToString(), autoPaste: cfg.Transcriber.AutoPaste)
-                        .ConfigureAwait(false);
-
-                    if (!typeResult.DeliverySuccess)
-                    {
-                        try
-                        {
-                            Logger.Log(
-                                $"TranscriptionController: TextTyper delivery failed for streaming chunk (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
-                            );
-                        }
-                        catch { }
-                    }
-                }
-                catch (Exception typeEx)
-                {
-                    Logger.Log($"Failed to type streaming transcription chunk: {typeEx.Message}");
-                }
+                // No per-chunk delivery: every chunk used to trigger its own paste/SendKeys,
+                // pressing keys in the target app repeatedly and pasting word-by-word.
+                // Instead we accumulate the full transcript and deliver ONCE below.
             }
         }
         catch (TranscriberException ex)
         {
             if (fullText.Length == 0)
             {
-                Logger.Log(
+                Logger.Error(
                     $"Streaming transcription failed before any text: {ex.ErrorType}, {ex.Message}"
                 );
                 NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                try
+                {
+                    _resultSink.RecordFailure(null, durationMs, ex.Message);
+                }
+                catch { }
                 return "";
             }
 
-            Logger.Log(
+            Logger.LogWarning(
                 $"Streaming transcription error after partial text ({fullText.Length} chars): {ex.Message}"
             );
         }
@@ -432,14 +461,19 @@ public sealed class TranscriptionController : ITranscriptionController
         {
             if (fullText.Length == 0)
             {
-                Logger.Log(
+                Logger.Error(
                     $"Unexpected streaming transcription exception before any text: {ex.GetType().Name}: {ex.Message}"
                 );
                 NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                try
+                {
+                    _resultSink.RecordFailure(null, durationMs, ex.Message);
+                }
+                catch { }
                 return "";
             }
 
-            Logger.Log(
+            Logger.LogWarning(
                 $"Unexpected streaming transcription exception after partial text ({fullText.Length} chars): {ex.Message}"
             );
         }

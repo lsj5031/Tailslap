@@ -42,7 +42,7 @@ internal static class TranscriptionAutoEnhancer
             {
                 if (!ShouldUseEnhancedText(transcriptionText, enhanced, out var rejectionReason))
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Auto-enhancement rejected: {rejectionReason}. Keeping original transcription."
                     );
                     NotificationService.ShowWarning(
@@ -60,7 +60,9 @@ internal static class TranscriptionAutoEnhancer
         }
         catch (Exception ex)
         {
-            Logger.Log($"Auto-enhancement failed: {ex.Message}. Using original transcription.");
+            Logger.LogWarning(
+                $"Auto-enhancement failed: {ex.Message}. Using original transcription."
+            );
             NotificationService.ShowWarning("Enhancement failed. Using original transcription.");
         }
 

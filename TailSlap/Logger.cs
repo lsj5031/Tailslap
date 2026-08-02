@@ -17,13 +17,35 @@ public sealed class LogEntry
 
 public static class Logger
 {
-    private static readonly string LogDirectory = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "TailSlap",
-        "logs"
-    );
+    private static readonly string LogDirectory = ResolveLogDirectory();
+
+    private static string ResolveLogDirectory()
+    {
+        // Allow tests/tools to redirect logs away from the production file.
+        var overrideDir = Environment.GetEnvironmentVariable("TAILSLAP_LOG_DIR");
+        if (!string.IsNullOrWhiteSpace(overrideDir))
+        {
+            try
+            {
+                return Path.GetFullPath(overrideDir);
+            }
+            catch { }
+        }
+
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "TailSlap",
+            "logs"
+        );
+    }
 
     private static string LogPath => Path.Combine(LogDirectory, "app.jsonl");
+
+    /// <summary>Absolute path of the current log file (app.jsonl).</summary>
+    public static string GetLogPath() => LogPath;
+
+    /// <summary>Absolute path of the directory that holds the log files.</summary>
+    public static string GetLogDirectory() => LogDirectory;
 
     private const int MaxQueueSize = 10000;
     private const long MaxFileSizeBytes = 5 * 1024 * 1024; // 5 MB
@@ -211,6 +233,101 @@ public static class Logger
             File.Move(LogPath, Path.Combine(LogDirectory, "app.1.jsonl"));
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Reads the most recent error/warning entries from the current and rotated log
+    /// files, newest first. Returns at most <paramref name="maxEntries"/> entries.
+    /// Malformed lines and unreadable files are tolerated.
+    /// </summary>
+    public static List<LogEntry> ReadRecentIssues(int maxEntries = 200)
+    {
+        var issues = new List<LogEntry>();
+        try
+        {
+            var files = new List<string>();
+            if (File.Exists(LogPath))
+                files.Add(LogPath);
+
+            for (int i = 1; i < MaxRotatedFiles; i++)
+            {
+                var rotated = Path.Combine(LogDirectory, $"app.{i}.jsonl");
+                if (File.Exists(rotated))
+                    files.Add(rotated);
+            }
+
+            foreach (var file in files)
+            {
+                if (issues.Count >= maxEntries)
+                    break;
+
+                IEnumerable<string> lines;
+                try
+                {
+                    lines = File.ReadLines(file);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                foreach (var line in lines)
+                {
+                    if (issues.Count >= maxEntries)
+                        break;
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(line);
+                        var root = doc.RootElement;
+                        if (!root.TryGetProperty("level", out var levelProp))
+                            continue;
+
+                        var level = levelProp.GetString();
+                        if (
+                            !string.Equals(level, "error", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(level, "warn", StringComparison.OrdinalIgnoreCase)
+                        )
+                        {
+                            continue;
+                        }
+
+                        issues.Add(
+                            new LogEntry
+                            {
+                                Ts = root.TryGetProperty("ts", out var tsProp)
+                                    ? tsProp.GetString() ?? ""
+                                    : "",
+                                Level = level ?? "",
+                                Source = root.TryGetProperty("source", out var srcProp)
+                                    ? srcProp.GetString() ?? ""
+                                    : "",
+                                Msg = root.TryGetProperty("msg", out var msgProp)
+                                    ? msgProp.GetString() ?? ""
+                                    : "",
+                                Err = root.TryGetProperty("err", out var errProp)
+                                    ? errProp.GetString()
+                                    : null,
+                            }
+                        );
+                    }
+                    catch
+                    {
+                        // Tolerate a single malformed line.
+                    }
+                }
+            }
+
+            // ISO-8601 "o" timestamps sort lexicographically; newest first.
+            issues.Sort((a, b) => string.CompareOrdinal(b.Ts, a.Ts));
+            if (issues.Count > maxEntries)
+                issues.RemoveRange(maxEntries, issues.Count - maxEntries);
+        }
+        catch { }
+
+        return issues;
     }
 
     public static void Flush()

@@ -22,7 +22,7 @@ public static class Dpapi
         {
             try
             {
-                Logger.Log($"DPAPI Protect failed: {ex.GetType().Name}");
+                Logger.Error($"DPAPI Protect failed: {ex.GetType().Name}");
             }
             catch { }
             if (notifyOnFailure && Interlocked.Exchange(ref _protectFailureNotified, 1) == 0)
@@ -54,7 +54,7 @@ public static class Dpapi
         {
             try
             {
-                Logger.Log($"DPAPI Unprotect failed: {ex.GetType().Name}");
+                Logger.Error($"DPAPI Unprotect failed: {ex.GetType().Name}");
             }
             catch { }
             if (notifyOnFailure && Interlocked.Exchange(ref _unprotectFailureNotified, 1) == 0)

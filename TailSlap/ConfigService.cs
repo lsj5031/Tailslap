@@ -384,7 +384,7 @@ public sealed class ConfigService : IConfigService, IDisposable
         {
             try
             {
-                Logger.Log($"Watcher setup failed: {ex.Message}");
+                Logger.LogWarning($"Watcher setup failed: {ex.Message}");
             }
             catch { }
         }
@@ -456,7 +456,7 @@ public sealed class ConfigService : IConfigService, IDisposable
             var cfg = JsonSerializer.Deserialize(txt, TailSlapJsonContext.Default.AppConfig);
             if (cfg == null)
             {
-                Logger.Log("Config deserialization returned null. Using defaults.");
+                Logger.LogWarning("Config deserialization returned null. Using defaults.");
                 return new AppConfig();
             }
             Logger.Log($"Config loaded successfully from {FilePath}");
@@ -466,7 +466,7 @@ public sealed class ConfigService : IConfigService, IDisposable
         {
             try
             {
-                Logger.Log($"Config load failed: {ex.GetType().Name}: {ex.Message}");
+                Logger.LogWarning($"Config load failed: {ex.GetType().Name}: {ex.Message}");
             }
             catch { }
             try
@@ -487,7 +487,15 @@ public sealed class ConfigService : IConfigService, IDisposable
             if (!Directory.Exists(Dir))
                 Directory.CreateDirectory(Dir);
             _lastRead = DateTime.Now;
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(cfg, WriteOptions));
+
+            // Atomic replace: write to a sibling temp file first, then rename over
+            // the live file. This prevents the FileSystemWatcher (and any reader)
+            // from observing a partially written config.
+            var json = JsonSerializer.Serialize(cfg, WriteOptions);
+            var tempPath = FilePath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            File.Move(tempPath, FilePath, overwrite: true);
+
             lock (_cacheLock)
             {
                 _cache = cfg.Clone();
@@ -498,7 +506,7 @@ public sealed class ConfigService : IConfigService, IDisposable
             InvalidateCache();
             try
             {
-                Logger.Log($"Config save failed: {ex.GetType().Name}: {ex.Message}");
+                Logger.Error($"Config save failed: {ex.GetType().Name}: {ex.Message}");
             }
             catch { }
             try

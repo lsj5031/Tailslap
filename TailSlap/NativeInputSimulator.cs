@@ -143,7 +143,7 @@ public static class NativeInputSimulator
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"NativeInputSimulator: SendInput sent {sent}/{inputs.Length} backspace events, falling back to SendKeys"
                     );
                 }
@@ -157,7 +157,7 @@ public static class NativeInputSimulator
         {
             try
             {
-                Logger.Log($"NativeInputSimulator: SendBackspace failed: {ex.Message}");
+                Logger.LogWarning($"NativeInputSimulator: SendBackspace failed: {ex.Message}");
             }
             catch { }
         }
@@ -179,7 +179,7 @@ public static class NativeInputSimulator
         {
             try
             {
-                Logger.Log(
+                Logger.LogWarning(
                     $"NativeInputSimulator: Unicode SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
                 );
             }

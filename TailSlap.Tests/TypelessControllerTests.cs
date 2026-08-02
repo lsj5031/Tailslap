@@ -25,6 +25,22 @@ file sealed class TestableTextTyper : TextTyper
 
 public class TypelessControllerTests
 {
+    private sealed class RecordingResultSink : ITranscriptionResultSink
+    {
+        public TranscriptionResultRequest? Request { get; private set; }
+
+        public Task<TranscriptionResult> ProcessAsync(
+            TranscriptionResultRequest request,
+            CancellationToken cancellationToken = default
+        )
+        {
+            Request = request;
+            return Task.FromResult(new TranscriptionResult("captured", false));
+        }
+
+        public void RecordFailure(string? partialText, int durationMs, string errorSummary) { }
+    }
+
     private static Mock<IConfigService> CreateMockConfigService(
         bool transcriberEnabled = true,
         bool llmEnabled = true,
@@ -211,7 +227,9 @@ public class TypelessControllerTests
         Mock<IHistoryService>? historyMock = null,
         Mock<ITextRefinerFactory>? refinerFactoryMock = null,
         Func<AppConfig, string, CancellationToken, Task<RecordingStats>>? recordFunc = null,
-        TextTyper? textTyper = null
+        TextTyper? textTyper = null,
+        ITranscriptionResultSink? resultSink = null,
+        Func<IntPtr>? getForegroundWindow = null
     )
     {
         configMock ??= CreateMockConfigService();
@@ -224,12 +242,13 @@ public class TypelessControllerTests
         textTyper ??= new TestableTextTyper(clipboardMock.Object);
 
         var clipboardHelper = new ClipboardHelper(clipboardMock.Object);
-        var resultSink = new TranscriptionResultSink(
+        resultSink ??= new TranscriptionResultSink(
             historyMock.Object,
             refinerFactoryMock.Object,
             clipboardHelper,
             clipboardMock.Object,
-            textTyper
+            textTyper,
+            getForegroundWindow
         );
 
         return new TypelessController(
@@ -238,7 +257,8 @@ public class TypelessControllerTests
             recorderFactoryMock.Object,
             textTyper,
             resultSink,
-            recordFunc
+            recordFunc,
+            getForegroundWindow
         );
     }
 
@@ -581,8 +601,7 @@ public class TypelessControllerTests
         await controller.HandleKeyDownAsync();
         await controller.HandleKeyUpAsync();
 
-        // TextTyper types each chunk as it arrives, so clipboard IS called for whitespace chunks.
-        // But history should NOT be saved for whitespace-only results.
+        // Whitespace-only results are discarded: no history entry is saved.
         mockHistory.Verify(
             h => h.AppendTranscription(It.IsAny<string>(), It.IsAny<int>()),
             Times.Never
@@ -723,7 +742,8 @@ public class TypelessControllerTests
         mockRefiner.Verify(r => r.RefineAsync(rawText, It.IsAny<CancellationToken>()), Times.Once);
         mockHistory.Verify(h => h.AppendTranscription(rawText, 1500), Times.Once);
         mockHistory.Verify(h => h.Append(rawText, refinedText, "llama3.1"), Times.Once);
-        mockClipboard.Verify(c => c.SetTextAndPasteAsync(refinedText), Times.AtLeastOnce);
+        // Single delivery: the enhanced text is pasted exactly once via the clipboard helper.
+        mockClipboard.Verify(c => c.SetTextAsync(refinedText), Times.Once);
     }
 
     [Fact]
@@ -758,7 +778,7 @@ public class TypelessControllerTests
     }
 
     [Fact]
-    public async Task HandleKeyUp_Failure_NoHistoryEntry()
+    public async Task HandleKeyUp_Failure_NoHistoryEntryButFailureRecorded()
     {
         var mockTranscriberFactory = CreateErrorTranscriberFactory(
             new Exception("Something went wrong")
@@ -773,9 +793,20 @@ public class TypelessControllerTests
         await controller.HandleKeyDownAsync();
         await controller.HandleKeyUpAsync();
 
+        // Success history is not written on failure...
         mockHistory.Verify(
             h => h.AppendTranscription(It.IsAny<string>(), It.IsAny<int>()),
             Times.Never
+        );
+        // ...but the failure IS recorded so it is never lost silently.
+        mockHistory.Verify(
+            h =>
+                h.AppendTranscriptionFailure(
+                    It.IsAny<string?>(),
+                    It.IsAny<int>(),
+                    It.IsAny<string>()
+                ),
+            Times.Once
         );
     }
 
@@ -802,6 +833,89 @@ public class TypelessControllerTests
 
         // History should contain the full concatenated text
         mockHistory.Verify(h => h.AppendTranscription("hello world", 1500), Times.Once);
+    }
+
+    [Fact]
+    public async Task HandleKeyUp_FinalFullSnapshotChunk_DoesNotDuplicateText()
+    {
+        // Regression for "pasted twice": the ASR server streams partial chunks and
+        // THEN sends the complete transcript as a final snapshot chunk. Blindly
+        // appending would yield "hello worldhello world again" (duplicated prefix).
+        var mockTranscriberFactory = CreateMockTranscriberFactory(
+            out _,
+            "hello world",
+            "hello world again"
+        );
+        var mockClipboard = new Mock<IClipboardService>();
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
+        mockClipboard.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
+        var mockHistory = new Mock<IHistoryService>();
+
+        var controller = CreateController(
+            transcriberFactoryMock: mockTranscriberFactory,
+            clipboardMock: mockClipboard,
+            historyMock: mockHistory
+        );
+
+        await controller.HandleKeyDownAsync();
+        await controller.HandleKeyUpAsync();
+
+        // History must contain the deduplicated text, not the duplicated prefix.
+        mockHistory.Verify(h => h.AppendTranscription("hello world again", 1500), Times.Once);
+        mockHistory.Verify(
+            h => h.AppendTranscription(It.IsAny<string>(), It.IsAny<int>()),
+            Times.Once
+        );
+    }
+
+    [Fact]
+    public async Task HandleKeyUp_UsesWindowCapturedAtKeyDown()
+    {
+        var initialTarget = new IntPtr(0x1111);
+        var laterTarget = new IntPtr(0x2222);
+        var currentTarget = initialTarget;
+        var resultSink = new RecordingResultSink();
+        var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "captured");
+
+        var controller = CreateController(
+            transcriberFactoryMock: mockTranscriberFactory,
+            resultSink: resultSink,
+            getForegroundWindow: () => currentTarget
+        );
+
+        await controller.HandleKeyDownAsync();
+        currentTarget = laterTarget;
+        await controller.HandleKeyUpAsync();
+
+        Assert.NotNull(resultSink.Request);
+        Assert.Equal(initialTarget, resultSink.Request!.TargetWindow);
+    }
+
+    [Fact]
+    public async Task HandleKeyUp_ResentIdenticalChunk_DoesNotDuplicateText()
+    {
+        // Server resends the same chunk twice (identical SHA observed in logs).
+        var mockTranscriberFactory = CreateMockTranscriberFactory(out _, "hello", "hello");
+        var mockClipboard = new Mock<IClipboardService>();
+        mockClipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
+        mockClipboard.Setup(c => c.SetTextAndPasteAsync(It.IsAny<string>())).ReturnsAsync(true);
+        var mockHistory = new Mock<IHistoryService>();
+
+        var controller = CreateController(
+            transcriberFactoryMock: mockTranscriberFactory,
+            clipboardMock: mockClipboard,
+            historyMock: mockHistory
+        );
+
+        await controller.HandleKeyDownAsync();
+        await controller.HandleKeyUpAsync();
+
+        // Only one copy of "hello" may be delivered / recorded.
+        mockHistory.Verify(h => h.AppendTranscription("hello", 1500), Times.Once);
+        mockHistory.Verify(
+            h => h.AppendTranscription(It.IsAny<string>(), It.IsAny<int>()),
+            Times.Once
+        );
     }
 
     #endregion
@@ -970,6 +1084,37 @@ public class TypelessControllerTests
 
         Assert.False(controller.IsRecording);
         Assert.False(controller.IsProcessing);
+    }
+
+    [Fact]
+    public async Task HandleKeyUp_WhenIdle_DoesNotBlockSubsequentKeyDown()
+    {
+        // Regression: a stray key-up while idle (e.g. tapping Right Alt with no
+        // recording) must be a no-op and must NOT swallow the next real press.
+        int recordCalls = 0;
+        var controller = CreateController(
+            recordFunc: (cfg, path, ct) =>
+            {
+                recordCalls++;
+                CreateDummyWavFile(path);
+                return Task.FromResult(
+                    new RecordingStats { DurationMs = 1500, BytesRecorded = 32000 }
+                );
+            }
+        );
+
+        // Stray tap: key-up with no recording
+        await controller.HandleKeyUpAsync();
+        Assert.False(controller.IsRecording);
+        Assert.Equal(0, recordCalls);
+
+        // The next real press must still start a recording (and stop normally)
+        await controller.HandleKeyDownAsync();
+        Assert.True(controller.IsRecording);
+        await controller.HandleKeyUpAsync();
+        Assert.False(controller.IsRecording);
+        Assert.False(controller.IsProcessing);
+        Assert.Equal(1, recordCalls);
     }
 
     #endregion

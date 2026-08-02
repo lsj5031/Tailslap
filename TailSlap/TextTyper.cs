@@ -19,6 +19,12 @@ public class TextTyper
     private readonly object _stateLock = new();
 
     /// <summary>
+    /// Set once per typing session so repeated per-chunk delivery failures
+    /// surface a single warning instead of a balloon per chunk.
+    /// </summary>
+    private bool _deliveryFailureNotified;
+
+    /// <summary>
     /// Result of a text typing operation.
     /// </summary>
     public sealed class TypeResult
@@ -95,6 +101,7 @@ public class TextTyper
                 // Reset baseline on window change
                 _baselineText = "";
                 _targetWindow = currentWindow;
+                _deliveryFailureNotified = false;
                 windowChanged = true;
             }
 
@@ -111,7 +118,7 @@ public class TextTyper
 
             if (autoPaste)
             {
-                NotificationService.ShowInfo(
+                NotificationService.ShowWarning(
                     "Window changed before text could be typed. The text is on your clipboard — paste manually with Ctrl+V."
                 );
             }
@@ -180,7 +187,9 @@ public class TextTyper
                         {
                             try
                             {
-                                Logger.Log($"TextTyper: SendKeys fallback failed: {ex.Message}");
+                                Logger.LogWarning(
+                                    $"TextTyper: SendKeys fallback failed: {ex.Message}"
+                                );
                             }
                             catch { }
                         }
@@ -198,15 +207,13 @@ public class TextTyper
 
                         try
                         {
-                            Logger.Log(
+                            Logger.LogWarning(
                                 "TextTyper: All delivery methods failed, text preserved on clipboard"
                             );
                         }
                         catch { }
 
-                        NotificationService.ShowInfo(
-                            "Text delivery failed. The text is on your clipboard — paste manually with Ctrl+V."
-                        );
+                        NotifyDeliveryFailureOnce();
                     }
                 }
             }
@@ -223,7 +230,7 @@ public class TextTyper
                 {
                     try
                     {
-                        Logger.Log($"TextTyper: SendKeys failed: {ex.Message}");
+                        Logger.LogWarning($"TextTyper: SendKeys failed: {ex.Message}");
                     }
                     catch { }
 
@@ -239,15 +246,13 @@ public class TextTyper
                         textOnClipboard = await _clip.SetTextAsync(newText).ConfigureAwait(false);
                         try
                         {
-                            Logger.Log(
+                            Logger.LogWarning(
                                 "TextTyper: All delivery methods failed, text preserved on clipboard"
                             );
                         }
                         catch { }
 
-                        NotificationService.ShowInfo(
-                            "Text delivery failed. The text is on your clipboard — paste manually with Ctrl+V."
-                        );
+                        NotifyDeliveryFailureOnce();
                     }
                 }
             }
@@ -288,7 +293,18 @@ public class TextTyper
         {
             _baselineText = "";
             _targetWindow = IntPtr.Zero;
+            _deliveryFailureNotified = false;
         }
+    }
+
+    private void NotifyDeliveryFailureOnce()
+    {
+        if (_deliveryFailureNotified)
+            return;
+        _deliveryFailureNotified = true;
+        NotificationService.ShowWarning(
+            "Text delivery failed. The text is on your clipboard — paste manually with Ctrl+V."
+        );
     }
 
     /// <summary>
@@ -365,6 +381,59 @@ public class TextTyper
         }
 
         return commonLen;
+    }
+
+    /// <summary>
+    /// Merges a streaming transcription chunk into the accumulated text instead of
+    /// blindly appending it. ASR servers commonly (a) resend an identical chunk or
+    /// (b) emit a final full-transcript snapshot after a series of partial deltas;
+    /// both patterns would otherwise deliver duplicated text to the target app.
+    /// </summary>
+    /// <returns>The merged accumulated text (never longer than necessary).</returns>
+    public static string MergeStreamChunk(string accumulated, string chunk)
+    {
+        if (string.IsNullOrEmpty(chunk))
+            return accumulated;
+        if (string.IsNullOrEmpty(accumulated))
+            return chunk;
+
+        // Resent chunk already fully present as a suffix of the accumulated text.
+        if (accumulated.EndsWith(chunk, StringComparison.Ordinal))
+            return accumulated;
+
+        // Final full-transcript snapshot: the chunk is a superset of everything
+        // accumulated so far — adopt it instead of appending a duplicate.
+        if (chunk.StartsWith(accumulated, StringComparison.Ordinal))
+            return chunk;
+
+        // A revised full-transcript snapshot shares a long prefix with the
+        // previous snapshot but diverges before the end. Replace the stale
+        // snapshot instead of treating the correction as a continuation.
+        int shorter = Math.Min(accumulated.Length, chunk.Length);
+        int commonPrefix = GetCommonPrefixLength(accumulated, chunk);
+        int minimumPrefix = Math.Max(4, (shorter + 2) / 3);
+        int maxLengthDelta = Math.Max(8, shorter / 2);
+        if (
+            commonPrefix >= minimumPrefix
+            && Math.Abs(accumulated.Length - chunk.Length) <= maxLengthDelta
+        )
+        {
+            return chunk;
+        }
+
+        // Partial overlap: the chunk re-includes the tail of the accumulated text
+        // (server resent the boundary). Append only the non-overlapping suffix.
+        int maxOverlap = Math.Min(accumulated.Length, chunk.Length);
+        for (int overlap = maxOverlap; overlap > 0; overlap--)
+        {
+            if (accumulated.EndsWith(chunk.Substring(0, overlap), StringComparison.Ordinal))
+            {
+                return accumulated + chunk.Substring(overlap);
+            }
+        }
+
+        // Disjoint continuation — normal delta append.
+        return accumulated + chunk;
     }
 
     #endregion

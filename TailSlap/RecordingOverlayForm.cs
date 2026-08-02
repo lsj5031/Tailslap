@@ -28,6 +28,7 @@ public sealed class RecordingOverlayForm : Form
     private const int PaddingH = 20;
     private const int BottomMargin = 48;
     private const int IndicatorRadius = 6;
+    private const int RecTagWidth = 46;
 
     // Wave shape: phase offsets create a flowing wave across bars
     private static readonly float[] BarPhaseOffsets = { 0f, 0.6f, 1.2f, 1.8f, 2.4f };
@@ -43,6 +44,10 @@ public sealed class RecordingOverlayForm : Form
     private const int WidthTransitionDuration = 250;
     private const int RenderInterval = 30; // ~33fps
     private const float WaveSpeed = 0.12f; // radians per tick for flowing wave
+
+    // Cached fonts (never dispose — shared for app lifetime)
+    private static readonly Font TextFont = new Font("Segoe UI", 10f);
+    private static readonly Font RecFont = new Font("Segoe UI", 8.5f, FontStyle.Bold);
 
     // Colors
     private static readonly Color CapsuleBg = Color.FromArgb(35, 35, 40);
@@ -84,6 +89,7 @@ public sealed class RecordingOverlayForm : Form
     }
 
     private OverlayMode _mode = OverlayMode.Waveform;
+    private bool _showRecTag;
 
     private enum OverlayState
     {
@@ -177,6 +183,7 @@ public sealed class RecordingOverlayForm : Form
         _transcriptionText = "";
         _statusText = statusText;
         _mode = mode;
+        _showRecTag = mode == OverlayMode.Waveform;
         _alpha = 0f;
         _smoothedRms = 0;
         Interlocked.Exchange(ref _rmsValue, 0f);
@@ -213,6 +220,7 @@ public sealed class RecordingOverlayForm : Form
         }
         _statusText = "Transcribing...";
         _mode = OverlayMode.Pulse;
+        _showRecTag = false;
         Interlocked.Exchange(ref _rmsValue, 0f);
         Invalidate();
     }
@@ -233,6 +241,7 @@ public sealed class RecordingOverlayForm : Form
         }
         _statusText = "Refining...";
         _mode = OverlayMode.Pulse;
+        _showRecTag = false;
         Interlocked.Exchange(ref _rmsValue, 0f);
         Invalidate();
     }
@@ -263,7 +272,7 @@ public sealed class RecordingOverlayForm : Form
     {
         using var g = Graphics.FromHwnd(Handle);
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        var font = new Font("Segoe UI", 10f);
+        var font = TextFont;
         string displayText = !string.IsNullOrEmpty(_transcriptionText)
             ? _transcriptionText
             : _statusText;
@@ -272,7 +281,8 @@ public sealed class RecordingOverlayForm : Form
 
         int indicatorWidth =
             _mode == OverlayMode.Waveform ? WaveformBarAreaWidth : IndicatorRadius * 2 + 8;
-        _targetWidth = indicatorWidth + 12 + textWidth + PaddingH * 2;
+        int recWidth = _mode == OverlayMode.Waveform && _showRecTag ? RecTagWidth : 0;
+        _targetWidth = recWidth + indicatorWidth + 12 + textWidth + PaddingH * 2;
         _targetWidth = Math.Max(MinWidth, _targetWidth);
 
         if (_state == OverlayState.Visible || _state == OverlayState.Entering)
@@ -414,6 +424,12 @@ public sealed class RecordingOverlayForm : Form
         // Draw indicator on left side
         float indicatorAreaX = PaddingH;
 
+        if (_mode == OverlayMode.Waveform && _showRecTag)
+        {
+            DrawRecTag(g, indicatorAreaX);
+            indicatorAreaX += RecTagWidth;
+        }
+
         if (_mode == OverlayMode.Waveform)
         {
             DrawWaveformBars(g, indicatorAreaX);
@@ -434,7 +450,7 @@ public sealed class RecordingOverlayForm : Form
         float textX = indicatorAreaX + indicatorWidth + 12;
         float textAreaWidth = rect.Width - textX - PaddingH;
 
-        using var textFont = new Font("Segoe UI", 10f);
+        var textFont = TextFont;
         using var textBrush = new SolidBrush(isActive ? TextColor : SubTextColor);
 
         var textRect = new RectangleF(textX, 0, textAreaWidth, CapsuleHeight);
@@ -445,6 +461,17 @@ public sealed class RecordingOverlayForm : Form
             FormatFlags = StringFormatFlags.NoWrap,
         };
         g.DrawString(displayText, textFont, textBrush, textRect, stringFormat);
+    }
+
+    /// <summary>Stockroom live tag: red dot + safety-orange REC caps.</summary>
+    private void DrawRecTag(Graphics g, float x)
+    {
+        float cy = CapsuleHeight / 2f;
+        using var dot = new SolidBrush(UiTheme.RecordRed);
+        g.FillEllipse(dot, x + 2, cy - 3.5f, 7, 7);
+        var font = RecFont;
+        using var brush = new SolidBrush(UiTheme.Orange);
+        g.DrawString("REC", font, brush, x + 14, cy - 7.5f);
     }
 
     private void DrawWaveformBars(Graphics g, float barAreaX)

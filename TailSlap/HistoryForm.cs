@@ -9,25 +9,35 @@ using TailSlap;
 
 public sealed class HistoryForm : Form
 {
-    private ListBox _list;
-    private TextBox _orig;
-    private TextBox _ref;
-    private RichTextBox _diff;
-    private TabControl _tabControl;
+    // Fields assigned from Build* helpers; null! is the definite-assignment contract.
+    private ListView _list = null!;
+    private TextBox _orig = null!;
+    private TextBox _ref = null!;
+    private RichTextBox _diff = null!;
+    private TabControl _tabControl = null!;
     private System.Windows.Forms.Timer? _refreshTimer;
     private DateTime _lastRefresh;
-    private int _lastCount;
-    private Button _refreshButton;
-    private Label _statusLabel;
-    private TextBox _searchBox;
+    private Button _refreshButton = null!;
+    private Label _statusLabel = null!;
+    private Label _statusLamp = null!;
+    private TextBox _searchBox = null!;
+    private Label _headerSubtitle = null!;
     private readonly IHistoryService _history;
-    private List<(DateTime Timestamp, string Model, string Original, string Refined)> _allItems =
-        new();
     private List<(
         DateTime Timestamp,
         string Model,
         string Original,
-        string Refined
+        string Refined,
+        string? Status,
+        string? Error
+    )> _allItems = new();
+    private List<(
+        DateTime Timestamp,
+        string Model,
+        string Original,
+        string Refined,
+        string? Status,
+        string? Error
     )> _visibleItems = new();
 
     public HistoryForm(IHistoryService history)
@@ -35,20 +45,139 @@ public sealed class HistoryForm : Form
         _history = history ?? throw new ArgumentNullException(nameof(history));
         Text = "Encrypted Refinement History";
         StartPosition = FormStartPosition.CenterScreen;
-        Width = DpiHelper.Scale(950);
-        Height = DpiHelper.Scale(650);
+        Size = new Size(DpiHelper.Scale(980), DpiHelper.Scale(660));
+        MinimumSize = new Size(DpiHelper.Scale(760), DpiHelper.Scale(500));
         AutoScaleMode = AutoScaleMode.Dpi;
         Icon = MainForm.LoadMainIcon();
+        BackColor = UiTheme.Ground;
+        Font = UiTheme.BodyFont;
+
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = DpiHelper.Scale(new Padding(14)),
+            ColumnCount = 1,
+            RowCount = 5,
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // header
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // search
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // split
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // buttons
+        root.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // status
+
+        root.Controls.Add(BuildHeader(), 0, 0);
+        _searchBox = new TextBox
+        {
+            Dock = DockStyle.Top,
+            PlaceholderText = "Search original, refined, or model…",
+            Height = DpiHelper.Scale(28),
+            Margin = new Padding(0, 0, 0, DpiHelper.Scale(8)),
+        };
+        _searchBox.TextChanged += (_, __) => ApplyFilter();
+        root.Controls.Add(_searchBox, 0, 1);
+        root.Controls.Add(BuildContent(), 0, 2);
+        root.Controls.Add(BuildButtons(), 0, 3);
+        root.Controls.Add(BuildStatus(), 0, 4);
+        Controls.Add(root);
+
+        KeyPreview = true;
+        KeyDown += (s, e) =>
+        {
+            if (e.KeyCode == Keys.F5)
+                RefreshHistory();
+        };
+
+        Load += (_, __) =>
+        {
+            Populate();
+            _tabControl.SelectedIndex = 2;
+            _lastRefresh = DateTime.Now;
+        };
 
         InitializeRefreshTimer();
 
+        Activated += (_, __) =>
+        {
+            if (DateTime.Now - _lastRefresh > TimeSpan.FromSeconds(1))
+                RefreshHistory();
+        };
+    }
+
+    private TableLayoutPanel BuildHeader()
+    {
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            RowCount = 1,
+            Margin = new Padding(0, 0, 0, DpiHelper.Scale(10)),
+        };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        var logo = new PictureBox
+        {
+            Image = BrandedMessageBox.GetLogoBitmap(),
+            SizeMode = PictureBoxSizeMode.StretchImage,
+            Size = new Size(DpiHelper.Scale(40), DpiHelper.Scale(40)),
+            Margin = new Padding(0, 0, DpiHelper.Scale(12), 0),
+        };
+
+        var titleBlock = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 2,
+        };
+        var title = new Label
+        {
+            Text = "Refinement History",
+            Font = UiTheme.TitleFont,
+            ForeColor = UiTheme.Ink,
+            AutoSize = true,
+        };
+        _headerSubtitle = new Label { AutoSize = true, ForeColor = UiTheme.Muted };
+
+        titleBlock.Controls.Add(title, 0, 0);
+        titleBlock.Controls.Add(_headerSubtitle, 0, 1);
+
+        header.Controls.Add(logo, 0, 0);
+        header.Controls.Add(titleBlock, 1, 0);
+        return header;
+    }
+
+    private SplitContainer BuildContent()
+    {
         var split = new SplitContainer
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
-            SplitterDistance = DpiHelper.Scale(300),
+            SplitterDistance = DpiHelper.Scale(380),
+            SplitterWidth = DpiHelper.Scale(5),
         };
-        _list = new ListBox { Dock = DockStyle.Fill, HorizontalScrollbar = true };
+
+        _list = new ListView
+        {
+            Dock = DockStyle.Fill,
+            View = View.Details,
+            FullRowSelect = true,
+            MultiSelect = false,
+            HideSelection = false,
+            GridLines = false,
+            ShowItemToolTips = true,
+            Font = UiTheme.MonoFont,
+            BorderStyle = BorderStyle.FixedSingle,
+            BackColor = UiTheme.Panel,
+        };
+        _list.Columns.Add("Time", DpiHelper.Scale(118));
+        _list.Columns.Add("State", DpiHelper.Scale(64));
+        _list.Columns.Add("Model", DpiHelper.Scale(150));
+        _list.Columns.Add("Original → Refined", -2);
+        _list.Resize += (_, __) => UiTheme.FillLastListViewColumn(_list);
+        UiTheme.FillLastListViewColumn(_list);
         split.Panel1.Controls.Add(_list);
 
         _tabControl = new TabControl { Dock = DockStyle.Fill };
@@ -57,50 +186,48 @@ public sealed class HistoryForm : Form
             Multiline = true,
             Dock = DockStyle.Fill,
             ScrollBars = ScrollBars.Both,
-            Font = new Font(FontFamily.GenericMonospace, DpiHelper.ScaleFont(9)),
+            Font = UiTheme.MonoFont,
             ReadOnly = true,
+            BackColor = UiTheme.Panel,
         };
         _ref = new TextBox
         {
             Multiline = true,
             Dock = DockStyle.Fill,
             ScrollBars = ScrollBars.Both,
-            Font = new Font(FontFamily.GenericMonospace, DpiHelper.ScaleFont(9)),
+            Font = UiTheme.MonoFont,
             ReadOnly = true,
+            BackColor = UiTheme.Panel,
         };
         _diff = new RichTextBox
         {
             Dock = DockStyle.Fill,
             ScrollBars = RichTextBoxScrollBars.Both,
-            Font = new Font(FontFamily.GenericMonospace, DpiHelper.ScaleFont(9)),
+            Font = UiTheme.MonoFont,
             ReadOnly = true,
             WordWrap = false,
+            BackColor = UiTheme.Panel,
         };
         _tabControl.TabPages.Add(new TabPage("Original") { Controls = { _orig } });
         _tabControl.TabPages.Add(new TabPage("Refined") { Controls = { _ref } });
         _tabControl.TabPages.Add(new TabPage("Diff") { Controls = { _diff } });
         split.Panel2.Controls.Add(_tabControl);
 
-        // Add status label
-        _statusLabel = new Label
-        {
-            Dock = DockStyle.Bottom,
-            Height = DpiHelper.Scale(20),
-            Text = "Status: Ready",
-            ForeColor = Color.DarkGray,
-            TextAlign = ContentAlignment.MiddleLeft,
-            Padding = DpiHelper.Scale(new Padding(5, 0, 0, 0)),
-        };
-        Controls.Add(_statusLabel);
+        _list.SelectedIndexChanged += (_, __) => ShowSelected();
+        return split;
+    }
 
-        var buttons = new FlowLayoutPanel
+    private FlowLayoutPanel BuildButtons()
+    {
+        var panel = new FlowLayoutPanel
         {
-            Dock = DockStyle.Bottom,
+            Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.RightToLeft,
-            Padding = DpiHelper.Scale(new Padding(10)),
+            WrapContents = false,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            WrapContents = false,
+            Margin = DpiHelper.Scale(new Padding(0, 6, 0, 0)),
+            Padding = DpiHelper.Scale(new Padding(0, 6, 0, 0)),
         };
         var copyR = new Button
         {
@@ -138,6 +265,13 @@ public sealed class HistoryForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
+
+        UiTheme.StyleButton(copyR, UiTheme.ButtonKind.Secondary);
+        UiTheme.StyleButton(copyO, UiTheme.ButtonKind.Secondary);
+        UiTheme.StyleButton(copyD, UiTheme.ButtonKind.Secondary);
+        UiTheme.StyleButton(_refreshButton, UiTheme.ButtonKind.Secondary);
+        UiTheme.StyleButton(clear, UiTheme.ButtonKind.Danger);
+        UiTheme.StyleButton(export, UiTheme.ButtonKind.Secondary);
 
         copyR.Click += (_, __) =>
         {
@@ -201,7 +335,7 @@ public sealed class HistoryForm : Form
             {
                 try
                 {
-                    Logger.Log($"Clear encrypted history failed: {ex.Message}");
+                    Logger.LogWarning($"Clear encrypted history failed: {ex.Message}");
                 }
                 catch { }
                 NotificationService.ShowError("Failed to clear encrypted history.");
@@ -209,48 +343,27 @@ public sealed class HistoryForm : Form
         };
         export.Click += (_, __) => ExportVisible();
 
-        buttons.Controls.Add(copyR);
-        buttons.Controls.Add(copyO);
-        buttons.Controls.Add(copyD);
-        buttons.Controls.Add(export);
-        buttons.Controls.Add(_refreshButton);
-        buttons.Controls.Add(clear);
+        // Right-to-left flow: first added renders rightmost.
+        panel.Controls.Add(copyR);
+        panel.Controls.Add(copyO);
+        panel.Controls.Add(copyD);
+        panel.Controls.Add(export);
+        panel.Controls.Add(_refreshButton);
+        panel.Controls.Add(clear);
+        return panel;
+    }
 
-        _searchBox = new TextBox
-        {
-            Dock = DockStyle.Top,
-            PlaceholderText = "Search original, refined, or model…",
-            Height = DpiHelper.Scale(28),
-        };
-        _searchBox.TextChanged += (_, __) => ApplyFilter();
+    private TableLayoutPanel BuildStatus() => UiTheme.StatusRow(out _statusLamp, out _statusLabel);
 
-        Controls.Add(split);
-        Controls.Add(_searchBox);
-        Controls.Add(buttons);
-
-        Load += (_, __) =>
-        {
-            Populate();
-            _tabControl.SelectedIndex = 2;
-            _lastRefresh = DateTime.Now;
-            _lastCount = _list.Items.Count;
-        };
-        _list.SelectedIndexChanged += (_, __) => ShowSelected();
-
-        // Add keyboard shortcut for refresh
-        KeyPreview = true;
-        KeyDown += (s, e) =>
-        {
-            if (e.KeyCode == Keys.F5)
-                RefreshHistory();
-        };
-
-        // Refresh when form gains focus
-        Activated += (_, __) =>
-        {
-            if (DateTime.Now - _lastRefresh > TimeSpan.FromSeconds(1))
-                RefreshHistory();
-        };
+    private void SetStatus(string text, Color lamp)
+    {
+        _statusLabel.Text = text;
+        _statusLabel.ForeColor =
+            lamp == UiTheme.SuccessText ? UiTheme.SuccessText
+            : lamp == UiTheme.ErrorText ? UiTheme.ErrorText
+            : lamp == UiTheme.WarnText ? UiTheme.WarnText
+            : UiTheme.Muted;
+        _statusLamp.BackColor = lamp;
     }
 
     private void Populate()
@@ -262,11 +375,10 @@ public sealed class HistoryForm : Form
         }
         catch (Exception ex)
         {
-            _statusLabel.Text = $"Status: Error - {ex.Message}";
-            _statusLabel.ForeColor = Color.Red;
+            SetStatus($"Status: Error - {ex.Message}", UiTheme.ErrorText);
             try
             {
-                Logger.Log($"Encrypted history populate failed: {ex.Message}");
+                Logger.LogWarning($"Encrypted history populate failed: {ex.Message}");
             }
             catch { }
         }
@@ -276,47 +388,89 @@ public sealed class HistoryForm : Form
     {
         var query = _searchBox?.Text ?? "";
         _visibleItems = _allItems
-            .Where(e => HistoryQuery.Matches(query, e.Original, e.Refined, e.Model))
+            .Where(e => HistoryQuery.Matches(query, e.Original, e.Refined, e.Model, e.Error))
             .ToList();
 
         _list.BeginUpdate();
         _list.Items.Clear();
         int corruptedCount = 0;
-        foreach (var (timestamp, model, original, refined) in _visibleItems)
+        int failedCount = 0;
+        foreach (var (timestamp, model, original, refined, status, error) in _visibleItems)
         {
-            string previewOriginal = Preview(original);
-            string previewRefined = Preview(refined);
+            bool isFailed = string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase);
+            bool isCorrupt =
+                !isFailed && (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(refined));
 
-            if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(refined))
+            string preview;
+            string stateText;
+            Color back;
+            Color stateColor;
+            if (isFailed)
+            {
+                failedCount++;
+                stateText = "FAIL";
+                stateColor = UiTheme.ErrorText;
+                back = UiTheme.ErrorBack;
+                preview = Preview(string.IsNullOrWhiteSpace(error) ? "failed" : error);
+            }
+            else if (isCorrupt)
             {
                 corruptedCount++;
-                _list.Items.Add($"{timestamp:MM-dd HH:mm} [{model}] ⚠️ CORRUPTED ENTRY");
+                stateText = "CORRUPT";
+                stateColor = UiTheme.WarnText;
+                back = UiTheme.WarnBack;
+                preview = Preview(original ?? refined ?? "");
             }
             else
             {
-                _list.Items.Add(
-                    $"{timestamp:MM-dd HH:mm} [{model}] {previewOriginal} -> {previewRefined}"
-                );
+                stateText = "OK";
+                stateColor = UiTheme.SuccessText;
+                back = UiTheme.Panel;
+                preview = Preview(original) + " → " + Preview(refined);
             }
+
+            var item = new ListViewItem(timestamp.ToString("MM-dd HH:mm"))
+            {
+                BackColor = back,
+                ForeColor = UiTheme.Ink,
+                UseItemStyleForSubItems = false,
+                Tag = timestamp,
+                ToolTipText = $"{timestamp:yyyy-MM-dd HH:mm}  [{model}]  {status ?? "ok"}",
+            };
+            item.SubItems.Add(stateText);
+            item.SubItems.Add(model);
+            item.SubItems.Add(preview);
+
+            item.SubItems[1].ForeColor = stateColor;
+            item.SubItems[1].Font = UiTheme.MonoBoldFont;
+            item.SubItems[2].ForeColor = UiTheme.Muted;
+            item.SubItems[3].ForeColor = UiTheme.Ink;
+
+            _list.Items.Add(item);
         }
         _list.EndUpdate();
 
+        string suffix = $"{_visibleItems.Count}/{_allItems.Count} shown";
+        if (failedCount > 0)
+            suffix += $" — {failedCount} failed";
         if (corruptedCount > 0)
-        {
-            _statusLabel.Text =
-                $"Status: {_visibleItems.Count}/{_allItems.Count} shown — {corruptedCount} corrupted";
-            _statusLabel.ForeColor = Color.Orange;
-        }
-        else
-        {
-            _statusLabel.Text =
-                $"Status: {_visibleItems.Count}/{_allItems.Count} shown"
-                + (string.IsNullOrWhiteSpace(query) ? "" : " (filtered)");
-            _statusLabel.ForeColor = Color.DarkGray;
-        }
+            suffix += $" — {corruptedCount} corrupted";
+
+        var lamp =
+            failedCount > 0 ? UiTheme.ErrorText
+            : corruptedCount > 0 ? UiTheme.WarnText
+            : UiTheme.SuccessText;
+        SetStatus(
+            $"Status: {suffix}" + (string.IsNullOrWhiteSpace(query) ? "" : " (filtered)"),
+            lamp
+        );
+
+        _headerSubtitle.Text =
+            $"{_allItems.Count} entr{(_allItems.Count == 1 ? "y" : "ies")} · encrypted (DPAPI)";
+        _headerSubtitle.ForeColor = UiTheme.Muted;
 
         if (_list.Items.Count > 0)
-            _list.SelectedIndex = _list.Items.Count - 1;
+            _list.SelectedIndices.Add(_list.Items.Count - 1);
         else
         {
             _orig.Clear();
@@ -364,7 +518,7 @@ public sealed class HistoryForm : Form
         {
             try
             {
-                Logger.Log($"History export failed: {ex.GetType().Name}");
+                Logger.LogWarning($"History export failed: {ex.GetType().Name}");
             }
             catch { }
             NotificationService.ShowError("Failed to export history.");
@@ -383,36 +537,44 @@ public sealed class HistoryForm : Form
     {
         try
         {
-            var idx = _list.SelectedIndex;
+            var idx = _list.SelectedIndices.Count > 0 ? _list.SelectedIndices[0] : -1;
             if (idx < 0 || idx >= _visibleItems.Count)
                 return;
 
-            var (timestamp, model, original, refined) = _visibleItems[idx];
+            var (timestamp, model, original, refined, status, error) = _visibleItems[idx];
 
             _orig.Text = original;
             _ref.Text = refined;
 
-            // Show decryption status
-            if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(refined))
+            if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
             {
-                _statusLabel.Text = "Status: Encrypted entry - decryption may have failed";
-                _statusLabel.ForeColor = Color.Orange;
+                SetStatus("Status: Failed entry — see error", UiTheme.ErrorText);
+                _diff.Clear();
+                _diff.SelectionColor = UiTheme.ErrorText;
+                _diff.AppendText($"ERROR: {error ?? "unknown"}\n\n");
+                if (!string.IsNullOrWhiteSpace(original))
+                {
+                    _diff.AppendText("ORIGINAL:\n" + original + "\n");
+                }
+                return;
+            }
+            else if (string.IsNullOrEmpty(original) || string.IsNullOrEmpty(refined))
+            {
+                SetStatus("Status: Encrypted entry - decryption may have failed", UiTheme.WarnText);
             }
             else
             {
-                _statusLabel.Text = "Status: Decrypted successfully";
-                _statusLabel.ForeColor = Color.DarkGreen;
+                SetStatus("Status: Decrypted successfully", UiTheme.SuccessText);
             }
 
             RenderColoredDiff(original, refined);
         }
         catch (Exception ex)
         {
-            _statusLabel.Text = $"Status: Error showing entry - {ex.Message}";
-            _statusLabel.ForeColor = Color.Red;
+            SetStatus($"Status: Error showing entry - {ex.Message}", UiTheme.ErrorText);
             try
             {
-                Logger.Log($"Show selected encrypted history failed: {ex.Message}");
+                Logger.LogWarning($"Show selected encrypted history failed: {ex.Message}");
             }
             catch { }
         }
@@ -524,11 +686,10 @@ public sealed class HistoryForm : Form
         }
         catch (Exception ex)
         {
-            _statusLabel.Text = $"Status: Error checking updates - {ex.Message}";
-            _statusLabel.ForeColor = Color.Red;
+            SetStatus($"Status: Error checking updates - {ex.Message}", UiTheme.ErrorText);
             try
             {
-                Logger.Log($"Encrypted checkForNewEntries failed: {ex.Message}");
+                Logger.LogWarning($"Encrypted checkForNewEntries failed: {ex.Message}");
             }
             catch { }
         }
@@ -538,41 +699,36 @@ public sealed class HistoryForm : Form
     {
         try
         {
-            // Preserve current selection
-            int selectedIndex = _list.SelectedIndex;
-            string? selectedItem =
-                selectedIndex >= 0 && selectedIndex < _list.Items.Count
-                    ? _list.Items[selectedIndex].ToString()
+            DateTime? selectedTs =
+                _list.SelectedIndices.Count > 0 && _list.SelectedIndices[0] < _visibleItems.Count
+                    ? _visibleItems[_list.SelectedIndices[0]].Timestamp
                     : null;
 
             Populate();
 
-            // Try to restore selection
-            if (!string.IsNullOrEmpty(selectedItem))
+            if (selectedTs.HasValue)
             {
-                for (int i = 0; i < _list.Items.Count; i++)
+                for (int i = 0; i < _visibleItems.Count; i++)
                 {
-                    if (_list.Items[i].ToString() == selectedItem)
+                    if (_visibleItems[i].Timestamp == selectedTs.Value)
                     {
-                        _list.SelectedIndex = i;
+                        _list.SelectedIndices.Clear();
+                        _list.SelectedIndices.Add(i);
                         break;
                     }
                 }
             }
 
             _lastRefresh = DateTime.Now;
-            _lastCount = _list.Items.Count;
 
-            // Update button text to show last refresh
             _refreshButton.Text = $"Refresh (F5) - {_lastRefresh:HH:mm:ss}";
         }
         catch (Exception ex)
         {
-            _statusLabel.Text = $"Status: Error refreshing - {ex.Message}";
-            _statusLabel.ForeColor = Color.Red;
+            SetStatus($"Status: Error refreshing - {ex.Message}", UiTheme.ErrorText);
             try
             {
-                Logger.Log($"Encrypted refresh history failed: {ex.Message}");
+                Logger.LogWarning($"Encrypted refresh history failed: {ex.Message}");
             }
             catch { }
             NotificationService.ShowError("Failed to refresh encrypted history.");
@@ -583,11 +739,8 @@ public sealed class HistoryForm : Form
     {
         try
         {
-            if (_refreshTimer != null)
-            {
-                _refreshTimer.Stop();
-                _refreshTimer.Dispose();
-            }
+            _refreshTimer?.Stop();
+            _refreshTimer?.Dispose();
         }
         catch { }
         base.OnFormClosed(e);

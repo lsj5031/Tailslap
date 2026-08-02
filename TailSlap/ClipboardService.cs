@@ -257,7 +257,7 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                Logger.Log(
+                Logger.LogWarning(
                     $"DescribeWindow: GetWindowText failed: {ex.GetType().Name}: {ex.Message}"
                 );
             }
@@ -280,7 +280,7 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                Logger.Log(
+                Logger.LogWarning(
                     $"DescribeWindow: GetClassName failed: {ex.GetType().Name}: {ex.Message}"
                 );
             }
@@ -310,7 +310,7 @@ public sealed class ClipboardService : IClipboardService
                     {
                         try
                         {
-                            Logger.Log(
+                            Logger.LogWarning(
                                 $"DescribeWindow: Process.GetProcessById failed: {ex.GetType().Name}: {ex.Message}"
                             );
                         }
@@ -332,7 +332,7 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                Logger.Log(
+                Logger.LogWarning(
                     $"DescribeWindow: GetWindowThreadProcessId failed: {ex.GetType().Name}: {ex.Message}"
                 );
             }
@@ -393,7 +393,9 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                Logger.Log($"[{prefix}] Clipboard state error: {ex.GetType().Name}: {ex.Message}");
+                Logger.LogWarning(
+                    $"[{prefix}] Clipboard state error: {ex.GetType().Name}: {ex.Message}"
+                );
             }
             catch { }
         }
@@ -454,7 +456,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Step 1 ERROR: Read original clipboard failed: {ex.GetType().Name}: {ex.Message}"
                     );
                 }
@@ -489,7 +491,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Step 2 ERROR: GetForegroundWindow failed: {ex.GetType().Name}: {ex.Message}"
                     );
                 }
@@ -541,7 +543,7 @@ public sealed class ClipboardService : IClipboardService
                     {
                         try
                         {
-                            Logger.Log(
+                            Logger.LogWarning(
                                 $"Step 3b ERROR: GetClassName failed: {ex.GetType().Name}: {ex.Message}"
                             );
                         }
@@ -563,7 +565,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Step 3 ERROR: Window analysis failed: {ex.GetType().Name}: {ex.Message}"
                     );
                 }
@@ -629,7 +631,7 @@ public sealed class ClipboardService : IClipboardService
                 continueUiaAttempts = false;
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Step 4 ERROR: UIA selection error: {ex.GetType().Name}: {ex.Message}"
                     );
                 }
@@ -683,7 +685,7 @@ public sealed class ClipboardService : IClipboardService
                     continueUiaAttempts = false;
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"Step 4 ERROR: UIA(FromPoint) selection error: {ex.GetType().Name}: {ex.Message}"
                         );
                     }
@@ -729,7 +731,7 @@ public sealed class ClipboardService : IClipboardService
                     continueUiaAttempts = false;
                     try
                     {
-                        Logger.Log($"UIA(deep) error: {ex.GetType().Name}: {ex.Message}");
+                        Logger.LogWarning($"UIA(deep) error: {ex.GetType().Name}: {ex.Message}");
                     }
                     catch { }
                 }
@@ -739,7 +741,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         "Step 4e: UIA helper failed or timed out; skipping additional UI Automation attempts"
                     );
                 }
@@ -782,7 +784,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Step 5 ERROR: Win32 selection error: {ex.GetType().Name}: {ex.Message}"
                     );
                 }
@@ -873,7 +875,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log("Sublime: SendKeys failed, trying Double Ctrl+C");
+                    Logger.LogWarning("Sublime: SendKeys failed, trying Double Ctrl+C");
                 }
                 catch { }
                 if (
@@ -902,7 +904,9 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log("Firefox: SendKeys failed, trying alternative copy methods...");
+                    Logger.LogWarning(
+                        "Firefox: SendKeys failed, trying alternative copy methods..."
+                    );
                 }
                 catch { }
                 // Try standard Ctrl+C with SendInput for Firefox
@@ -976,7 +980,7 @@ public sealed class ClipboardService : IClipboardService
 
             try
             {
-                Logger.Log(
+                Logger.LogWarning(
                     $"All copy attempts failed to update clipboard{(isFirefox ? " [Firefox]" : "")}"
                 );
             }
@@ -1015,7 +1019,7 @@ public sealed class ClipboardService : IClipboardService
                     {
                         try
                         {
-                            Logger.Log(
+                            Logger.LogWarning(
                                 $"Fallback clipboard read failed: {ex.GetType().Name}: {ex.Message}"
                             );
                         }
@@ -1027,7 +1031,7 @@ public sealed class ClipboardService : IClipboardService
                 {
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"No selection captured; using clipboard fallback (elapsed {sw.ElapsedMilliseconds} ms){(isFirefox ? " [Firefox]" : "")}, len={fallback.Length}"
                         );
                     }
@@ -1041,21 +1045,21 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.Error(
                         $"Firefox capture failed: No copy methods succeeded and no clipboard fallback available (elapsed {sw.ElapsedMilliseconds} ms)"
                     );
                 }
                 catch { }
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         "Firefox troubleshooting: Make sure text is highlighted in Firefox before triggering hotkey"
                     );
                 }
                 catch { }
                 try
                 {
-                    Logger.Log("=== CAPTURE FAILED (Firefox) ===");
+                    Logger.Error("=== CAPTURE FAILED (Firefox) ===");
                 }
                 catch { }
             }
@@ -1063,14 +1067,14 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Step FINAL: No selection captured; not falling back to existing clipboard (elapsed {sw.ElapsedMilliseconds} ms)"
                     );
                 }
                 catch { }
                 try
                 {
-                    Logger.Log("=== CAPTURE FAILED ===");
+                    Logger.Error("=== CAPTURE FAILED ===");
                 }
                 catch { }
             }
@@ -1113,7 +1117,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log("SetTextAsync: Timed out waiting for UI thread");
+                    Logger.LogWarning("SetTextAsync: Timed out waiting for UI thread");
                 }
                 catch { }
                 NotificationService.ShowError("Failed to set clipboard text. Please try again.");
@@ -1155,7 +1159,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"SetText failed (retries left {retries}): {ex.GetType().Name}: {ex.Message}"
                     );
                 }
@@ -1253,7 +1257,7 @@ public sealed class ClipboardService : IClipboardService
                         foregroundWindow,
                         out uint targetProcessId
                     );
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"PasteAsync: Paste blocked because target process {targetProcessId} is elevated above TailSlap"
                     );
                 }
@@ -1269,7 +1273,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         "PasteAsync: Modifier release wait timed out; proceeding with paste"
                     );
                 }
@@ -1282,7 +1286,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log("All paste methods failed");
+                    Logger.Error("All paste methods failed");
                 }
                 catch { }
                 NotificationService.ShowError("Auto-paste failed. Please paste manually (Ctrl+V).");
@@ -1294,7 +1298,7 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                Logger.Log($"Paste failed: {ex.GetType().Name}: {ex.Message}");
+                Logger.Error($"Paste failed: {ex.GetType().Name}: {ex.Message}");
             }
             catch { }
             NotificationService.ShowError($"Paste operation failed: {ex.Message}");
@@ -1351,7 +1355,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log($"{method} failed: {ex.GetType().Name}: {ex.Message}");
+                    Logger.LogWarning($"{method} failed: {ex.GetType().Name}: {ex.Message}");
                 }
                 catch { }
             }
@@ -1450,7 +1454,7 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                Logger.Log(
+                Logger.LogWarning(
                     $"Paste verification failed: target text length unchanged ({lengthBefore}->{lengthAfter})"
                 );
             }
@@ -1601,7 +1605,7 @@ public sealed class ClipboardService : IClipboardService
         {
             try
             {
-                Logger.Log($"{label} helper failed: {result.FailureReason}");
+                Logger.LogWarning($"{label} helper failed: {result.FailureReason}");
             }
             catch { }
         }
@@ -1785,7 +1789,7 @@ public sealed class ClipboardService : IClipboardService
                 {
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"TryCopyAndRead: Window preparation failed: {ex.GetType().Name}: {ex.Message}"
                         );
                     }
@@ -1946,7 +1950,7 @@ public sealed class ClipboardService : IClipboardService
                 {
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"Firefox: Copy method {method} FAILED: no clipboard change, seq={seqBefore}->{GetClipboardSequenceNumber()}"
                         );
                     }
@@ -1968,7 +1972,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"Firefox: Copy method {method} EXCEPTION: {ex.GetType().Name}: {ex.Message}"
                     );
                 }
@@ -1978,7 +1982,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 try
                 {
-                    Logger.Log(
+                    Logger.LogWarning(
                         $"TryCopyAndRead({method}) error: {ex.GetType().Name}: {ex.Message}"
                     );
                 }

@@ -56,6 +56,74 @@ public class HistoryServiceTests
     }
 
     [Fact]
+    public void AppendTranscriptionFailure_RoundTripsFailedEntry()
+    {
+        var baseDirectory = CreateTempDirectory();
+
+        try
+        {
+            var service = new HistoryService(baseDirectory);
+
+            service.AppendTranscriptionFailure("partial text", 4321, "connection refused");
+
+            var entry = Assert.Single(service.ReadAllTranscriptions());
+            Assert.Equal("failed", entry.Status);
+            Assert.Equal("connection refused", entry.Error);
+            Assert.Equal("partial text", entry.Text);
+            Assert.Equal(4321, entry.RecordingDurationMs);
+        }
+        finally
+        {
+            DeleteTempDirectory(baseDirectory);
+        }
+    }
+
+    [Fact]
+    public void AppendTranscriptionFailure_NullPartialText_StillStored()
+    {
+        var baseDirectory = CreateTempDirectory();
+
+        try
+        {
+            var service = new HistoryService(baseDirectory);
+
+            service.AppendTranscriptionFailure(null, 1000, "timeout");
+
+            var entry = Assert.Single(service.ReadAllTranscriptions());
+            Assert.Equal("failed", entry.Status);
+            Assert.Equal("timeout", entry.Error);
+            Assert.Equal("", entry.Text);
+        }
+        finally
+        {
+            DeleteTempDirectory(baseDirectory);
+        }
+    }
+
+    [Fact]
+    public void AppendRefinementFailure_RoundTripsFailedEntry()
+    {
+        var baseDirectory = CreateTempDirectory();
+
+        try
+        {
+            var service = new HistoryService(baseDirectory);
+
+            service.AppendRefinementFailure("original text", "LLM service unavailable");
+
+            var entry = Assert.Single(service.ReadAll());
+            Assert.Equal("failed", entry.Status);
+            Assert.Equal("LLM service unavailable", entry.Error);
+            Assert.Equal("original text", entry.Original);
+            Assert.Equal("", entry.Refined);
+        }
+        finally
+        {
+            DeleteTempDirectory(baseDirectory);
+        }
+    }
+
+    [Fact]
     public void Append_EmptyInputs_DoesNotCreateHistoryFiles()
     {
         var baseDirectory = CreateTempDirectory();

@@ -57,7 +57,7 @@ public sealed class HistoryService : IHistoryService
         {
             try
             {
-                Logger.Log($"DPAPI history encryption failed: {ex.Message}");
+                Logger.Error($"DPAPI history encryption failed: {ex.Message}");
             }
             catch { }
             // Fail gracefully: return empty string rather than crash
@@ -77,7 +77,7 @@ public sealed class HistoryService : IHistoryService
         {
             try
             {
-                Logger.Log($"DPAPI history decryption failed: {ex.Message}");
+                Logger.Error($"DPAPI history decryption failed: {ex.Message}");
             }
             catch { }
             return ""; // Return empty rather than crash; user can see there's corrupted data
@@ -128,7 +128,7 @@ public sealed class HistoryService : IHistoryService
             {
                 try
                 {
-                    Logger.Log($"Encrypted history append failed: {ex.Message}");
+                    Logger.Error($"Encrypted history append failed: {ex.Message}");
                 }
                 catch { }
                 NotificationService.ShowError(
@@ -138,9 +138,16 @@ public sealed class HistoryService : IHistoryService
         }
     }
 
-    public List<(DateTime Timestamp, string Model, string Original, string Refined)> ReadAll()
+    public List<(
+        DateTime Timestamp,
+        string Model,
+        string Original,
+        string Refined,
+        string? Status,
+        string? Error
+    )> ReadAll()
     {
-        var result = new List<(DateTime, string, string, string)>();
+        var result = new List<(DateTime, string, string, string, string?, string?)>();
         try
         {
             if (!File.Exists(_filePath))
@@ -160,14 +167,22 @@ public sealed class HistoryService : IHistoryService
                     var entry = JsonSerializer.Deserialize<HistoryEntry>(entryJson, JsonLOptions);
                     if (entry != null)
                     {
+                        bool isFailed = string.Equals(
+                            entry.Status,
+                            "failed",
+                            StringComparison.OrdinalIgnoreCase
+                        );
                         if (
-                            string.IsNullOrWhiteSpace(entry.OriginalCiphertext)
-                            || string.IsNullOrWhiteSpace(entry.RefinedCiphertext)
+                            !isFailed
+                            && (
+                                string.IsNullOrWhiteSpace(entry.OriginalCiphertext)
+                                || string.IsNullOrWhiteSpace(entry.RefinedCiphertext)
+                            )
                         )
                         {
                             try
                             {
-                                Logger.Log(
+                                Logger.LogWarning(
                                     "Encrypted history entry skipped: missing ciphertext payload"
                                 );
                             }
@@ -177,9 +192,19 @@ public sealed class HistoryService : IHistoryService
 
                         var decryptedOriginal = DecryptString(entry.OriginalCiphertext);
                         var decryptedRefined = DecryptString(entry.RefinedCiphertext);
+                        var decryptedError = DecryptString(entry.ErrorCiphertext ?? "");
 
                         result.Add(
-                            (entry.Timestamp, entry.Model, decryptedOriginal, decryptedRefined)
+                            (
+                                entry.Timestamp,
+                                entry.Model,
+                                decryptedOriginal,
+                                decryptedRefined,
+                                isFailed ? "failed" : null,
+                                isFailed && !string.IsNullOrWhiteSpace(decryptedError)
+                                    ? decryptedError
+                                    : null
+                            )
                         );
                     }
                 }
@@ -187,7 +212,7 @@ public sealed class HistoryService : IHistoryService
                 {
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"Encrypted history entry parse error (entry too long or invalid): {entryJson.Length} chars. Error: {ex.Message}"
                         );
                     }
@@ -199,7 +224,7 @@ public sealed class HistoryService : IHistoryService
         {
             try
             {
-                Logger.Log($"Encrypted history read failed: {ex.Message}");
+                Logger.Error($"Encrypted history read failed: {ex.Message}");
             }
             catch { }
             NotificationService.ShowError(
@@ -256,7 +281,7 @@ public sealed class HistoryService : IHistoryService
             {
                 try
                 {
-                    Logger.Log($"Encrypted transcription history append failed: {ex.Message}");
+                    Logger.Error($"Encrypted transcription history append failed: {ex.Message}");
                 }
                 catch { }
                 NotificationService.ShowError(
@@ -266,9 +291,15 @@ public sealed class HistoryService : IHistoryService
         }
     }
 
-    public List<(DateTime Timestamp, string Text, int RecordingDurationMs)> ReadAllTranscriptions()
+    public List<(
+        DateTime Timestamp,
+        string Text,
+        int RecordingDurationMs,
+        string? Status,
+        string? Error
+    )> ReadAllTranscriptions()
     {
-        var result = new List<(DateTime, string, int)>();
+        var result = new List<(DateTime, string, int, string?, string?)>();
         try
         {
             if (!File.Exists(_transcriptionFilePath))
@@ -291,11 +322,16 @@ public sealed class HistoryService : IHistoryService
                     );
                     if (entry != null)
                     {
-                        if (string.IsNullOrWhiteSpace(entry.TextCiphertext))
+                        bool isFailed = string.Equals(
+                            entry.Status,
+                            "failed",
+                            StringComparison.OrdinalIgnoreCase
+                        );
+                        if (!isFailed && string.IsNullOrWhiteSpace(entry.TextCiphertext))
                         {
                             try
                             {
-                                Logger.Log(
+                                Logger.LogWarning(
                                     "Encrypted transcription history entry skipped: missing ciphertext payload"
                                 );
                             }
@@ -304,14 +340,25 @@ public sealed class HistoryService : IHistoryService
                         }
 
                         var decryptedText = DecryptString(entry.TextCiphertext);
-                        result.Add((entry.Timestamp, decryptedText, entry.RecordingDurationMs));
+                        var decryptedError = DecryptString(entry.ErrorCiphertext ?? "");
+                        result.Add(
+                            (
+                                entry.Timestamp,
+                                decryptedText,
+                                entry.RecordingDurationMs,
+                                isFailed ? "failed" : null,
+                                isFailed && !string.IsNullOrWhiteSpace(decryptedError)
+                                    ? decryptedError
+                                    : null
+                            )
+                        );
                     }
                 }
                 catch (JsonException ex)
                 {
                     try
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"Encrypted transcription history parse error (entry too long or invalid): {entryJson.Length} chars. Error: {ex.Message}"
                         );
                     }
@@ -323,7 +370,7 @@ public sealed class HistoryService : IHistoryService
         {
             try
             {
-                Logger.Log($"Encrypted transcription history read failed: {ex.Message}");
+                Logger.Error($"Encrypted transcription history read failed: {ex.Message}");
             }
             catch { }
             NotificationService.ShowError(
@@ -396,7 +443,7 @@ public sealed class HistoryService : IHistoryService
         {
             try
             {
-                Logger.Log($"Encrypted {historyType} trim failed: {ex.Message}");
+                Logger.LogWarning($"Encrypted {historyType} trim failed: {ex.Message}");
             }
             catch { }
             NotificationService.ShowWarning(
@@ -484,6 +531,100 @@ public sealed class HistoryService : IHistoryService
         return entries.Where(entry => !string.IsNullOrWhiteSpace(entry)).ToList();
     }
 
+    /// <summary>
+    /// Records a failed transcription attempt (e.g. server error, timeout) so it
+    /// appears in the encrypted transcription history with a status marker.
+    /// </summary>
+    public void AppendTranscriptionFailure(
+        string? partialText,
+        int recordingDurationMs,
+        string errorSummary
+    )
+    {
+        lock (_fileLock)
+        {
+            try
+            {
+                Directory.CreateDirectory(_directory);
+
+                var entry = new TranscriptionHistoryEntry
+                {
+                    Timestamp = DateTime.Now,
+                    TextCiphertext = EncryptString(partialText ?? ""),
+                    RecordingDurationMs = Math.Max(0, recordingDurationMs),
+                    Status = "failed",
+                    ErrorCiphertext = EncryptString(TruncateForStorage(errorSummary)),
+                };
+
+                var line = JsonSerializer.Serialize(entry, JsonLOptions);
+                File.AppendAllText(_transcriptionFilePath, line + Environment.NewLine);
+                DiagnosticsEventSource.Log.HistoryAppend("transcription", line.Length);
+                _transcriptionAppendCount++;
+                if (_transcriptionAppendCount >= TrimInterval)
+                {
+                    _transcriptionAppendCount = TrimTranscriptions() ? TrimInterval - 1 : 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Error($"Encrypted transcription failure append failed: {ex.Message}");
+                }
+                catch { }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Records a failed refinement attempt (original text preserved, no refined output).
+    /// </summary>
+    public void AppendRefinementFailure(string original, string errorSummary)
+    {
+        lock (_fileLock)
+        {
+            try
+            {
+                Directory.CreateDirectory(_directory);
+
+                var entry = new HistoryEntry
+                {
+                    Timestamp = DateTime.Now,
+                    Model = string.Empty,
+                    OriginalCiphertext = EncryptString(original ?? ""),
+                    RefinedCiphertext = string.Empty,
+                    Status = "failed",
+                    ErrorCiphertext = EncryptString(TruncateForStorage(errorSummary)),
+                };
+
+                var line = JsonSerializer.Serialize(entry, JsonLOptions);
+                File.AppendAllText(_filePath, line + Environment.NewLine);
+                DiagnosticsEventSource.Log.HistoryAppend("refinement", line.Length);
+                _refinementAppendCount++;
+                if (_refinementAppendCount >= TrimInterval)
+                {
+                    _refinementAppendCount = Trim() ? TrimInterval - 1 : 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.Error($"Encrypted refinement failure append failed: {ex.Message}");
+                }
+                catch { }
+            }
+        }
+    }
+
+    private static string TruncateForStorage(string s)
+    {
+        if (string.IsNullOrEmpty(s))
+            return s ?? "";
+        s = s.Trim();
+        return s.Length <= 200 ? s : s.Substring(0, 200) + "…";
+    }
+
     public void ClearRefinementHistory()
     {
         lock (_fileLock)
@@ -497,7 +638,9 @@ public sealed class HistoryService : IHistoryService
             {
                 try
                 {
-                    Logger.Log($"Failed to clear encrypted refinement history: {ex.Message}");
+                    Logger.LogWarning(
+                        $"Failed to clear encrypted refinement history: {ex.Message}"
+                    );
                 }
                 catch { }
                 NotificationService.ShowError(
@@ -520,7 +663,9 @@ public sealed class HistoryService : IHistoryService
             {
                 try
                 {
-                    Logger.Log($"Failed to clear encrypted transcription history: {ex.Message}");
+                    Logger.LogWarning(
+                        $"Failed to clear encrypted transcription history: {ex.Message}"
+                    );
                 }
                 catch { }
                 NotificationService.ShowError(

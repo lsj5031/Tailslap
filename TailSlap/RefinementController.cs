@@ -110,12 +110,13 @@ public sealed class RefinementController : IRefinementController
         }
         catch (Exception ex)
         {
-            Logger.Log("Error cancelling refinement: " + ex.Message);
+            Logger.LogWarning("Error cancelling refinement: " + ex.Message);
         }
     }
 
     private async Task<bool> RefineSelectionAsync(AppConfig cfg, CancellationToken ct)
     {
+        string? originalText = null;
         try
         {
             Logger.Log("RefineSelectionAsync started");
@@ -132,6 +133,7 @@ public sealed class RefinementController : IRefinementController
                 return false;
             }
 
+            originalText = text;
             ct.ThrowIfCancellationRequested();
 
             var refiner = _textRefinerFactory.Create(cfg.Llm);
@@ -143,6 +145,14 @@ public sealed class RefinementController : IRefinementController
             if (string.IsNullOrWhiteSpace(refined))
             {
                 NotificationService.ShowError("Provider returned empty result.");
+                try
+                {
+                    _history.AppendRefinementFailure(
+                        originalText ?? "",
+                        "Provider returned empty result."
+                    );
+                }
+                catch { }
                 return false;
             }
 
@@ -170,9 +180,14 @@ public sealed class RefinementController : IRefinementController
             if (msg.Length > 200)
                 msg = msg.Substring(0, 200) + "…";
             NotificationService.ShowError("Refinement failed: " + msg);
-            Logger.Log(
+            Logger.Error(
                 $"Refinement error: type={ex.GetType().Name}, msgLen={ex.Message?.Length ?? 0}"
             );
+            try
+            {
+                _history.AppendRefinementFailure(originalText ?? "", msg);
+            }
+            catch { }
             return false;
         }
     }

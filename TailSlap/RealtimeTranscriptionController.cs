@@ -32,6 +32,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     private IntPtr _streamingTargetWindow = IntPtr.Zero;
     private int _cleanupInProgress = 0;
     private DateTime _streamingStartTime = DateTime.MinValue;
+    private volatile string? _sessionFailureReason;
     private const int NO_SPEECH_TIMEOUT_SECONDS = 30;
     private CancellationTokenSource? _textProcessingCts;
     private volatile bool _allowRealtimeTextUpdates;
@@ -167,6 +168,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         _currentRealtimeItemId = null;
         _legacyFinalPending = false;
         _pendingLegacyFinalText = "";
+        _sessionFailureReason = null;
         _allowRealtimeTextUpdates = true;
         _allowRealtimeInterimWhileStopping = false;
         lock (_orderedRealtimeLock)
@@ -244,8 +246,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         }
         catch (Exception ex)
         {
-            Logger.Log($"StartAsync: Error - {ex.Message}");
+            Logger.Error($"StartAsync: Error - {ex.Message}");
             NotificationService.ShowError($"Real-time transcription failed: {ex.Message}");
+            _sessionFailureReason = TruncateError(ex.Message);
             await CleanupAsync();
         }
     }
@@ -331,7 +334,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
             }
             catch (Exception ex)
             {
-                Logger.Log($"StopAsync: Error sending stop - {ex.Message}");
+                Logger.LogWarning($"StopAsync: Error sending stop - {ex.Message}");
             }
         }
 
@@ -896,7 +899,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         }
         catch (Exception ex)
         {
-            Logger.Log($"TypeTextDirectly failed: {ex.Message}");
+            Logger.LogWarning($"TypeTextDirectly failed: {ex.Message}");
         }
     }
 
@@ -905,7 +908,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         try
         {
             var truncatedError = TruncateError(error);
-            Logger.Log($"HandleRealtimeError: {truncatedError}");
+            Logger.Error($"HandleRealtimeError: {truncatedError}");
             NotificationService.ShowError($"Real-time transcription error: {truncatedError}");
 
             lock (_streamingStateLock)
@@ -918,11 +921,12 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 _streamingState = StreamingState.Stopping;
             }
 
+            _sessionFailureReason = truncatedError;
             await StopAsyncInternal(suppressInterimUpdates: true);
         }
         catch (Exception ex)
         {
-            Logger.Log($"HandleRealtimeError: ERROR during handling - {ex.Message}");
+            Logger.LogWarning($"HandleRealtimeError: ERROR during handling - {ex.Message}");
         }
     }
 
@@ -955,12 +959,16 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             if (shouldInitiateStop)
             {
+                NotificationService.ShowWarning(
+                    "Real-time transcription disconnected unexpectedly."
+                );
+                _sessionFailureReason ??= "WebSocket disconnected unexpectedly";
                 await StopAsyncInternal(suppressInterimUpdates: true);
             }
         }
         catch (Exception ex)
         {
-            Logger.Log($"HandleRealtimeDisconnected: ERROR - {ex.Message}");
+            Logger.LogWarning($"HandleRealtimeDisconnected: ERROR - {ex.Message}");
         }
     }
 
@@ -968,7 +976,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
     {
         try
         {
-            Logger.Log(
+            Logger.LogWarning(
                 "HandleRealtimeConnectionLost: Connection lost detected, initiating recovery"
             );
 
@@ -989,13 +997,15 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                     "Real-time transcription connection lost. Stopping..."
                 );
 
+                _sessionFailureReason ??= "Connection lost";
+
                 // Gracefully stop and cleanup
                 await StopAsyncInternal(suppressInterimUpdates: true);
             }
         }
         catch (Exception ex)
         {
-            Logger.Log($"HandleRealtimeConnectionLost: ERROR - {ex.Message}");
+            Logger.LogWarning($"HandleRealtimeConnectionLost: ERROR - {ex.Message}");
         }
     }
 
@@ -1019,7 +1029,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         }
         catch (Exception ex)
         {
-            Logger.Log($"HandleRealtimeSilenceDetected: ERROR - {ex.Message}");
+            Logger.LogWarning($"HandleRealtimeSilenceDetected: ERROR - {ex.Message}");
         }
     }
 
@@ -1118,14 +1128,36 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
 
             // Committed finals live in finalTypedText; in-flight residual in finalTranscriptionText.
             var sessionText = string.Concat(finalTypedText, finalTranscriptionText);
+            var durationMs =
+                sessionStart == DateTime.MinValue
+                    ? 0
+                    : (int)Math.Max(0, (DateTime.UtcNow - sessionStart).TotalMilliseconds);
 
-            if (!string.IsNullOrEmpty(sessionText))
+            var failureReason = _sessionFailureReason;
+            _sessionFailureReason = null;
+
+            if (!string.IsNullOrEmpty(failureReason))
             {
-                var durationMs =
-                    sessionStart == DateTime.MinValue
-                        ? 0
-                        : (int)Math.Max(0, (DateTime.UtcNow - sessionStart).TotalMilliseconds);
-
+                // Failed session: record the failure (with any partial text) instead of a
+                // success entry, so realtime failures are never lost silently.
+                try
+                {
+                    _resultSink.RecordFailure(
+                        string.IsNullOrEmpty(sessionText) ? null : sessionText,
+                        durationMs,
+                        failureReason
+                    );
+                    Logger.Log(
+                        $"CleanupAsync: Realtime failure history saved, partialLen={sessionText.Length}, dur={durationMs}ms"
+                    );
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"CleanupAsync: Failure history save failed: {ex.GetType().Name}");
+                }
+            }
+            else if (!string.IsNullOrEmpty(sessionText))
+            {
                 var cfg = _config.CreateValidatedCopy();
                 var result = await _resultSink
                     .ProcessAsync(

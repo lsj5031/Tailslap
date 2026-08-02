@@ -111,7 +111,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
 
                     if (item.IsStop)
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             "OpenAIRealtimeTranscriber: stop marker dropped from send queue"
                         );
                     }
@@ -128,7 +128,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"OpenAIRealtimeTranscriber: Connection failed - {ex.Message}");
+            Logger.Error($"OpenAIRealtimeTranscriber: Connection failed - {ex.Message}");
             OnError?.Invoke($"Connection failed: {ex.Message}");
             await CleanupWebSocketAsync();
             throw;
@@ -235,7 +235,9 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"OpenAIRealtimeTranscriber: SendAudioChunkAsync failed - {ex.Message}");
+            Logger.LogWarning(
+                $"OpenAIRealtimeTranscriber: SendAudioChunkAsync failed - {ex.Message}"
+            );
         }
         return Task.CompletedTask;
     }
@@ -302,7 +304,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                     }
                     catch (OperationCanceledException)
                     {
-                        Logger.Log("OpenAIRealtimeTranscriber SendLoop: Send timeout");
+                        Logger.LogWarning("OpenAIRealtimeTranscriber SendLoop: Send timeout");
 
                         Interlocked.Increment(ref _consecutiveErrors);
                         if (_consecutiveErrors >= MaxConsecutiveErrors)
@@ -313,7 +315,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log(
+                        Logger.LogWarning(
                             $"OpenAIRealtimeTranscriber SendLoop: Send failed - {ex.Message}"
                         );
 
@@ -338,7 +340,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"OpenAIRealtimeTranscriber SendLoop error: {ex.Message}");
+            Logger.LogWarning($"OpenAIRealtimeTranscriber SendLoop error: {ex.Message}");
         }
     }
 
@@ -418,13 +420,13 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                         continue;
                     }
 
-                    Logger.Log("OpenAIRealtimeTranscriber: Receive timeout");
+                    Logger.LogWarning("OpenAIRealtimeTranscriber: Receive timeout");
                     await HandleConnectionLostAsync("Receive timeout");
                     break;
                 }
                 catch (WebSocketException ex)
                 {
-                    Logger.Log(
+                    Logger.Error(
                         $"OpenAIRealtimeTranscriber: WebSocket receive error - {ex.Message}"
                     );
                     OnError?.Invoke($"Connection error: {ex.Message}");
@@ -452,7 +454,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                         }
                         catch (JsonException ex)
                         {
-                            Logger.Log(
+                            Logger.LogWarning(
                                 $"OpenAIRealtimeTranscriber: JSON parse error - {ex.Message}"
                             );
                         }
@@ -462,7 +464,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"OpenAIRealtimeTranscriber: ReceiveLoop error - {ex.Message}");
+            Logger.LogWarning($"OpenAIRealtimeTranscriber: ReceiveLoop error - {ex.Message}");
         }
         finally
         {
@@ -616,7 +618,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                         errorMessage = errorObj.GetString() ?? string.Empty;
                     }
                 }
-                Logger.Log(
+                Logger.Error(
                     $"OpenAIRealtimeTranscriber: Server error (len={errorMessage.Length}, sha256={Hashing.Sha256Hex(errorMessage)}, code={errorCode ?? "none"})"
                 );
                 OnError?.Invoke(CreateActionableServerError(errorCode));
@@ -626,7 +628,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
             default:
             {
                 // Log unhandled events at debug level (just the type)
-                Logger.Log($"OpenAIRealtimeTranscriber: Unhandled event type: {eventType}");
+                Logger.LogWarning($"OpenAIRealtimeTranscriber: Unhandled event type: {eventType}");
                 break;
             }
         }
@@ -726,7 +728,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
 
         if (_ws?.State != WebSocketState.Open)
         {
-            Logger.Log("OpenAIRealtimeTranscriber: Cannot send stop - not connected");
+            Logger.LogWarning("OpenAIRealtimeTranscriber: Cannot send stop - not connected");
             return;
         }
 
@@ -745,7 +747,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"OpenAIRealtimeTranscriber: StopAsync failed - {ex.Message}");
+            Logger.LogWarning($"OpenAIRealtimeTranscriber: StopAsync failed - {ex.Message}");
         }
     }
 
@@ -771,14 +773,14 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
                 }
                 catch (OperationCanceledException)
                 {
-                    Logger.Log("OpenAIRealtimeTranscriber: Close timeout, aborting");
+                    Logger.LogWarning("OpenAIRealtimeTranscriber: Close timeout, aborting");
                     _ws.Abort();
                 }
             }
         }
         catch (Exception ex)
         {
-            Logger.Log($"OpenAIRealtimeTranscriber: DisconnectAsync error - {ex.Message}");
+            Logger.LogWarning($"OpenAIRealtimeTranscriber: DisconnectAsync error - {ex.Message}");
         }
         finally
         {
@@ -789,7 +791,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
 
     private async Task HandleConnectionLostAsync(string reason)
     {
-        Logger.Log($"OpenAIRealtimeTranscriber: Connection lost - {reason}");
+        Logger.Error($"OpenAIRealtimeTranscriber: Connection lost - {reason}");
 
         try
         {
@@ -797,7 +799,9 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"OpenAIRealtimeTranscriber: OnConnectionLost handler error - {ex.Message}");
+            Logger.LogWarning(
+                $"OpenAIRealtimeTranscriber: OnConnectionLost handler error - {ex.Message}"
+            );
         }
 
         await CleanupWebSocketAsync();
@@ -839,7 +843,7 @@ public sealed class OpenAIRealtimeTranscriber : IRealtimeTranscriber
         }
         catch (Exception ex)
         {
-            Logger.Log($"OpenAIRealtimeTranscriber: Cleanup error - {ex.Message}");
+            Logger.LogWarning($"OpenAIRealtimeTranscriber: Cleanup error - {ex.Message}");
         }
     }
 

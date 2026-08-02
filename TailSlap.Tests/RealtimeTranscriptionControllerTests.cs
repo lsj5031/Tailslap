@@ -12,6 +12,7 @@ public class RealtimeTranscriptionControllerTests
     private sealed class RecordingResultSink : ITranscriptionResultSink
     {
         public List<TranscriptionResultRequest> Requests { get; } = new();
+        public List<(string? PartialText, int DurationMs, string Error)> Failures { get; } = new();
 
         public Task<TranscriptionResult> ProcessAsync(
             TranscriptionResultRequest request,
@@ -20,6 +21,11 @@ public class RealtimeTranscriptionControllerTests
         {
             Requests.Add(request);
             return Task.FromResult(new TranscriptionResult(request.RawText, false));
+        }
+
+        public void RecordFailure(string? partialText, int durationMs, string errorSummary)
+        {
+            Failures.Add((partialText, durationMs, errorSummary));
         }
     }
 
@@ -569,6 +575,196 @@ public class RealtimeTranscriptionControllerTests
         Assert.Equal(2500, InvokeDetermineStopWaitTimeoutMs(controller, hasRemainingAudio: true));
     }
 
+    [Fact]
+    public async Task CleanupAsync_WithFailureReason_RecordsFailureInsteadOfSuccess()
+    {
+        var mockConfig = CreateMockConfigService();
+        var resultSink = new RecordingResultSink();
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            new Mock<IClipboardService>().Object,
+            new Mock<IRealtimeTranscriberFactory>().Object,
+            new Mock<IAudioRecorderFactory>().Object,
+            resultSink
+        );
+
+        SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
+        SetPrivateField(controller, "_typedText", "partial ");
+        SetPrivateField(controller, "_realtimeTranscriptionText", "result");
+        SetPrivateField(controller, "_streamingStartTime", DateTime.UtcNow.AddSeconds(-3));
+        SetPrivateField(controller, "_sessionFailureReason", "WebSocket disconnected unexpectedly");
+
+        var cleanupTask = (Task)
+            typeof(RealtimeTranscriptionController)
+                .GetMethod("CleanupAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(controller, null)!;
+        await cleanupTask;
+
+        Assert.Empty(resultSink.Requests);
+        var failure = Assert.Single(resultSink.Failures);
+        Assert.Equal("partial result", failure.PartialText);
+        Assert.Equal("WebSocket disconnected unexpectedly", failure.Error);
+        Assert.True(failure.DurationMs >= 0);
+        Assert.Equal(StreamingState.Idle, controller.State);
+    }
+
+    [Fact]
+    public async Task StartAsync_ConnectFailure_RecordsFailureHistory()
+    {
+        var mockConfig = CreateMockConfigService();
+        var resultSink = new RecordingResultSink();
+        var mockClip = new Mock<IClipboardService>();
+        var mockTranscriber = new Mock<IRealtimeTranscriber>();
+        mockTranscriber
+            .Setup(t => t.ConnectAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("connection refused"));
+        var mockTranscriberFactory = new Mock<IRealtimeTranscriberFactory>();
+        mockTranscriberFactory
+            .Setup(f => f.Create(It.IsAny<TranscriberConfig>()))
+            .Returns(mockTranscriber.Object);
+        var mockAudioRecorderFactory = new Mock<IAudioRecorderFactory>();
+
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockTranscriberFactory.Object,
+            mockAudioRecorderFactory.Object,
+            resultSink
+        );
+
+        await controller.TriggerStreamingAsync();
+
+        Assert.Equal(StreamingState.Idle, controller.State);
+        Assert.Empty(resultSink.Requests);
+        var failure = Assert.Single(resultSink.Failures);
+        Assert.Null(failure.PartialText);
+        Assert.Contains("connection refused", failure.Error);
+    }
+
+    [Fact]
+    public async Task HandleRealtimeError_RecordsFailureHistory()
+    {
+        var mockConfig = CreateMockConfigService();
+        var resultSink = new RecordingResultSink();
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            new Mock<IClipboardService>().Object,
+            new Mock<IRealtimeTranscriberFactory>().Object,
+            new Mock<IAudioRecorderFactory>().Object,
+            resultSink
+        );
+
+        SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
+
+        InvokeHandleRealtimeError(controller, "server closed stream with error");
+
+        await WaitForFailureRecordedAsync(resultSink);
+
+        Assert.Equal(StreamingState.Idle, controller.State);
+        Assert.Empty(resultSink.Requests);
+        var failure = Assert.Single(resultSink.Failures);
+        Assert.Equal("server closed stream with error", failure.Error);
+    }
+
+    [Fact]
+    public async Task HandleRealtimeDisconnected_WhenStopping_DoesNotRecordFailure()
+    {
+        var mockConfig = CreateMockConfigService();
+        var resultSink = new RecordingResultSink();
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            new Mock<IClipboardService>().Object,
+            new Mock<IRealtimeTranscriberFactory>().Object,
+            new Mock<IAudioRecorderFactory>().Object,
+            resultSink
+        );
+
+        // Normal stop: state is already Stopping when the server closes the socket,
+        // so this must NOT be recorded as a failure.
+        SetPrivateField(controller, "_streamingState", StreamingState.Stopping);
+
+        InvokeHandleRealtimeDisconnected(controller);
+
+        await Task.Delay(100);
+
+        Assert.Empty(resultSink.Failures);
+        Assert.Empty(resultSink.Requests);
+    }
+
+    [Fact]
+    public async Task HandleRealtimeError_WhenNotStreaming_DoesNotRecordFailure()
+    {
+        var mockConfig = CreateMockConfigService();
+        var resultSink = new RecordingResultSink();
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            new Mock<IClipboardService>().Object,
+            new Mock<IRealtimeTranscriberFactory>().Object,
+            new Mock<IAudioRecorderFactory>().Object,
+            resultSink
+        );
+
+        // A late error after the session already stopped must not fabricate a failure.
+        SetPrivateField(controller, "_streamingState", StreamingState.Idle);
+
+        InvokeHandleRealtimeError(controller, "late error after stop");
+
+        await Task.Delay(100);
+
+        Assert.Empty(resultSink.Failures);
+        Assert.Empty(resultSink.Requests);
+    }
+
+    [Fact]
+    public async Task HandleRealtimeConnectionLost_RecordsFailureHistory()
+    {
+        var mockConfig = CreateMockConfigService();
+        var resultSink = new RecordingResultSink();
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            new Mock<IClipboardService>().Object,
+            new Mock<IRealtimeTranscriberFactory>().Object,
+            new Mock<IAudioRecorderFactory>().Object,
+            resultSink
+        );
+
+        SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
+
+        InvokeHandleRealtimeConnectionLost(controller);
+
+        await WaitForFailureRecordedAsync(resultSink);
+
+        Assert.Equal(StreamingState.Idle, controller.State);
+        Assert.Empty(resultSink.Requests);
+        var failure = Assert.Single(resultSink.Failures);
+        Assert.Contains("Connection lost", failure.Error);
+    }
+
+    [Fact]
+    public async Task HandleRealtimeDisconnected_RecordsFailureHistory()
+    {
+        var mockConfig = CreateMockConfigService();
+        var resultSink = new RecordingResultSink();
+        var controller = new RealtimeTranscriptionController(
+            mockConfig.Object,
+            new Mock<IClipboardService>().Object,
+            new Mock<IRealtimeTranscriberFactory>().Object,
+            new Mock<IAudioRecorderFactory>().Object,
+            resultSink
+        );
+
+        SetPrivateField(controller, "_streamingState", StreamingState.Streaming);
+
+        InvokeHandleRealtimeDisconnected(controller);
+
+        await WaitForFailureRecordedAsync(resultSink);
+
+        Assert.Equal(StreamingState.Idle, controller.State);
+        Assert.Empty(resultSink.Requests);
+        var failure = Assert.Single(resultSink.Failures);
+        Assert.Contains("disconnected", failure.Error);
+    }
+
     private static bool InvokeCanProcessOrderedRealtimeUpdate(
         RealtimeTranscriptionController controller,
         RealtimeTranscriptionUpdate update
@@ -811,6 +1007,58 @@ public class RealtimeTranscriptionControllerTests
         await cleanupTask;
 
         Assert.Equal(StreamingState.Idle, controller.State);
+    }
+
+    private static void InvokeHandleRealtimeError(
+        RealtimeTranscriptionController controller,
+        string error
+    )
+    {
+        var method = typeof(RealtimeTranscriptionController).GetMethod(
+            "HandleRealtimeError",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+        method!.Invoke(controller, new object[] { error });
+    }
+
+    private static void InvokeHandleRealtimeConnectionLost(
+        RealtimeTranscriptionController controller
+    )
+    {
+        var method = typeof(RealtimeTranscriptionController).GetMethod(
+            "HandleRealtimeConnectionLost",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+        method!.Invoke(controller, null);
+    }
+
+    private static void InvokeHandleRealtimeDisconnected(RealtimeTranscriptionController controller)
+    {
+        var method = typeof(RealtimeTranscriptionController).GetMethod(
+            "HandleRealtimeDisconnected",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        );
+        Assert.NotNull(method);
+        method!.Invoke(controller, null);
+    }
+
+    private static async Task WaitForFailureRecordedAsync(
+        RecordingResultSink sink,
+        int timeoutMs = 5000
+    )
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            if (sink.Failures.Count > 0)
+                return;
+
+            await Task.Delay(10);
+        }
+
+        throw new TimeoutException("Timed out waiting for the realtime failure to be recorded.");
     }
 
     private static void InvokeHandleRealtimeTranscriptionEvent(

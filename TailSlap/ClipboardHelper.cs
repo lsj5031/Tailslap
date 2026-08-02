@@ -21,6 +21,8 @@ public sealed class ClipboardHelper
         bool setTextSuccess = await _clip.SetTextAsync(text).ConfigureAwait(false);
         if (!setTextSuccess)
         {
+            Logger.LogWarning("ClipboardHelper: SetTextAsync failed, text could not be delivered");
+            NotificationService.ShowError("Failed to set clipboard text. Please try again.");
             return false;
         }
 
@@ -32,7 +34,10 @@ public sealed class ClipboardHelper
             bool pasteSuccess = await _clip.PasteAsync().ConfigureAwait(false);
             if (!pasteSuccess)
             {
-                NotificationService.ShowInfo("Text is ready. You can paste manually with Ctrl+V.");
+                Logger.LogWarning("ClipboardHelper: Auto-paste failed, text is on the clipboard");
+                NotificationService.ShowWarning(
+                    "Auto-paste failed. The text is on your clipboard — paste manually with Ctrl+V."
+                );
             }
             return pasteSuccess;
         }

@@ -181,6 +181,40 @@ public class KeyboardHookTests
     }
 
     [Fact]
+    public void ShouldSuppressWinKey_CtrlWinModifierOnly_SuppressesBothWinKeys()
+    {
+        using var hook = new KeyboardHook(new HotkeyConfig { Modifiers = 0x000A, Key = 0 });
+
+        Assert.True(hook.ShouldSuppressWinKey(0x0100, 0x5B));
+        Assert.True(hook.ShouldSuppressWinKey(0x0104, 0x5C));
+    }
+
+    [Fact]
+    public void ShouldSuppressWinKey_KeyUpIsNotSuppressed()
+    {
+        using var hook = new KeyboardHook(new HotkeyConfig { Modifiers = 0x000A, Key = 0 });
+
+        Assert.False(hook.ShouldSuppressWinKey(0x0101, 0x5B));
+        Assert.False(hook.ShouldSuppressWinKey(0x0105, 0x5C));
+    }
+
+    [Fact]
+    public void ShouldSuppressWinKey_NonWinConfigurationIsNotSuppressed()
+    {
+        using var hook = new KeyboardHook(new HotkeyConfig { Modifiers = 0x0003, Key = 0x54 });
+
+        Assert.False(hook.ShouldSuppressWinKey(0x0100, 0x5B));
+    }
+
+    [Fact]
+    public void ShouldSuppressWinKey_NonWinKeyIsNotSuppressed()
+    {
+        using var hook = new KeyboardHook(new HotkeyConfig { Modifiers = 0x000A, Key = 0 });
+
+        Assert.False(hook.ShouldSuppressWinKey(0x0100, 0x41));
+    }
+
+    [Fact]
     public void OnKeyUp_FiredWhenPrimaryKeyReleased()
     {
         // Arrange

@@ -11,13 +11,15 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
     private readonly ClipboardHelper _clipboardHelper;
     private readonly IClipboardService _clipboardService;
     private readonly TextTyper _textTyper;
+    private readonly Func<IntPtr> _getForegroundWindow;
 
     public TranscriptionResultSink(
         IHistoryService history,
         ITextRefinerFactory textRefinerFactory,
         ClipboardHelper clipboardHelper,
         IClipboardService clipboardService,
-        TextTyper textTyper
+        TextTyper textTyper,
+        Func<IntPtr>? getForegroundWindow = null
     )
     {
         _history = history ?? throw new ArgumentNullException(nameof(history));
@@ -28,6 +30,24 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
         _clipboardService =
             clipboardService ?? throw new ArgumentNullException(nameof(clipboardService));
         _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
+        _getForegroundWindow = getForegroundWindow ?? (() => NativeMethods.GetForegroundWindow());
+    }
+
+    public void RecordFailure(string? partialText, int durationMs, string errorSummary)
+    {
+        try
+        {
+            _history.AppendTranscriptionFailure(partialText, durationMs, errorSummary);
+            TryLog(
+                $"TranscriptionResultSink: Failure history saved, errLen={errorSummary?.Length ?? 0}"
+            );
+        }
+        catch (Exception ex)
+        {
+            TryLogWarning(
+                $"TranscriptionResultSink: Failure history save failed: {ex.GetType().Name}"
+            );
+        }
     }
 
     public async Task<TranscriptionResult> ProcessAsync(
@@ -67,7 +87,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
         }
         catch (Exception ex)
         {
-            TryLog($"TranscriptionResultSink: Raw history save failed: {ex.GetType().Name}");
+            TryLogWarning($"TranscriptionResultSink: Raw history save failed: {ex.GetType().Name}");
         }
 
         if (wasEnhanced)
@@ -81,7 +101,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
             }
             catch (Exception ex)
             {
-                TryLog(
+                TryLogWarning(
                     $"TranscriptionResultSink: Refinement history save failed: {ex.GetType().Name}"
                 );
             }
@@ -104,12 +124,27 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
                 case TranscriptionDeliveryPolicy.DeliverFinalText:
                     if (!request.ResultsAlreadyStreamed)
                     {
+                        // Single delivery: guard against pasting into a different app if the
+                        // foreground window changed while the transcription was running.
+                        IntPtr target = request.TargetWindow ?? IntPtr.Zero;
+                        if (target != IntPtr.Zero && _getForegroundWindow() != target)
+                        {
+                            await _clipboardService.SetTextAsync(finalText).ConfigureAwait(false);
+                            TryLogWarning(
+                                "TranscriptionResultSink: Foreground window changed before final paste, text left on clipboard"
+                            );
+                            NotificationService.ShowWarning(
+                                "The window changed before text could be pasted. The text is on your clipboard — paste manually with Ctrl+V."
+                            );
+                            break;
+                        }
+
                         bool delivered = await _clipboardHelper
                             .SetTextAndPasteAsync(finalText, request.Config.Transcriber.AutoPaste)
                             .ConfigureAwait(false);
                         if (!delivered)
                         {
-                            TryLog(
+                            TryLogWarning(
                                 "TranscriptionResultSink: Clipboard delivery failed for final text"
                             );
                         }
@@ -141,7 +176,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
                             .ConfigureAwait(false);
                         if (!delivered)
                         {
-                            TryLog(
+                            TryLogWarning(
                                 "TranscriptionResultSink: Clipboard delivery failed for enhanced text"
                             );
                         }
@@ -163,7 +198,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
                     }
                     else
                     {
-                        TryLog(
+                        TryLogWarning(
                             "TranscriptionResultSink: Clipboard delivery failed for realtime enhanced text"
                         );
                     }
@@ -176,7 +211,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
         }
         catch (Exception ex)
         {
-            TryLog($"TranscriptionResultSink: Delivery failed: {ex.GetType().Name}");
+            TryLogWarning($"TranscriptionResultSink: Delivery failed: {ex.GetType().Name}");
         }
     }
 
@@ -191,7 +226,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
             .ConfigureAwait(false);
         if (!typeResult.DeliverySuccess)
         {
-            TryLog(
+            TryLogWarning(
                 $"TranscriptionResultSink: TextTyper delivery failed (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
             );
         }
@@ -202,6 +237,15 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
         try
         {
             Logger.Log(message);
+        }
+        catch { }
+    }
+
+    private static void TryLogWarning(string message)
+    {
+        try
+        {
+            Logger.LogWarning(message);
         }
         catch { }
     }

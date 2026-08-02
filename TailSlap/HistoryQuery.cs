@@ -33,7 +33,9 @@ public static class HistoryQuery
             DateTime Timestamp,
             string Model,
             string Original,
-            string Refined
+            string Refined,
+            string? Status,
+            string? Error
         )> entries
     )
     {
@@ -41,10 +43,12 @@ public static class HistoryQuery
         sb.AppendLine("# TailSlap refinement history export");
         sb.AppendLine($"# Exported: {exportedAt:O}");
         sb.AppendLine("# WARNING: This file is plaintext (not DPAPI-protected).");
-        foreach (var (timestamp, model, original, refined) in entries)
+        foreach (var (timestamp, model, original, refined, status, error) in entries)
         {
             sb.AppendLine("---");
-            sb.AppendLine($"[{timestamp:O}] model={model}");
+            sb.AppendLine($"[{timestamp:O}] model={model} status={status ?? "success"}");
+            if (!string.IsNullOrWhiteSpace(error))
+                sb.AppendLine($"ERROR: {error}");
             sb.AppendLine("ORIGINAL:");
             sb.AppendLine(original);
             sb.AppendLine("REFINED:");
@@ -59,7 +63,9 @@ public static class HistoryQuery
         System.Collections.Generic.IEnumerable<(
             DateTime Timestamp,
             string Text,
-            int RecordingDurationMs
+            int RecordingDurationMs,
+            string? Status,
+            string? Error
         )> entries
     )
     {
@@ -67,10 +73,12 @@ public static class HistoryQuery
         sb.AppendLine("# TailSlap transcription history export");
         sb.AppendLine($"# Exported: {exportedAt:O}");
         sb.AppendLine("# WARNING: This file is plaintext (not DPAPI-protected).");
-        foreach (var (timestamp, text, durationMs) in entries)
+        foreach (var (timestamp, text, durationMs, status, error) in entries)
         {
             sb.AppendLine("---");
-            sb.AppendLine($"[{timestamp:O}] durationMs={durationMs}");
+            sb.AppendLine($"[{timestamp:O}] durationMs={durationMs} status={status ?? "success"}");
+            if (!string.IsNullOrWhiteSpace(error))
+                sb.AppendLine($"ERROR: {error}");
             sb.AppendLine(text);
         }
 
