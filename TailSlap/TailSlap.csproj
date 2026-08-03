@@ -55,6 +55,7 @@
     <EmbeddedResource Include="Icons\6.png" />
     <EmbeddedResource Include="Icons\7.png" />
     <EmbeddedResource Include="Icons\8.png" />
+    <EmbeddedResource Include="Icons\icon.png" />
     <EmbeddedResource Include="Icons\favicon.ico" />
   </ItemGroup>
 

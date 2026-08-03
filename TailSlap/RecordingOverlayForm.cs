@@ -15,13 +15,13 @@ namespace TailSlap;
 public sealed class RecordingOverlayForm : Form
 {
     // Layout constants
-    private const int CapsuleHeight = 56;
+    private const int CapsuleHeight = 60;
     private const int CapsuleCornerRadius = 28;
-    private const int WaveformBarAreaWidth = 44;
-    private const int WaveformBarAreaHeight = 32;
-    private const int BarCount = 5;
-    private const int BarWidth = 4;
-    private const int BarGap = 4;
+    private const int WaveformBarAreaWidth = 48;
+    private const int WaveformBarAreaHeight = 36;
+    private const int BarCount = 7;
+    private const int BarWidth = 3;
+    private const int BarGap = 3;
     private const int MinWidth = 200;
     private const int TextMinWidth = 120;
     private const int TextMaxWidth = 520;
@@ -30,19 +30,30 @@ public sealed class RecordingOverlayForm : Form
     private const int IndicatorRadius = 6;
 
     // Wave shape: phase offsets create a flowing wave across bars
-    private static readonly float[] BarPhaseOffsets = { 0f, 0.6f, 1.2f, 1.8f, 2.4f };
-    private static readonly float[] BarWeights = { 0.5f, 0.8f, 1.0f, 0.75f, 0.55f };
+    private static readonly float[] BarPhaseOffsets =
+    {
+        0f,
+        0.48f,
+        0.96f,
+        1.44f,
+        1.92f,
+        2.4f,
+        2.88f,
+    };
+    private static readonly float[] BarWeights = { 0.42f, 0.68f, 0.88f, 1f, 0.88f, 0.68f, 0.42f };
 
     // Smoothing envelope (attack fast, release slow)
     private const float AttackCoeff = 0.4f;
     private const float ReleaseCoeff = 0.15f;
 
     // Animation durations (ms)
-    private const int EntranceDuration = 350;
+    private const int EntranceDuration = 300;
     private const int ExitDuration = 220;
     private const int WidthTransitionDuration = 250;
     private const int RenderInterval = 30; // ~33fps
-    private const float WaveSpeed = 0.12f; // radians per tick for flowing wave
+    private const float WaveSpeed = 4.2f; // radians per second for the flowing wave
+    private const float IndicatorPulseSpeed = 4.8f; // radians per second
+    private const float AudioLevelScale = 9000f;
 
     // Cached fonts (never dispose — shared for app lifetime)
     private static readonly Font TextFont = new Font("Segoe UI", 10f);
@@ -50,6 +61,8 @@ public sealed class RecordingOverlayForm : Form
     // Colors
     private static readonly Color CapsuleBg = Color.FromArgb(35, 35, 40);
     private static readonly Color BarColor = Color.FromArgb(90, 210, 255);
+    private static readonly Color BarHighlight = Color.FromArgb(178, 238, 255);
+    private static readonly Color ProcessingColor = UiTheme.Orange;
     private static readonly Color TextColor = Color.FromArgb(230, 230, 240);
     private static readonly Color SubTextColor = Color.FromArgb(160, 160, 175);
     private static readonly Color IndicatorColor = Color.FromArgb(90, 210, 255);
@@ -72,6 +85,8 @@ public sealed class RecordingOverlayForm : Form
     private float _alpha = 0f; // 0-255 alpha for layered window
     private float _wavePhase; // flowing wave phase offset
     private float _indicatorPulse; // for non-audio pulsing indicator
+    private float _verticalOffset;
+    private int _lastRenderMs;
     private Size _regionSize = Size.Empty;
 
     /// <summary>
@@ -185,14 +200,18 @@ public sealed class RecordingOverlayForm : Form
         Interlocked.Exchange(ref _rmsValue, 0f);
         _wavePhase = 0;
         _indicatorPulse = 0;
+        _verticalOffset = 10;
         Array.Clear(_smoothedLevels, 0, _smoothedLevels.Length);
         RecalculateTargetWidth();
         _currentAnimatedWidth = _targetWidth;
+        _widthAnimStartValue = _targetWidth;
+        _widthAnimStartMs = Environment.TickCount;
         Size = new Size(_currentAnimatedWidth, CapsuleHeight);
         UpdateWindowRegion(force: true);
-        PositionAtBottom();
+        PositionAtBottom((int)_verticalOffset);
         _state = OverlayState.Entering;
         _animStartMs = Environment.TickCount;
+        _lastRenderMs = _animStartMs;
 
         Opacity = 0d;
 
@@ -214,9 +233,7 @@ public sealed class RecordingOverlayForm : Form
             catch { }
             return;
         }
-        _statusText = "Transcribing...";
-        _mode = OverlayMode.Pulse;
-        Interlocked.Exchange(ref _rmsValue, 0f);
+        SetStatus("Transcribing...");
         Invalidate();
     }
 
@@ -234,9 +251,7 @@ public sealed class RecordingOverlayForm : Form
             catch { }
             return;
         }
-        _statusText = "Refining...";
-        _mode = OverlayMode.Pulse;
-        Interlocked.Exchange(ref _rmsValue, 0f);
+        SetStatus("Refining...");
         Invalidate();
     }
 
@@ -260,6 +275,16 @@ public sealed class RecordingOverlayForm : Form
 
         _state = OverlayState.Exiting;
         _animStartMs = Environment.TickCount;
+        _lastRenderMs = _animStartMs;
+    }
+
+    private void SetStatus(string statusText)
+    {
+        _statusText = statusText;
+        _transcriptionText = "";
+        _mode = OverlayMode.Pulse;
+        Interlocked.Exchange(ref _rmsValue, 0f);
+        RecalculateTargetWidth();
     }
 
     private void RecalculateTargetWidth()
@@ -285,17 +310,22 @@ public sealed class RecordingOverlayForm : Form
         }
     }
 
-    private void PositionAtBottom()
+    private void PositionAtBottom(int verticalOffset = 0)
     {
         var screen = Screen.PrimaryScreen?.WorkingArea ?? SystemInformation.WorkingArea;
         int x = screen.X + (screen.Width - Width) / 2;
-        int y = screen.Y + screen.Height - CapsuleHeight - BottomMargin;
+        int y = screen.Y + screen.Height - CapsuleHeight - BottomMargin + verticalOffset;
         Location = new Point(x, y);
     }
 
     private void OnRenderTick(object? sender, EventArgs e)
     {
         int now = Environment.TickCount;
+        float deltaSeconds =
+            _lastRenderMs == 0
+                ? RenderInterval / 1000f
+                : Math.Clamp((now - _lastRenderMs) / 1000f, 0.008f, 0.1f);
+        _lastRenderMs = now;
 
         switch (_state)
         {
@@ -303,13 +333,15 @@ public sealed class RecordingOverlayForm : Form
             {
                 int elapsed = now - _animStartMs;
                 float t = Math.Min(1f, (float)elapsed / EntranceDuration);
-                float eased = SpringEaseOut(t, overshoot: 1.2f);
-                _alpha = Math.Min(255f, eased * 255f);
+                float eased = EaseOutQuint(t);
+                _alpha = eased * 255f;
+                _verticalOffset = (1f - eased) * 10f;
 
                 if (t >= 1f)
                 {
                     _state = OverlayState.Visible;
                     _alpha = 255f;
+                    _verticalOffset = 0f;
                 }
                 break;
             }
@@ -317,8 +349,9 @@ public sealed class RecordingOverlayForm : Form
             {
                 int elapsed = now - _animStartMs;
                 float t = Math.Min(1f, (float)elapsed / ExitDuration);
-                float eased = 1f - (1f - t) * (1f - t);
+                float eased = EaseOutCubic(t);
                 _alpha = 255f * (1f - eased);
+                _verticalOffset = eased * 6f;
 
                 if (t >= 1f)
                 {
@@ -342,28 +375,34 @@ public sealed class RecordingOverlayForm : Form
                 _widthAnimStartValue + (int)((_targetWidth - _widthAnimStartValue) * wEased);
         }
 
-        // Smooth RMS with attack/release envelope
+        // Smooth RMS with an envelope that is stable even if the WinForms timer jitters.
         float rms = Interlocked.CompareExchange(ref _rmsValue, 0f, 0f);
+        float frameFactor = deltaSeconds / (RenderInterval / 1000f);
+        float attack = 1f - MathF.Pow(1f - AttackCoeff, frameFactor);
+        float release = 1f - MathF.Pow(1f - ReleaseCoeff, frameFactor);
         if (rms > _smoothedRms)
-            _smoothedRms += (rms - _smoothedRms) * AttackCoeff;
+            _smoothedRms += (rms - _smoothedRms) * attack;
         else
-            _smoothedRms += (rms - _smoothedRms) * ReleaseCoeff;
+            _smoothedRms += (rms - _smoothedRms) * release;
 
-        // Advance wave phase for flowing animation
-        _wavePhase += WaveSpeed;
+        // Advance phase by elapsed time so the motion stays consistent under load.
+        _wavePhase += WaveSpeed * deltaSeconds;
         if (_wavePhase > MathF.PI * 2f)
             _wavePhase -= MathF.PI * 2f;
 
-        // Update indicator pulse
-        _indicatorPulse += 0.06f;
+        _indicatorPulse += IndicatorPulseSpeed * deltaSeconds;
         if (_indicatorPulse > MathF.PI * 2f)
             _indicatorPulse -= MathF.PI * 2f;
 
         if (_mode == OverlayMode.Waveform)
         {
-            float normalizedRms = Math.Min(1f, _smoothedRms / 2000f);
-            // Breathing amplitude: strong when silent, subtle when speaking
-            float breathAmp = normalizedRms < 0.1f ? 0.35f : 0.05f;
+            float normalizedRms = Math.Clamp(
+                MathF.Pow(Math.Min(1f, _smoothedRms / AudioLevelScale), 0.7f),
+                0f,
+                1f
+            );
+            float idleLevel = 0.08f + (1f - normalizedRms) * 0.025f;
+            float waveAmplitude = normalizedRms < 0.1f ? 0.12f : 0.045f;
 
             for (int i = 0; i < BarCount; i++)
             {
@@ -371,15 +410,15 @@ public sealed class RecordingOverlayForm : Form
                 float wave = MathF.Sin(_wavePhase + BarPhaseOffsets[i]);
 
                 // Base level from audio RMS + wave motion
-                float audioLevel = normalizedRms * BarWeights[i];
-                float waveLevel = wave * breathAmp;
-                float target = Math.Max(0.08f, Math.Min(1f, audioLevel + waveLevel));
+                float audioLevel = normalizedRms * BarWeights[i] * 0.9f;
+                float waveLevel = wave * waveAmplitude;
+                float target = Math.Clamp(idleLevel + audioLevel + waveLevel, 0.07f, 1f);
 
                 // Smooth transitions
                 if (target > _smoothedLevels[i])
-                    _smoothedLevels[i] += (target - _smoothedLevels[i]) * AttackCoeff;
+                    _smoothedLevels[i] += (target - _smoothedLevels[i]) * attack;
                 else
-                    _smoothedLevels[i] += (target - _smoothedLevels[i]) * ReleaseCoeff;
+                    _smoothedLevels[i] += (target - _smoothedLevels[i]) * release;
             }
         }
 
@@ -388,7 +427,7 @@ public sealed class RecordingOverlayForm : Form
         {
             Size = new Size(_currentAnimatedWidth, CapsuleHeight);
             UpdateWindowRegion();
-            PositionAtBottom();
+            PositionAtBottom((int)MathF.Round(_verticalOffset));
             Opacity = Math.Clamp(_alpha / 255f, 0d, 1d);
             Invalidate();
         }
@@ -398,6 +437,8 @@ public sealed class RecordingOverlayForm : Form
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        g.CompositingQuality = CompositingQuality.GammaCorrected;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
         var rect = ClientRectangle;
@@ -458,18 +499,21 @@ public sealed class RecordingOverlayForm : Form
 
         for (int i = 0; i < BarCount; i++)
         {
-            float barHeight = _smoothedLevels[i] * WaveformBarAreaHeight;
-            barHeight = Math.Max(6, barHeight);
+            float barHeight = Math.Max(6f, _smoothedLevels[i] * WaveformBarAreaHeight);
             float bx = barsStartX + i * (BarWidth + BarGap);
             float by = barAreaY + (WaveformBarAreaHeight - barHeight) / 2f;
 
             using var barBrush = new LinearGradientBrush(
                 new PointF(bx, by),
                 new PointF(bx, by + barHeight),
-                BarColor,
-                Color.FromArgb(60, 160, 220)
+                BarHighlight,
+                Color.FromArgb(46, 142, 190)
             );
-            g.FillRectangle(barBrush, bx, by, BarWidth, barHeight);
+            using var barPath = CreateRoundedRectanglePath(
+                new RectangleF(bx, by, BarWidth, barHeight),
+                BarWidth / 2f
+            );
+            g.FillPath(barBrush, barPath);
         }
     }
 
@@ -478,20 +522,45 @@ public sealed class RecordingOverlayForm : Form
         float cx = indicatorAreaX + IndicatorRadius + 4;
         float cy = CapsuleHeight / 2f;
 
-        float pulseScale = 0.6f + 0.4f * (0.5f + 0.5f * MathF.Sin(_indicatorPulse));
-        int glowRadius = (int)(IndicatorRadius * pulseScale * 1.8f);
+        var indicatorColor = _mode == OverlayMode.Pulse ? ProcessingColor : IndicatorColor;
+        float pulse = 0.5f + 0.5f * MathF.Sin(_indicatorPulse);
+        float pulseScale = 0.7f + 0.3f * pulse;
+        float glowRadius = IndicatorRadius * (1.7f + pulse * 1.1f);
         using (var glowPath = new GraphicsPath())
         {
             glowPath.AddEllipse(cx - glowRadius, cy - glowRadius, glowRadius * 2, glowRadius * 2);
-            using var glowBrush = new SolidBrush(Color.FromArgb(25, 90, 210, 255));
+            using var glowBrush = new SolidBrush(
+                Color.FromArgb(24, indicatorColor.R, indicatorColor.G, indicatorColor.B)
+            );
             g.FillPath(glowBrush, glowPath);
         }
 
-        float coreRadius =
-            IndicatorRadius * (0.7f + 0.3f * (0.5f + 0.5f * MathF.Sin(_indicatorPulse)));
+        float ringRadius = IndicatorRadius + 3f + pulse * 2f;
+        using var ringPen = new Pen(
+            Color.FromArgb(90, indicatorColor.R, indicatorColor.G, indicatorColor.B),
+            1f
+        );
+        g.DrawEllipse(ringPen, cx - ringRadius, cy - ringRadius, ringRadius * 2, ringRadius * 2);
+
+        float coreRadius = IndicatorRadius * (0.75f + 0.25f * pulseScale);
         float r = Math.Max(3, coreRadius);
-        using var coreBrush = new SolidBrush(IndicatorColor);
+        using var coreBrush = new SolidBrush(indicatorColor);
         g.FillEllipse(coreBrush, cx - r, cy - r, r * 2, r * 2);
+
+        using var glintBrush = new SolidBrush(Color.FromArgb(175, 255, 255, 255));
+        g.FillEllipse(glintBrush, cx - r * 0.4f, cy - r * 0.55f, r * 0.55f, r * 0.4f);
+    }
+
+    private static GraphicsPath CreateRoundedRectanglePath(RectangleF rect, float radius)
+    {
+        var path = new GraphicsPath();
+        float diameter = radius * 2f;
+        path.AddArc(rect.X, rect.Y, diameter, diameter, 180, 90);
+        path.AddArc(rect.Right - diameter, rect.Y, diameter, diameter, 270, 90);
+        path.AddArc(rect.Right - diameter, rect.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(rect.X, rect.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     private static GraphicsPath CreateCapsulePath(int width, int height)
@@ -515,11 +584,9 @@ public sealed class RecordingOverlayForm : Form
         return path;
     }
 
-    private static float SpringEaseOut(float t, float overshoot = 1.0f)
+    private static float EaseOutQuint(float t)
     {
-        float s = overshoot;
-        t -= 1f;
-        return t * t * ((s + 1f) * t + s) + 1f;
+        return 1f - MathF.Pow(1f - t, 5f);
     }
 
     private static float EaseOutCubic(float t)

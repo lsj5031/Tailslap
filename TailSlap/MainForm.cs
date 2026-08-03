@@ -746,7 +746,11 @@ public class MainForm : Form
         {
             for (int i = 1; i <= 8; i++)
             {
-                var icon = TryLoadPngAsIcon(Path.Combine(iconsDir, $"{i}.png"), preferredSize);
+                var icon = TryLoadPngAsIcon(
+                    Path.Combine(iconsDir, $"{i}.png"),
+                    preferredSize,
+                    cropToContent: false
+                );
                 if (icon != null)
                     list.Add(icon);
             }
@@ -765,7 +769,11 @@ public class MainForm : Form
         {
             for (int i = 1; i <= 8; i++)
             {
-                var icon = TryLoadEmbeddedPngAsIcon($"{i}.png", preferredSize);
+                var icon = TryLoadEmbeddedPngAsIcon(
+                    $"{i}.png",
+                    preferredSize,
+                    cropToContent: false
+                );
                 if (icon != null)
                     list.Add(icon);
             }
@@ -785,80 +793,16 @@ public class MainForm : Form
 
     private static Icon? TryLoadIco(string filePath, int preferredSize)
     {
-        try
-        {
-            if (!File.Exists(filePath))
-                return null;
-
-            try
-            {
-                return new Icon(filePath, preferredSize, preferredSize);
-            }
-            catch
-            {
-                return new Icon(filePath);
-            }
-        }
-        catch
-        {
-            return null;
-        }
+        return TrayIconRenderer.FromIcoFile(filePath, preferredSize, cropToContent: true);
     }
 
-    private static Icon? TryLoadPngAsIcon(string filePath, int preferredSize)
+    private static Icon? TryLoadPngAsIcon(
+        string filePath,
+        int preferredSize,
+        bool cropToContent = true
+    )
     {
-        try
-        {
-            if (!File.Exists(filePath))
-                return null;
-
-            var bytes = File.ReadAllBytes(filePath);
-            using var ms = new MemoryStream(bytes);
-            using var original = new Bitmap(ms);
-            return CreateIconFromBitmap(original, preferredSize);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static Icon? CreateIconFromBitmap(Bitmap original, int preferredSize)
-    {
-        try
-        {
-            using var scaled = new Bitmap(
-                preferredSize,
-                preferredSize,
-                System.Drawing.Imaging.PixelFormat.Format32bppArgb
-            );
-            using (var g = Graphics.FromImage(scaled))
-            {
-                g.Clear(Color.Transparent);
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
-                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
-                g.DrawImage(original, new Rectangle(0, 0, preferredSize, preferredSize));
-            }
-
-            MakeEdgeBackgroundTransparent(scaled, tolerance: 40);
-
-            IntPtr hIcon = scaled.GetHicon();
-            try
-            {
-                using var tempIcon = Icon.FromHandle(hIcon);
-                return (Icon)tempIcon.Clone();
-            }
-            finally
-            {
-                if (hIcon != IntPtr.Zero)
-                    DestroyIcon(hIcon);
-            }
-        }
-        catch
-        {
-            return null;
-        }
+        return TrayIconRenderer.FromPngFile(filePath, preferredSize, cropToContent);
     }
 
     private static Stream? TryOpenEmbeddedIconsResourceStream(string fileName)
@@ -887,7 +831,11 @@ public class MainForm : Form
         return null;
     }
 
-    private static Icon? TryLoadEmbeddedPngAsIcon(string fileName, int preferredSize)
+    private static Icon? TryLoadEmbeddedPngAsIcon(
+        string fileName,
+        int preferredSize,
+        bool cropToContent = true
+    )
     {
         try
         {
@@ -895,8 +843,7 @@ public class MainForm : Form
             if (stream == null)
                 return null;
 
-            using var original = new Bitmap(stream);
-            return CreateIconFromBitmap(original, preferredSize);
+            return TrayIconRenderer.FromPngStream(stream, preferredSize, cropToContent);
         }
         catch
         {
@@ -912,139 +859,12 @@ public class MainForm : Form
             if (stream == null)
                 return null;
 
-            try
-            {
-                return new Icon(stream, preferredSize, preferredSize);
-            }
-            catch
-            {
-                return new Icon(stream);
-            }
+            return TrayIconRenderer.FromIcoStream(stream, preferredSize, cropToContent: true);
         }
         catch
         {
             return null;
         }
-    }
-
-    private static void MakeEdgeBackgroundTransparent(Bitmap bitmap, int tolerance)
-    {
-        try
-        {
-            int w = bitmap.Width;
-            int h = bitmap.Height;
-            if (w <= 0 || h <= 0)
-                return;
-
-            var bg = GetLikelyBackgroundColor(bitmap);
-
-            var visited = new bool[w * h];
-            var q = new System.Collections.Generic.Queue<Point>(w + h);
-
-            void Enqueue(int x, int y)
-            {
-                int idx = (y * w) + x;
-                if (visited[idx])
-                    return;
-                visited[idx] = true;
-                q.Enqueue(new Point(x, y));
-            }
-
-            for (int x = 0; x < w; x++)
-            {
-                Enqueue(x, 0);
-                if (h > 1)
-                    Enqueue(x, h - 1);
-            }
-            for (int y = 1; y < h - 1; y++)
-            {
-                Enqueue(0, y);
-                if (w > 1)
-                    Enqueue(w - 1, y);
-            }
-
-            while (q.Count > 0)
-            {
-                var p = q.Dequeue();
-                var c = bitmap.GetPixel(p.X, p.Y);
-
-                if (!IsSimilarColor(c, bg, tolerance))
-                    continue;
-
-                if (c.A != 0)
-                    bitmap.SetPixel(p.X, p.Y, Color.FromArgb(0, c.R, c.G, c.B));
-
-                int x = p.X;
-                int y = p.Y;
-                if (x > 0)
-                    Enqueue(x - 1, y);
-                if (x < w - 1)
-                    Enqueue(x + 1, y);
-                if (y > 0)
-                    Enqueue(x, y - 1);
-                if (y < h - 1)
-                    Enqueue(x, y + 1);
-            }
-        }
-        catch { }
-    }
-
-    private static Color GetLikelyBackgroundColor(Bitmap bitmap)
-    {
-        int w = bitmap.Width;
-        int h = bitmap.Height;
-        if (w <= 0 || h <= 0)
-            return Color.White;
-
-        var c1 = bitmap.GetPixel(0, 0);
-        var c2 = bitmap.GetPixel(w - 1, 0);
-        var c3 = bitmap.GetPixel(0, h - 1);
-        var c4 = bitmap.GetPixel(w - 1, h - 1);
-
-        var best = c1;
-        int bestScore = best.R + best.G + best.B;
-
-        int s2 = c2.R + c2.G + c2.B;
-        if (s2 > bestScore)
-        {
-            best = c2;
-            bestScore = s2;
-        }
-
-        int s3 = c3.R + c3.G + c3.B;
-        if (s3 > bestScore)
-        {
-            best = c3;
-            bestScore = s3;
-        }
-
-        int s4 = c4.R + c4.G + c4.B;
-        if (s4 > bestScore)
-        {
-            best = c4;
-        }
-
-        return best;
-    }
-
-    private static bool IsSimilarColor(Color a, Color b, int tolerance)
-    {
-        int dr = a.R - b.R;
-        if (dr < 0)
-            dr = -dr;
-        if (dr > tolerance)
-            return false;
-
-        int dg = a.G - b.G;
-        if (dg < 0)
-            dg = -dg;
-        if (dg > tolerance)
-            return false;
-
-        int db = a.B - b.B;
-        if (db < 0)
-            db = -db;
-        return db <= tolerance;
     }
 
     private Icon LoadIdleIcon()
@@ -1053,6 +873,13 @@ public class MainForm : Form
         {
             string iconsDir = Path.Combine(Application.StartupPath, "Icons");
             int preferredSize = GetOptimalIconSize();
+
+            var logo = TryLoadPngAsIcon(Path.Combine(iconsDir, "icon.png"), preferredSize);
+            if (logo != null)
+            {
+                Logger.Log($"Loaded idle icon at {preferredSize}px from icon.png");
+                return logo;
+            }
 
             var frame1 = TryLoadPngAsIcon(Path.Combine(iconsDir, "1.png"), preferredSize);
             if (frame1 != null)
@@ -1066,6 +893,13 @@ public class MainForm : Form
             {
                 Logger.Log($"Loaded idle icon at {preferredSize}px from favicon.ico");
                 return favicon;
+            }
+
+            var embeddedLogo = TryLoadEmbeddedPngAsIcon("icon.png", preferredSize);
+            if (embeddedLogo != null)
+            {
+                Logger.Log($"Loaded idle icon at {preferredSize}px from embedded icon.png");
+                return embeddedLogo;
             }
 
             var embeddedFrame1 = TryLoadEmbeddedPngAsIcon("1.png", preferredSize);
@@ -1100,6 +934,13 @@ public class MainForm : Form
             string iconsDir = Path.Combine(Application.StartupPath, "Icons");
             int preferredSize = GetOptimalIconSize();
 
+            var logo = TryLoadPngAsIcon(Path.Combine(iconsDir, "icon.png"), preferredSize);
+            if (logo != null)
+            {
+                Logger.Log($"Loaded main icon at {preferredSize}px from icon.png");
+                return logo;
+            }
+
             var frame1 = TryLoadPngAsIcon(Path.Combine(iconsDir, "1.png"), preferredSize);
             if (frame1 != null)
             {
@@ -1112,6 +953,13 @@ public class MainForm : Form
             {
                 Logger.Log($"Loaded main icon at {preferredSize}px from favicon.ico");
                 return favicon;
+            }
+
+            var embeddedLogo = TryLoadEmbeddedPngAsIcon("icon.png", preferredSize);
+            if (embeddedLogo != null)
+            {
+                Logger.Log($"Loaded main icon at {preferredSize}px from embedded icon.png");
+                return embeddedLogo;
             }
 
             var embeddedFrame1 = TryLoadEmbeddedPngAsIcon("1.png", preferredSize);
@@ -1282,6 +1130,19 @@ public class MainForm : Form
         catch { }
         _tray.Visible = false;
         _tray.Dispose();
+
+        try
+        {
+            _recordingOverlay?.Dispose();
+        }
+        catch { }
+
+        foreach (var frame in _frames)
+        {
+            if (!ReferenceEquals(frame, _idleIcon))
+                frame.Dispose();
+        }
+        _idleIcon.Dispose();
         base.OnFormClosed(e);
     }
 
@@ -1548,9 +1409,6 @@ public class MainForm : Form
 
     [DllImport("user32.dll")]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-
-    [DllImport("user32.dll")]
-    private static extern bool DestroyIcon(IntPtr hIcon);
 
     private void RegisterHotkey(uint mods, uint vk, int hotkeyId)
     {
