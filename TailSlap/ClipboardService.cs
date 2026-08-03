@@ -1335,7 +1335,13 @@ public sealed class ClipboardService : IClipboardService
 
                 if (success)
                 {
-                    Logger.Log($"Paste successful with {method}");
+                    // SendInput may safely fall back to SendKeys when it injects
+                    // zero events. That helper logs the exact method, so do not
+                    // attribute the result to SendInput here.
+                    if (method != "SendInput Ctrl+V")
+                    {
+                        Logger.Log($"Paste successful with {method}");
+                    }
                     return true;
                 }
 
