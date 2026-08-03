@@ -4,7 +4,9 @@
 
 ## Platform
 
-windows-native (WinForms desktop, Windows 10/11, x64)
+adaptive
+
+Native runtime target: Windows desktop via WinForms (Windows 10/11, x64).
 
 ## Stack
 
