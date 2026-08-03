@@ -69,7 +69,7 @@ public sealed class ClipboardService : IClipboardService
     [DllImport("user32.dll")]
     private static extern int SendMessage(IntPtr hWnd, uint Msg, out int wParam, out int lParam);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
     [DllImport("user32.dll")]
@@ -1322,6 +1322,13 @@ public sealed class ClipboardService : IClipboardService
                     Logger.Log($"Paste successful with {method}");
                     return true;
                 }
+
+                if (method == "SendInput Ctrl+V" && !supportsNativePaste)
+                {
+                    // TryPasteSendInputAsync owns the zero-event fallback so
+                    // it can distinguish zero delivery from partial delivery.
+                    return false;
+                }
             }
             catch (Exception ex)
             {
@@ -1508,6 +1515,17 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
+    internal static bool ShouldTrySendKeysAfterSendInputFailure(
+        uint sentInputEvents,
+        uint expectedInputEvents
+    )
+    {
+        // Zero means the chord was not injected at all, so one SendKeys fallback
+        // cannot duplicate it. Partial delivery is unsafe to replay because Ctrl
+        // or V may already have reached the target.
+        return sentInputEvents == 0 && expectedInputEvents > 0;
+    }
+
     private async System.Threading.Tasks.Task<bool> TryPasteSendInputAsync(
         IntPtr expectedForegroundWindow
     )
@@ -1515,25 +1533,28 @@ public sealed class ClipboardService : IClipboardService
         try
         {
             var targetWindow = ResolvePasteTarget();
+            ushort[] modifiers =
+            {
+                0x11, /*CTRL*/
+            };
+
             void PasteWithSendInput()
             {
                 NormalizeInputState();
-                ushort[] modifiers =
+                uint sent = SendChordScancode(
+                    modifiers,
+                    0x56 /*'V'*/
+                );
+                if (sent != 4)
                 {
-                    0x11, /*CTRL*/
-                };
-                if (
-                    !SendChordScancode(
-                        modifiers,
-                        0x56 /*'V'*/
-                    )
-                )
-                {
-                    throw new InvalidOperationException("SendInput rejected the Ctrl+V chord");
+                    throw new InvalidOperationException(
+                        $"SendInput rejected the Ctrl+V chord (sent={sent}/4)"
+                    );
                 }
             }
 
-            if (SupportsWindowMessagePaste(targetWindow))
+            bool supportsNativePaste = SupportsWindowMessagePaste(targetWindow);
+            if (supportsNativePaste)
             {
                 return await VerifyPasteDeliveryAsync(targetWindow, PasteWithSendInput);
             }
@@ -1561,13 +1582,32 @@ public sealed class ClipboardService : IClipboardService
             Logger.Log(
                 $"SendInput paste target: foreground=0x{expectedForegroundWindow.ToInt64():X}, focused=0x{targetWindow.ToInt64():X}"
             );
-            PasteWithSendInput();
+            uint sentInputEvents = SendChordScancode(
+                modifiers,
+                0x56 /*'V'*/
+            );
+            if (sentInputEvents == 0)
+            {
+                Logger.LogWarning(
+                    "SendInput injected zero events; trying one SendKeys Ctrl+V fallback"
+                );
+                NormalizeInputState();
+                SendKeys.SendWait("^v");
+                await Task.Delay(75).ConfigureAwait(true);
+                Logger.LogWarning(
+                    "SendKeys Ctrl+V fallback completed for an unverified custom-editor target"
+                );
+                return true;
+            }
+
+            if (sentInputEvents != 4)
+            {
+                throw new InvalidOperationException(
+                    $"SendInput rejected the Ctrl+V chord (sent={sentInputEvents}/4)"
+                );
+            }
+
             await Task.Delay(75).ConfigureAwait(true);
-            // Firefox and other browser editors do not expose a generic Win32
-            // text buffer for verification. SendInput is the most faithful
-            // delivery mechanism available, so treat a fully injected chord as
-            // the completed attempt and avoid replaying the paste through a
-            // second mechanism (which could duplicate text).
             Logger.LogWarning(
                 "SendInput Ctrl+V was injected into an unverified browser/custom editor target"
             );
@@ -2072,7 +2112,7 @@ public sealed class ClipboardService : IClipboardService
         return null;
     }
 
-    private static bool SendChordScancode(ushort[] modifiersVk, ushort keyVk)
+    private static uint SendChordScancode(ushort[] modifiersVk, ushort keyVk)
     {
         ushort VK_INSERT = 0x2D;
         var inputs = new System.Collections.Generic.List<INPUT>();
@@ -2256,7 +2296,7 @@ public sealed class ClipboardService : IClipboardService
         }
 
         Thread.Sleep(30); // Reduced from 80ms for faster response
-        return sent == inputs.Count;
+        return sent;
     }
 
     private static void NormalizeInputState()

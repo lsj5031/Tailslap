@@ -128,6 +128,26 @@ public class ClipboardServiceTests
         );
     }
 
+    [Theory]
+    [InlineData(0u, 4u, true)]
+    [InlineData(1u, 4u, false)]
+    [InlineData(3u, 4u, false)]
+    [InlineData(4u, 4u, false)]
+    public void ShouldTrySendKeysAfterSendInputFailure_OnlyRetriesZeroEvents(
+        uint sentInputEvents,
+        uint expectedInputEvents,
+        bool expected
+    )
+    {
+        Assert.Equal(
+            expected,
+            ClipboardService.ShouldTrySendKeysAfterSendInputFailure(
+                sentInputEvents,
+                expectedInputEvents
+            )
+        );
+    }
+
     [Fact]
     public void AppConfig_ClipboardFallback_DefaultsToDisabled()
     {
