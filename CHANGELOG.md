@@ -5,16 +5,22 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.2.0] - 2026-08-04
 
 ### Added
+- **Best-effort window restore before final paste**: Transcription sessions now capture the target window's process id and window class when recording starts. If the user switches windows while transcription runs, TailSlap restores the original window before the final paste, falling back to leaving the text on the clipboard when the target identity is gone or Windows rejects the restore. Firefox targets remain clipboard-only.
+- **Embedded app icons**: Application icons are now embedded in the build instead of referenced as external files, simplifying deployment and removing the icon-copy publish step.
 - **Diagnostic regression coverage**: Added tests for authenticated endpoint probes, expected POST-only transcription responses, and authentication failure classification.
 
 ### Changed
+- **Firefox paste delivery**: Automatic pasting into Firefox is now skipped; Firefox windows receive final text on the clipboard with a manual `Ctrl+V` hint instead of unreliable input injection. Non-Firefox paste input was hardened with corrected SendInput layouts, SendKeys-first ordering, virtual-key paste fallback, and safe retry of zero-event injections.
+- **Clipboard capture hardening**: Clipboard capture, text typing, and realtime controller wiring were refactored to reduce redundant code paths and improve capture reliability.
 - **Diagnostics accuracy**: LLM and transcription probes now use configured bearer authentication; the transcription check targets the derived `/audio/transcriptions` endpoint and treats `405 Method Not Allowed` as reachable. Optional realtime WebSocket failures are warnings, and disabled transcription skips the realtime check.
 - **Documentation accuracy**: Updated current build, publish-artifact, JSON camelCase, endpoint, delivery, diagnostics, and test-count documentation. Removed the obsolete session handoff snapshot.
 
 ### Fixed
+- **waveIn buffer shutdown race**: Audio recorder shutdown now drains and resets buffers in a way that avoids the waveIn prepare/unprepare race that could crash during recording stop.
+- **Duplicate custom-editor pastes**: Paste delivery no longer fires a second paste when a custom editor consumed the first injection.
 - **Recording overlay duplication**: Removed the duplicate orange `REC` marker so recording shows one blue waveform/status treatment without overlapping labels.
 
 ## [3.1.0] - 2026-07-30
