@@ -103,6 +103,12 @@ public class ClipboardServiceTests
     }
 
     [Fact]
+    public void NativeInputSize_MatchesWin32InputSize()
+    {
+        Assert.Equal(IntPtr.Size == 8 ? 40 : 28, ClipboardService.NativeInputSize);
+    }
+
+    [Fact]
     public void PasteMethodOrder_UsesSendInputBeforeSendKeys()
     {
         Assert.Equal(

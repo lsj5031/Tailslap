@@ -72,6 +72,8 @@ public sealed class ClipboardService : IClipboardService
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
+    internal static int NativeInputSize => Marshal.SizeOf<INPUT>();
+
     [DllImport("user32.dll")]
     private static extern IntPtr GetFocus();
 
@@ -123,7 +125,21 @@ public sealed class ClipboardService : IClipboardService
     private struct INPUTUNION
     {
         [FieldOffset(0)]
+        public MOUSEINPUT mi;
+
+        [FieldOffset(0)]
         public KEYBDINPUT ki;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
