@@ -111,6 +111,23 @@ public class ClipboardServiceTests
         );
     }
 
+    [Theory]
+    [InlineData(false, "SendInput Ctrl+V", true)]
+    [InlineData(false, "Ctrl+V", false)]
+    [InlineData(false, "Shift+Insert", false)]
+    [InlineData(true, "SendInput Ctrl+V", false)]
+    public void ShouldStopAfterUnverifiedPasteAttempt_PreventsDuplicateCustomEditorPaste(
+        bool supportsNativePaste,
+        string method,
+        bool expected
+    )
+    {
+        Assert.Equal(
+            expected,
+            ClipboardService.ShouldStopAfterUnverifiedPasteAttempt(supportsNativePaste, method)
+        );
+    }
+
     [Fact]
     public void AppConfig_ClipboardFallback_DefaultsToDisabled()
     {

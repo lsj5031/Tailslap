@@ -1283,6 +1283,14 @@ public sealed class ClipboardService : IClipboardService
     internal static IReadOnlyList<string> PasteMethodOrder { get; } =
         Array.AsReadOnly(new[] { "WM_PASTE", "SendInput Ctrl+V", "Ctrl+V", "Shift+Insert" });
 
+    internal static bool ShouldStopAfterUnverifiedPasteAttempt(
+        bool supportsNativePaste,
+        string method
+    )
+    {
+        return !supportsNativePaste && method == "SendInput Ctrl+V";
+    }
+
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync(
         IntPtr expectedForegroundWindow
     )
@@ -1291,6 +1299,7 @@ public sealed class ClipboardService : IClipboardService
         // input for browser/custom controls. SendKeys is last because it can
         // report completion without Firefox inserting into its content editor.
         LogPasteDiagnostic("PasteWithMultipleMethods");
+        bool supportsNativePaste = SupportsWindowMessagePaste(ResolvePasteTarget());
 
         foreach (string method in PasteMethodOrder)
         {
@@ -1321,6 +1330,22 @@ public sealed class ClipboardService : IClipboardService
                     Logger.LogWarning($"{method} failed: {ex.GetType().Name}: {ex.Message}");
                 }
                 catch { }
+            }
+
+            // For browser/custom editors, keyboard paste has no generic Win32
+            // verification. Never send another blind paste chord after the
+            // first attempt: it may have succeeded even if we could not prove
+            // it, and a fallback chord could duplicate the text.
+            if (ShouldStopAfterUnverifiedPasteAttempt(supportsNativePaste, method))
+            {
+                try
+                {
+                    Logger.LogWarning(
+                        "Unverified custom-editor paste attempt ended; no additional paste method will be tried"
+                    );
+                }
+                catch { }
+                return false;
             }
 
             // Brief delay between methods
@@ -1533,6 +1558,9 @@ public sealed class ClipboardService : IClipboardService
                 return false;
             }
 
+            Logger.Log(
+                $"SendInput paste target: foreground=0x{expectedForegroundWindow.ToInt64():X}, focused=0x{targetWindow.ToInt64():X}"
+            );
             PasteWithSendInput();
             await Task.Delay(75).ConfigureAwait(true);
             // Firefox and other browser editors do not expose a generic Win32
@@ -1545,8 +1573,15 @@ public sealed class ClipboardService : IClipboardService
             );
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            try
+            {
+                Logger.LogWarning(
+                    $"TryPasteSendInputAsync failed: {ex.GetType().Name}: {ex.Message}"
+                );
+            }
+            catch { }
             return false;
         }
     }
@@ -2121,11 +2156,31 @@ public sealed class ClipboardService : IClipboardService
             );
         }
         uint sent = 0;
+        int lastError = 0;
         try
         {
             sent = SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
+            lastError = Marshal.GetLastWin32Error();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            try
+            {
+                Logger.LogWarning($"SendInput exception: {ex.GetType().Name}: {ex.Message}");
+            }
+            catch { }
+        }
+
+        if (sent != inputs.Count)
+        {
+            try
+            {
+                Logger.LogWarning(
+                    $"SendInput Ctrl+V incomplete: sent={sent}/{inputs.Count}, win32Error={lastError}"
+                );
+            }
+            catch { }
+        }
 
         if (sent > 0 && sent < inputs.Count)
         {
@@ -2176,9 +2231,28 @@ public sealed class ClipboardService : IClipboardService
 
             try
             {
-                SendInput((uint)cleanup.Count, cleanup.ToArray(), Marshal.SizeOf<INPUT>());
+                uint cleanupSent = SendInput(
+                    (uint)cleanup.Count,
+                    cleanup.ToArray(),
+                    Marshal.SizeOf<INPUT>()
+                );
+                if (cleanupSent != cleanup.Count)
+                {
+                    Logger.LogWarning(
+                        $"SendInput cleanup incomplete: sent={cleanupSent}/{cleanup.Count}, win32Error={Marshal.GetLastWin32Error()}"
+                    );
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Logger.LogWarning(
+                        $"SendInput cleanup exception: {ex.GetType().Name}: {ex.Message}"
+                    );
+                }
+                catch { }
+            }
         }
 
         Thread.Sleep(30); // Reduced from 80ms for faster response
