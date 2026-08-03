@@ -117,9 +117,18 @@ public class ClipboardServiceTests
         );
     }
 
+    [Fact]
+    public void FirefoxPasteMethodOrder_UsesSendKeysBeforeSendInput()
+    {
+        Assert.Equal(
+            new[] { "WM_PASTE", "Ctrl+V", "SendInput Ctrl+V", "Shift+Insert" },
+            ClipboardService.FirefoxPasteMethodOrder
+        );
+    }
+
     [Theory]
     [InlineData(false, "SendInput Ctrl+V", true)]
-    [InlineData(false, "Ctrl+V", false)]
+    [InlineData(false, "Ctrl+V", true)]
     [InlineData(false, "Shift+Insert", false)]
     [InlineData(true, "SendInput Ctrl+V", false)]
     public void ShouldStopAfterUnverifiedPasteAttempt_PreventsDuplicateCustomEditorPaste(

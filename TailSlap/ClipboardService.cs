@@ -1258,7 +1258,8 @@ public sealed class ClipboardService : IClipboardService
             }
 
             await Task.Delay(250).ConfigureAwait(true); // Increased delay for better focus restoration
-            bool success = await PasteWithMultipleMethodsAsync(foregroundWindow);
+            bool isFirefox = IsWindowClass(foregroundWindow, "MozillaWindowClass");
+            bool success = await PasteWithMultipleMethodsAsync(foregroundWindow, isFirefox);
             if (!success)
             {
                 try
@@ -1299,16 +1300,20 @@ public sealed class ClipboardService : IClipboardService
     internal static IReadOnlyList<string> PasteMethodOrder { get; } =
         Array.AsReadOnly(new[] { "WM_PASTE", "SendInput Ctrl+V", "Ctrl+V", "Shift+Insert" });
 
+    internal static IReadOnlyList<string> FirefoxPasteMethodOrder { get; } =
+        Array.AsReadOnly(new[] { "WM_PASTE", "Ctrl+V", "SendInput Ctrl+V", "Shift+Insert" });
+
     internal static bool ShouldStopAfterUnverifiedPasteAttempt(
         bool supportsNativePaste,
         string method
     )
     {
-        return !supportsNativePaste && method == "SendInput Ctrl+V";
+        return !supportsNativePaste && (method == "SendInput Ctrl+V" || method == "Ctrl+V");
     }
 
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync(
-        IntPtr expectedForegroundWindow
+        IntPtr expectedForegroundWindow,
+        bool isFirefox = false
     )
     {
         // Try window messages for native controls first, then real OS keyboard
@@ -1316,8 +1321,9 @@ public sealed class ClipboardService : IClipboardService
         // report completion without Firefox inserting into its content editor.
         LogPasteDiagnostic("PasteWithMultipleMethods");
         bool supportsNativePaste = SupportsWindowMessagePaste(ResolvePasteTarget());
+        IReadOnlyList<string> methodOrder = isFirefox ? FirefoxPasteMethodOrder : PasteMethodOrder;
 
-        foreach (string method in PasteMethodOrder)
+        foreach (string method in methodOrder)
         {
             try
             {
@@ -1501,7 +1507,10 @@ public sealed class ClipboardService : IClipboardService
             NormalizeInputState();
             SendKeys.SendWait("^v");
             await Task.Delay(75).ConfigureAwait(true);
-            return false;
+            Logger.LogWarning(
+                "Firefox/custom-editor SendKeys Ctrl+V completed without generic verification"
+            );
+            return true;
         }
         catch
         {
