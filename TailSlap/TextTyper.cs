@@ -145,8 +145,32 @@ public class TextTyper
             }
             catch { }
 
-            SendBackspace(backspaceCount);
-            await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                SendBackspace(backspaceCount);
+                await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Do not continue typing after an uncertain correction. Preserve
+                // the complete intended text for an explicit manual paste.
+                try
+                {
+                    Logger.LogWarning($"TextTyper: Backspace correction failed: {ex.Message}");
+                }
+                catch { }
+
+                bool clipboardSet = await _clip.SetTextAsync(text).ConfigureAwait(false);
+                NotifyDeliveryFailureOnce();
+                return new TypeResult
+                {
+                    DeliverySuccess = false,
+                    TextOnClipboard = clipboardSet,
+                    Text = text,
+                    NewText = newText,
+                    BackspaceCount = backspaceCount,
+                };
+            }
         }
 
         // Type the new text
@@ -175,46 +199,19 @@ public class TextTyper
 
                 if (!deliverySuccess)
                 {
-                    // Clipboard paste failed, try SendKeys fallback for non-Unicode, non-multiline
-                    if (!ContainsUnicode(newText) && !ContainsNewline(newText))
+                    // Do not replay failed clipboard delivery through a second
+                    // native input mechanism. The clipboard remains the safe,
+                    // explicit recovery path for long/Unicode/multiline text.
+                    textOnClipboard = await _clip.SetTextAsync(newText).ConfigureAwait(false);
+                    try
                     {
-                        try
-                        {
-                            TypeTextDirectly(newText);
-                            deliverySuccess = true;
-                        }
-                        catch (Exception ex)
-                        {
-                            try
-                            {
-                                Logger.LogWarning(
-                                    $"TextTyper: SendKeys fallback failed: {ex.Message}"
-                                );
-                            }
-                            catch { }
-                        }
+                        Logger.LogWarning(
+                            "TextTyper: Clipboard delivery failed; text preserved on clipboard"
+                        );
                     }
+                    catch { }
 
-                    if (!deliverySuccess)
-                    {
-                        // Ensure text is at least on clipboard as fallback
-                        if (!textOnClipboard)
-                        {
-                            textOnClipboard = await _clip
-                                .SetTextAsync(newText)
-                                .ConfigureAwait(false);
-                        }
-
-                        try
-                        {
-                            Logger.LogWarning(
-                                "TextTyper: All delivery methods failed, text preserved on clipboard"
-                            );
-                        }
-                        catch { }
-
-                        NotifyDeliveryFailureOnce();
-                    }
+                    NotifyDeliveryFailureOnce();
                 }
             }
             else

@@ -15,7 +15,7 @@ dotnet publish TailSlap/TailSlap.csproj -c Release -r win-x64 --self-contained t
 The publish output is
 `TailSlap\bin\Release\net10.0-windows\win-x64\publish\`. Run
 `TailSlap.exe` from that directory. A self-contained publish also needs the
-native `WebRtcVad.dll` and the `Icons` directory beside the executable.
+native `WebRtcVad.dll`; branded icons are embedded in the executable.
 
 ## Source map
 

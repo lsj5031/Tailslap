@@ -119,21 +119,22 @@ public class TextTyperTests
     }
 
     [Fact]
-    public async Task TypeAsync_LongText_ClipboardPasteFailure_AttemptsFallback()
+    public async Task TypeAsync_LongText_ClipboardPasteFailure_PreservesClipboardOnly()
     {
         // Arrange
         var mockClip = CreateMockClipboardService();
         mockClip.Setup(c => c.SetTextAndPasteAsync("Hello!")).ReturnsAsync(false);
+        mockClip.Setup(c => c.SetTextAsync("Hello!")).ReturnsAsync(true);
         var typer = CreateTextTyper(mockClip);
 
         // Act
         var result = await typer.TypeAsync("Hello!");
 
-        // Assert — clipboard paste was attempted
+        // Assert — a failed clipboard delivery is not replayed through native input.
+        Assert.False(result.DeliverySuccess);
+        Assert.True(result.TextOnClipboard);
         mockClip.Verify(c => c.SetTextAndPasteAsync("Hello!"), Times.Once);
-        // In a desktop test environment, SendKeys fallback may succeed or fail
-        // depending on whether a message pump and foreground window exist.
-        // We verify that the fallback path was exercised (clipboard paste failed).
+        mockClip.Verify(c => c.SetTextAsync("Hello!"), Times.Once);
     }
 
     #endregion
@@ -499,20 +500,22 @@ public class TextTyperTests
     #region Delivery Failure (VAL-TYPE-009)
 
     [Fact]
-    public async Task TypeAsync_ClipboardPasteFailure_AttemptsRecovery()
+    public async Task TypeAsync_ClipboardPasteFailure_DoesNotUseSecondDeliveryMechanism()
     {
-        // Arrange — clipboard paste fails, SendKeys fallback may succeed in desktop env
+        // Arrange — long ASCII text uses clipboard; failure is surfaced rather
+        // than replayed through direct native input.
         var mockClip = CreateMockClipboardService();
         mockClip.Setup(c => c.SetTextAndPasteAsync("Hello!")).ReturnsAsync(false);
+        mockClip.Setup(c => c.SetTextAsync("Hello!")).ReturnsAsync(true);
         var typer = CreateTextTyper(mockClip);
 
         // Act
         var result = await typer.TypeAsync("Hello!");
 
-        // Assert — clipboard paste was attempted
+        // Assert
+        Assert.False(result.DeliverySuccess);
         mockClip.Verify(c => c.SetTextAndPasteAsync("Hello!"), Times.Once);
-        // SendKeys fallback may succeed in desktop test environments
-        // The important thing is the fallback path was exercised
+        mockClip.Verify(c => c.SetTextAsync("Hello!"), Times.Once);
     }
 
     [Fact]
@@ -524,6 +527,7 @@ public class TextTyperTests
         // but PasteAsync failed. The code ensures textOnClipboard=true.
         var mockClip = CreateMockClipboardService();
         mockClip.Setup(c => c.SetTextAndPasteAsync("你好世界")).ReturnsAsync(false);
+        mockClip.Setup(c => c.SetTextAsync("你好世界")).ReturnsAsync(true);
         var typer = CreateTextTyper(mockClip);
 
         // Act

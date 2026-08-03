@@ -801,9 +801,20 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 Logger.Log(
                     $"ProcessTranscriptionAsync: Backspacing {backspaceCount} chars for correction"
                 );
-                SendBackspace(backspaceCount);
-                _lastTypedLength = commonPrefixLen;
-                await Task.Delay(20, cancellationToken);
+                try
+                {
+                    SendBackspace(backspaceCount);
+                    _lastTypedLength = commonPrefixLen;
+                    await Task.Delay(20, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(
+                        $"ProcessTranscriptionAsync: Backspace correction failed; preserving text on clipboard: {ex.Message}"
+                    );
+                    await _clip.SetTextAsync(text);
+                    return;
+                }
             }
 
             if (text.Length > _lastTypedLength)
@@ -812,20 +823,35 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 Logger.Log($"ProcessTranscriptionAsync: Typing {newText.Length} chars");
                 cancellationToken.ThrowIfCancellationRequested();
 
+                bool deliverySuccess;
                 if (newText.Length > 5)
                 {
-                    bool pasteSuccess = await _clip.SetTextAndPasteAsync(newText);
-                    if (!pasteSuccess)
+                    deliverySuccess = await _clip.SetTextAndPasteAsync(newText);
+                    if (!deliverySuccess)
                     {
-                        TypeTextDirectly(newText);
+                        deliverySuccess = TryTypeTextDirectly(newText);
                     }
                 }
                 else
                 {
-                    TypeTextDirectly(newText);
+                    deliverySuccess = TryTypeTextDirectly(newText);
+                    if (!deliverySuccess)
+                    {
+                        deliverySuccess = await _clip.SetTextAndPasteAsync(newText);
+                    }
                 }
 
-                _lastTypedLength = text.Length;
+                if (!deliverySuccess)
+                {
+                    Logger.LogWarning(
+                        "ProcessTranscriptionAsync: Text delivery failed; preserving text on the clipboard"
+                    );
+                    await _clip.SetTextAsync(newText);
+                }
+                else
+                {
+                    _lastTypedLength = text.Length;
+                }
             }
 
             _realtimeTranscriptionText = text;
@@ -890,16 +916,18 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         NativeInputSimulator.SendBackspace(count);
     }
 
-    private static void TypeTextDirectly(string text)
+    private static bool TryTypeTextDirectly(string text)
     {
         try
         {
             NativeInputSimulator.WaitForModifierRelease(timeoutMs: 500);
             NativeInputSimulator.TypeTextDirectly(text);
+            return true;
         }
         catch (Exception ex)
         {
             Logger.LogWarning($"TypeTextDirectly failed: {ex.Message}");
+            return false;
         }
     }
 

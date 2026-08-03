@@ -150,7 +150,7 @@ The JSON serializer writes camelCase property names. API keys are entered throug
 #### General Settings
 - `autoPaste`: Auto-paste refined text (default: `true`)
 - `excludeFromClipboardHistory`: Exclude delivered text from Windows clipboard history (default: `true`)
-- `useClipboardFallback`: Use Ctrl+C fallback when clipboard capture fails (default: `true`)
+- `useClipboardFallback`: Optionally accept clipboard text only when the capture attempt changes the clipboard (default: `false`)
 
 ## Privacy & Security
 - **End-to-End Encryption**: All history (refinement and transcription) is stored on disk using Windows DPAPI with `DataProtectionScope.CurrentUser`. Only the current Windows user can decrypt data.
@@ -214,7 +214,7 @@ dotnet build -c Release
 dotnet publish TailSlap/TailSlap.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
-**Output**: `TailSlap\bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`. Self-contained publishes also include `WebRtcVad.dll` and the `Icons` directory beside the executable; those files are required at runtime.
+**Output**: `TailSlap\bin\Release\net10.0-windows\win-x64\publish\TailSlap.exe`. Self-contained publishes also include `WebRtcVad.dll`; branded icons are embedded in the executable.
 
 **Technology Stack**: 
 - .NET 10 with Windows Forms

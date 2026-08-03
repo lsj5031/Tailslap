@@ -8,7 +8,10 @@ public sealed class AppConfig
 {
     public bool AutoPaste { get; set; } = true;
     public bool ExcludeFromClipboardHistory { get; set; } = true;
-    public bool UseClipboardFallback { get; set; } = true;
+
+    // Never treat an unchanged clipboard as the user's selected text by default.
+    // This remains configurable for users who explicitly accept that ambiguity.
+    public bool UseClipboardFallback { get; set; } = false;
     public HotkeyConfig Hotkey { get; set; } = new() { Modifiers = 0x0003, Key = (uint)Keys.R }; // Ctrl+Alt+R for LLM
     public HotkeyConfig TranscriberHotkey { get; set; } =
         new() { Modifiers = 0x0003, Key = (uint)Keys.T }; // Ctrl+Alt+T for Transcriber

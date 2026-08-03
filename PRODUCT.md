@@ -10,7 +10,7 @@ Native runtime target: Windows desktop via WinForms (Windows 10/11, x64).
 
 ## Stack
 
-.NET 10 Windows Forms (net10.0-windows), C# 12 with nullable reference types, programmatic UI (no designer files), Microsoft.Extensions.DependencyInjection, System.Text.Json, Windows DPAPI for secrets/history, WinMM audio capture with WebRTC VAD, OpenAI-compatible HTTP + WebSocket clients. Self-contained x64 publishing creates a single-file `TailSlap.exe` plus the native `WebRtcVad.dll` and icon assets shipped beside it.
+.NET 10 Windows Forms (net10.0-windows), C# 12 with nullable reference types, programmatic UI (no designer files), Microsoft.Extensions.DependencyInjection, System.Text.Json, Windows DPAPI for secrets/history, WinMM audio capture with WebRTC VAD, OpenAI-compatible HTTP + WebSocket clients. Self-contained x64 publishing creates a single-file `TailSlap.exe` plus the native `WebRtcVad.dll`; branded icons are embedded in the executable.
 
 ## Users
 
@@ -44,7 +44,7 @@ Local-first AI typing: it works with OpenAI-compatible local, LAN, or hosted HTT
 
 ## Brand Commitments
 
-- Name: TailSlap. Logo: cartoon beaver icon (loaded from `Icons` dir at runtime, cached bitmap shared by all dialogs).
+- Name: TailSlap. Logo: cartoon beaver icon (embedded in the executable and cached as a shared dialog bitmap).
 - Light theme only (user-confirmed); native Windows feel as the base, with committed brand styling allowed.
 - Cyan-blue accent (RGB 90, 210, 255) established by the recording overlay waveform; severity palette green/amber/red used by the issues/diagnostics dialogs.
 - UI copy is developer-plain: short labels, no marketing voice.

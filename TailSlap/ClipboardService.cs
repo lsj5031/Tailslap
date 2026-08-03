@@ -418,57 +418,9 @@ public sealed class ClipboardService : IClipboardService
 
         try
         {
-            LogClipboardState("Before");
-            string? originalClipboard = null;
-            try
-            {
-                try
-                {
-                    Logger.Log("Step 1: Checking clipboard for text...");
-                }
-                catch { }
-                if (Clipboard.ContainsText())
-                {
-                    try
-                    {
-                        Logger.Log("Step 1a: Clipboard contains text, reading...");
-                    }
-                    catch { }
-                    originalClipboard = Clipboard.GetText(TextDataFormat.UnicodeText);
-                    try
-                    {
-                        Logger.Log(
-                            $"Step 1b: Original clipboard captured: len={(originalClipboard?.Length ?? 0)}"
-                        );
-                    }
-                    catch { }
-                }
-                else
-                {
-                    try
-                    {
-                        Logger.Log("Step 1a: Clipboard does not contain text");
-                    }
-                    catch { }
-                }
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    Logger.LogWarning(
-                        $"Step 1 ERROR: Read original clipboard failed: {ex.GetType().Name}: {ex.Message}"
-                    );
-                }
-                catch { }
-                try
-                {
-                    NotificationService.ShowWarning(
-                        "Unable to access clipboard. Check if another application is using it."
-                    );
-                }
-                catch { }
-            }
+            // Snapshot only diagnostics here. Selection capture must not treat
+            // this pre-existing clipboard content as the user's selection.
+            LogClipboardState("Before selection capture");
 
             IntPtr foregroundWindow = IntPtr.Zero;
             try
@@ -799,6 +751,11 @@ public sealed class ClipboardService : IClipboardService
                 Logger.Log($"Clipboard seq before: {seqBefore}");
             }
             catch { }
+
+            // A clipboard fallback is only safe when the capture attempt changed
+            // the clipboard. An unchanged clipboard may contain stale, unrelated
+            // text, so never accept it as the selected text.
+            bool clipboardChanged = false;
             IntPtr targetHwnd = ResolveFocusHwnd(foregroundWindow);
             try
             {
@@ -834,6 +791,7 @@ public sealed class ClipboardService : IClipboardService
                     seqBefore,
                     CopyMethod.SendKeysCtrlC,
                     out var copied,
+                    ref clipboardChanged,
                     timeoutPrimary
                 )
             )
@@ -857,19 +815,6 @@ public sealed class ClipboardService : IClipboardService
                 return copied;
             }
 
-            // Quick fallback to original clipboard if available
-            if (useClipboardFallback && (originalClipboard?.Length > 0))
-            {
-                try
-                {
-                    Logger.Log(
-                        $"Falling back to original clipboard: len={originalClipboard.Length}"
-                    );
-                }
-                catch { }
-                return originalClipboard!;
-            }
-
             // Application-specific attempts with shorter timeouts
             if (isSublime) // Sublime Text
             {
@@ -884,6 +829,7 @@ public sealed class ClipboardService : IClipboardService
                         seqBefore,
                         CopyMethod.DoubleCtrlC,
                         out copied,
+                        ref clipboardChanged,
                         timeoutAlt
                     )
                 )
@@ -910,7 +856,16 @@ public sealed class ClipboardService : IClipboardService
                 }
                 catch { }
                 // Try standard Ctrl+C with SendInput for Firefox
-                if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlC, out copied, timeoutAlt))
+                if (
+                    TryCopyAndRead(
+                        targetHwnd,
+                        seqBefore,
+                        CopyMethod.CtrlC,
+                        out copied,
+                        ref clipboardChanged,
+                        timeoutAlt
+                    )
+                )
                 {
                     try
                     {
@@ -930,7 +885,16 @@ public sealed class ClipboardService : IClipboardService
                 }
 
                 // Try Ctrl+Insert as Firefox fallback
-                if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlInsert, out copied, 400))
+                if (
+                    TryCopyAndRead(
+                        targetHwnd,
+                        seqBefore,
+                        CopyMethod.CtrlInsert,
+                        out copied,
+                        ref clipboardChanged,
+                        400
+                    )
+                )
                 {
                     try
                     {
@@ -952,7 +916,16 @@ public sealed class ClipboardService : IClipboardService
             else
             {
                 // Try standard Ctrl+C with shorter timeout for non-Firefox
-                if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlC, out copied, timeoutAlt))
+                if (
+                    TryCopyAndRead(
+                        targetHwnd,
+                        seqBefore,
+                        CopyMethod.CtrlC,
+                        out copied,
+                        ref clipboardChanged,
+                        timeoutAlt
+                    )
+                )
                 {
                     try
                     {
@@ -965,7 +938,16 @@ public sealed class ClipboardService : IClipboardService
                 }
 
                 // Last resort methods with minimal timeout
-                if (TryCopyAndRead(targetHwnd, seqBefore, CopyMethod.CtrlInsert, out copied, 200))
+                if (
+                    TryCopyAndRead(
+                        targetHwnd,
+                        seqBefore,
+                        CopyMethod.CtrlInsert,
+                        out copied,
+                        ref clipboardChanged,
+                        200
+                    )
+                )
                 {
                     try
                     {
@@ -986,57 +968,35 @@ public sealed class ClipboardService : IClipboardService
             }
             catch { }
 
-            // Fallback: try to use clipboard contents if allowed
-            if (useClipboardFallback)
+            // Optional compatibility fallback: only use text if the clipboard
+            // changed during this capture attempt. This preserves the setting's
+            // usefulness without silently processing stale clipboard contents.
+            if (useClipboardFallback && clipboardChanged)
             {
-                string? fallback = originalClipboard;
-                // If original clipboard was empty, try reading current clipboard state
-                if (string.IsNullOrEmpty(fallback))
+                string? fallback = null;
+                try
                 {
-                    try
+                    if (Clipboard.ContainsText())
                     {
-                        if (Clipboard.ContainsText())
-                        {
-                            fallback = Clipboard.GetText(TextDataFormat.UnicodeText);
-                            try
-                            {
-                                Logger.Log(
-                                    $"Fallback clipboard read: hasText=True, len={fallback?.Length ?? 0}{(isFirefox ? " [Firefox]" : "")}"
-                                );
-                            }
-                            catch { }
-                        }
-                        else
-                        {
-                            try
-                            {
-                                Logger.Log("Fallback clipboard read: hasText=False");
-                            }
-                            catch { }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        try
+                        fallback = Clipboard.GetText(TextDataFormat.UnicodeText);
+                        if (!string.IsNullOrWhiteSpace(fallback))
                         {
                             Logger.LogWarning(
-                                $"Fallback clipboard read failed: {ex.GetType().Name}: {ex.Message}"
+                                $"No selection captured; using changed clipboard fallback (elapsed {sw.ElapsedMilliseconds} ms){(isFirefox ? " [Firefox]" : "")}, len={fallback.Length}"
                             );
+                            return fallback;
                         }
-                        catch { }
                     }
                 }
-
-                if (!string.IsNullOrWhiteSpace(fallback))
+                catch (Exception ex)
                 {
                     try
                     {
                         Logger.LogWarning(
-                            $"No selection captured; using clipboard fallback (elapsed {sw.ElapsedMilliseconds} ms){(isFirefox ? " [Firefox]" : "")}, len={fallback.Length}"
+                            $"Changed clipboard fallback read failed: {ex.GetType().Name}: {ex.Message}"
                         );
                     }
                     catch { }
-                    return fallback!;
                 }
             }
 
@@ -1722,6 +1682,7 @@ public sealed class ClipboardService : IClipboardService
         uint seqBefore,
         CopyMethod method,
         out string result,
+        ref bool clipboardChanged,
         int timeoutMs = 1200
     )
     {
@@ -1880,7 +1841,12 @@ public sealed class ClipboardService : IClipboardService
                             }
                             catch { }
                             Thread.Sleep(60);
-                            var t = WaitForClipboardTextChange(seqBefore, perAttempt);
+                            var t = WaitForClipboardTextChange(
+                                seqBefore,
+                                perAttempt,
+                                out bool changedForAttempt
+                            );
+                            clipboardChanged |= changedForAttempt;
                             if (!string.IsNullOrWhiteSpace(t))
                             {
                                 result = t!;
@@ -1920,7 +1886,8 @@ public sealed class ClipboardService : IClipboardService
                     );
                     break;
             }
-            var text = WaitForClipboardTextChange(seqBefore, timeoutMs);
+            var text = WaitForClipboardTextChange(seqBefore, timeoutMs, out bool changed);
+            clipboardChanged |= changed;
             if (!string.IsNullOrWhiteSpace(text))
             {
                 result = text!;
@@ -1992,8 +1959,18 @@ public sealed class ClipboardService : IClipboardService
         return false;
     }
 
-    private static string? WaitForClipboardTextChange(uint seqBefore, int timeoutMs)
+    internal static bool IsClipboardSequenceChanged(uint sequenceBefore, uint sequenceAfter)
     {
+        return sequenceAfter != 0 && sequenceAfter != sequenceBefore;
+    }
+
+    private static string? WaitForClipboardTextChange(
+        uint seqBefore,
+        int timeoutMs,
+        out bool clipboardChanged
+    )
+    {
+        clipboardChanged = false;
         var start = Environment.TickCount;
         while (Environment.TickCount - start < timeoutMs)
         {
@@ -2003,8 +1980,9 @@ public sealed class ClipboardService : IClipboardService
                 seqNow = GetClipboardSequenceNumber();
             }
             catch { }
-            if (seqNow != 0 && seqNow != seqBefore)
+            if (IsClipboardSequenceChanged(seqBefore, seqNow))
             {
+                clipboardChanged = true;
                 try
                 {
                     if (Clipboard.ContainsText())

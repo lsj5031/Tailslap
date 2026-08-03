@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
-using System.IO;
 using System.Net.Http;
 using System.Net.WebSockets;
 using System.Runtime.InteropServices;
@@ -739,31 +738,7 @@ public class MainForm : Form
     private Icon[] LoadAnimationFrames()
     {
         var list = new System.Collections.Generic.List<Icon>(8);
-        string iconsDir = Path.Combine(Application.StartupPath, "Icons");
         int preferredSize = GetOptimalIconSize();
-
-        try
-        {
-            for (int i = 1; i <= 8; i++)
-            {
-                var icon = TryLoadPngAsIcon(
-                    Path.Combine(iconsDir, $"{i}.png"),
-                    preferredSize,
-                    cropToContent: false
-                );
-                if (icon != null)
-                    list.Add(icon);
-            }
-        }
-        catch { }
-
-        if (list.Count > 0)
-        {
-            Logger.Log(
-                $"Loaded {list.Count} animation frames (PNG) from files at {preferredSize}px"
-            );
-            return list.ToArray();
-        }
 
         try
         {
@@ -783,26 +758,13 @@ public class MainForm : Form
         if (list.Count > 0)
         {
             Logger.Log(
-                $"Loaded {list.Count} animation frames (PNG) from embedded resources at {preferredSize}px"
+                $"Loaded {list.Count} animation frames from embedded resources at {preferredSize}px"
             );
             return list.ToArray();
         }
 
+        Logger.LogWarning("Animation frames unavailable; using the idle icon");
         return new[] { _idleIcon };
-    }
-
-    private static Icon? TryLoadIco(string filePath, int preferredSize)
-    {
-        return TrayIconRenderer.FromIcoFile(filePath, preferredSize, cropToContent: true);
-    }
-
-    private static Icon? TryLoadPngAsIcon(
-        string filePath,
-        int preferredSize,
-        bool cropToContent = true
-    )
-    {
-        return TrayIconRenderer.FromPngFile(filePath, preferredSize, cropToContent);
     }
 
     private static Stream? TryOpenEmbeddedIconsResourceStream(string fileName)
@@ -851,139 +813,39 @@ public class MainForm : Form
         }
     }
 
-    private static Icon? TryLoadEmbeddedIcoAsIcon(string fileName, int preferredSize)
-    {
-        try
-        {
-            using var stream = TryOpenEmbeddedIconsResourceStream(fileName);
-            if (stream == null)
-                return null;
-
-            return TrayIconRenderer.FromIcoStream(stream, preferredSize, cropToContent: true);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     private Icon LoadIdleIcon()
     {
+        int preferredSize = GetOptimalIconSize();
         try
         {
-            string iconsDir = Path.Combine(Application.StartupPath, "Icons");
-            int preferredSize = GetOptimalIconSize();
-
-            var logo = TryLoadPngAsIcon(Path.Combine(iconsDir, "icon.png"), preferredSize);
+            var logo = TryLoadEmbeddedPngAsIcon("icon.png", preferredSize);
             if (logo != null)
             {
-                Logger.Log($"Loaded idle icon at {preferredSize}px from icon.png");
+                Logger.Log($"Loaded idle icon at {preferredSize}px from embedded icon.png");
                 return logo;
             }
-
-            var frame1 = TryLoadPngAsIcon(Path.Combine(iconsDir, "1.png"), preferredSize);
-            if (frame1 != null)
-            {
-                Logger.Log($"Loaded idle icon at {preferredSize}px from 1.png");
-                return frame1;
-            }
-
-            var favicon = TryLoadIco(Path.Combine(iconsDir, "favicon.ico"), preferredSize);
-            if (favicon != null)
-            {
-                Logger.Log($"Loaded idle icon at {preferredSize}px from favicon.ico");
-                return favicon;
-            }
-
-            var embeddedLogo = TryLoadEmbeddedPngAsIcon("icon.png", preferredSize);
-            if (embeddedLogo != null)
-            {
-                Logger.Log($"Loaded idle icon at {preferredSize}px from embedded icon.png");
-                return embeddedLogo;
-            }
-
-            var embeddedFrame1 = TryLoadEmbeddedPngAsIcon("1.png", preferredSize);
-            if (embeddedFrame1 != null)
-            {
-                Logger.Log($"Loaded idle icon at {preferredSize}px from embedded 1.png");
-                return embeddedFrame1;
-            }
-
-            var embeddedFavicon = TryLoadEmbeddedIcoAsIcon("favicon.ico", preferredSize);
-            if (embeddedFavicon != null)
-            {
-                Logger.Log($"Loaded idle icon at {preferredSize}px from embedded favicon.ico");
-                return embeddedFavicon;
-            }
         }
         catch { }
 
-        try
-        {
-            return (Icon)Properties.Resources.IconIdle.Clone();
-        }
-        catch { }
-
+        Logger.LogWarning("Embedded idle icon unavailable; using the system application icon");
         return SystemIcons.Application;
     }
 
     public static Icon LoadMainIcon()
     {
+        int preferredSize = GetOptimalIconSize();
         try
         {
-            string iconsDir = Path.Combine(Application.StartupPath, "Icons");
-            int preferredSize = GetOptimalIconSize();
-
-            var logo = TryLoadPngAsIcon(Path.Combine(iconsDir, "icon.png"), preferredSize);
+            var logo = TryLoadEmbeddedPngAsIcon("icon.png", preferredSize);
             if (logo != null)
             {
-                Logger.Log($"Loaded main icon at {preferredSize}px from icon.png");
+                Logger.Log($"Loaded main icon at {preferredSize}px from embedded icon.png");
                 return logo;
             }
-
-            var frame1 = TryLoadPngAsIcon(Path.Combine(iconsDir, "1.png"), preferredSize);
-            if (frame1 != null)
-            {
-                Logger.Log($"Loaded main icon at {preferredSize}px from 1.png");
-                return frame1;
-            }
-
-            var favicon = TryLoadIco(Path.Combine(iconsDir, "favicon.ico"), preferredSize);
-            if (favicon != null)
-            {
-                Logger.Log($"Loaded main icon at {preferredSize}px from favicon.ico");
-                return favicon;
-            }
-
-            var embeddedLogo = TryLoadEmbeddedPngAsIcon("icon.png", preferredSize);
-            if (embeddedLogo != null)
-            {
-                Logger.Log($"Loaded main icon at {preferredSize}px from embedded icon.png");
-                return embeddedLogo;
-            }
-
-            var embeddedFrame1 = TryLoadEmbeddedPngAsIcon("1.png", preferredSize);
-            if (embeddedFrame1 != null)
-            {
-                Logger.Log($"Loaded main icon at {preferredSize}px from embedded 1.png");
-                return embeddedFrame1;
-            }
-
-            var embeddedFavicon = TryLoadEmbeddedIcoAsIcon("favicon.ico", preferredSize);
-            if (embeddedFavicon != null)
-            {
-                Logger.Log($"Loaded main icon at {preferredSize}px from embedded favicon.ico");
-                return embeddedFavicon;
-            }
         }
         catch { }
 
-        try
-        {
-            return (Icon)Properties.Resources.IconIdle.Clone();
-        }
-        catch { }
-
+        Logger.LogWarning("Embedded main icon unavailable; using the system application icon");
         return SystemIcons.Application;
     }
 

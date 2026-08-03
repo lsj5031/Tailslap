@@ -30,13 +30,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Physical copy of icons for external loading (faster, allows hot-swapping) -->
-    <Content Include="Icons\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-      <Visible>true</Visible>
-    </Content>
-
     <!-- WebRtcVadSharp only copies the native DLL on build; publish needs an explicit entry. -->
     <Content Include="$(WebRtcVadNativePath)" Condition="Exists('$(WebRtcVadNativePath)')">
       <Link>WebRtcVad.dll</Link>

@@ -1,14 +1,13 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Windows.Forms;
 
 namespace TailSlap;
 
 /// <summary>
-/// Shared low-level keyboard input simulation using Win32 SendInput with
-/// SendKeys fallback. Used by TextTyper and RealtimeTranscriptionController
-/// to avoid duplicated P/Invoke and keystroke-sending logic.
+/// Shared low-level keyboard input simulation using Win32 SendInput.
+/// Used by TextTyper and RealtimeTranscriptionController to avoid duplicated
+/// P/Invoke and keystroke-sending logic.
 /// </summary>
 public static class NativeInputSimulator
 {
@@ -114,7 +113,8 @@ public static class NativeInputSimulator
 
     /// <summary>
     /// Sends <paramref name="count"/> backspace keystrokes via scancode
-    /// SendInput with a SendKeys fallback.
+    /// SendInput. Partial native delivery is reported and never replayed through
+    /// a second input mechanism.
     /// </summary>
     public static void SendBackspace(int count)
     {
@@ -171,34 +171,17 @@ public static class NativeInputSimulator
                     _ = SendInput(1, new[] { keyUp }, Marshal.SizeOf<INPUT>());
                 }
 
-                int remainingCount = GetRemainingKeyPressCount(count, sentCount);
                 try
                 {
-                    Logger.Log(
-                        $"NativeInputSimulator: SendInput sent {sent}/{inputs.Length} backspace events (win32Error={lastError}), falling back to SendKeys for {remainingCount} remaining backspaces"
+                    Logger.LogWarning(
+                        $"NativeInputSimulator: SendInput delivered {sent}/{inputs.Length} backspace events (win32Error={lastError}); no secondary input fallback was attempted"
                     );
                 }
                 catch { }
 
-                if (remainingCount > 0)
-                {
-                    try
-                    {
-                        SendKeys.SendWait("{BS " + remainingCount + "}");
-                        SendKeys.Flush();
-                    }
-                    catch (Exception ex)
-                    {
-                        try
-                        {
-                            Logger.LogWarning(
-                                $"NativeInputSimulator: SendKeys backspace fallback failed: {ex.Message}"
-                            );
-                        }
-                        catch { }
-                        throw;
-                    }
-                }
+                throw new InvalidOperationException(
+                    $"SendInput delivered only {sent}/{inputs.Length} backspace events."
+                );
             }
         }
         catch (Exception ex)
@@ -208,6 +191,7 @@ public static class NativeInputSimulator
                 Logger.LogWarning($"NativeInputSimulator: SendBackspace failed: {ex.Message}");
             }
             catch { }
+            throw;
         }
     }
 
@@ -219,8 +203,8 @@ public static class NativeInputSimulator
 
     /// <summary>
     /// Types <paramref name="text"/> into the foreground window via Unicode
-    /// SendInput with a SendKeys fallback when SendInput is incomplete.
-    /// Exceptions propagate to callers — they are responsible for fallback handling.
+    /// SendInput. Exceptions propagate to callers, which can select a safer
+    /// clipboard delivery path.
     /// </summary>
     public static void TypeTextDirectly(string text)
     {
@@ -235,7 +219,7 @@ public static class NativeInputSimulator
             int sentCount = (int)Math.Min(sent, (uint)inputs.Length);
 
             // SendInput can stop between the key-down and key-up pair. Release
-            // that key before handing only the unsent suffix to SendKeys.
+            // that key, then report the partial delivery without replaying it.
             if ((sentCount & 1) != 0)
             {
                 var keyUp = inputs[sentCount - 1];
@@ -244,38 +228,17 @@ public static class NativeInputSimulator
                 sentCount++;
             }
 
-            int sentCharacters = Math.Min(text.Length, sentCount / 2);
-            string fallbackText =
-                sentCharacters < text.Length ? text[sentCharacters..] : string.Empty;
-
             try
             {
-                Logger.Log(
-                    $"NativeInputSimulator: Unicode SendInput sent {sent}/{inputs.Length} events (win32Error={lastError}), falling back to SendKeys for {fallbackText.Length} remaining chars"
+                Logger.LogWarning(
+                    $"NativeInputSimulator: Unicode SendInput delivered {sent}/{inputs.Length} events (win32Error={lastError}); no secondary input fallback was attempted"
                 );
             }
             catch { }
 
-            if (fallbackText.Length > 0)
-            {
-                try
-                {
-                    var escaped = EscapeForSendKeys(fallbackText);
-                    SendKeys.SendWait(escaped);
-                    SendKeys.Flush();
-                }
-                catch (Exception ex)
-                {
-                    try
-                    {
-                        Logger.LogWarning(
-                            $"NativeInputSimulator: SendKeys text fallback failed: {ex.Message}"
-                        );
-                    }
-                    catch { }
-                    throw;
-                }
-            }
+            throw new InvalidOperationException(
+                $"SendInput delivered only {sent}/{inputs.Length} Unicode input events."
+            );
         }
     }
 
@@ -322,8 +285,8 @@ public static class NativeInputSimulator
     }
 
     /// <summary>
-    /// Escapes characters that are special in SendKeys syntax by wrapping
-    /// them in braces. Converts newlines to {ENTER} and strips carriage returns.
+    /// Escapes characters using the legacy SendKeys syntax. Kept as a pure
+    /// formatting helper for compatibility; native delivery no longer uses it.
     /// </summary>
     public static string EscapeForSendKeys(string text)
     {

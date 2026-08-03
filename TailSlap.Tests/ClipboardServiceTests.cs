@@ -85,6 +85,39 @@ public class ClipboardServiceTests
         Assert.True(new AppConfig().ExcludeFromClipboardHistory);
     }
 
+    [Theory]
+    [InlineData(10, 10, false)]
+    [InlineData(10, 11, true)]
+    [InlineData(0, 11, true)]
+    [InlineData(10, 0, false)]
+    public void IsClipboardSequenceChanged_OnlyAcceptsNonZeroChanges(
+        uint sequenceBefore,
+        uint sequenceAfter,
+        bool expected
+    )
+    {
+        Assert.Equal(
+            expected,
+            ClipboardService.IsClipboardSequenceChanged(sequenceBefore, sequenceAfter)
+        );
+    }
+
+    [Fact]
+    public void AppConfig_ClipboardFallback_DefaultsToDisabled()
+    {
+        Assert.False(new AppConfig().UseClipboardFallback);
+    }
+
+    [Fact]
+    public void AppConfig_Clone_PreservesClipboardFallback()
+    {
+        var config = new AppConfig { UseClipboardFallback = true };
+
+        AppConfig clone = config.Clone();
+
+        Assert.True(clone.UseClipboardFallback);
+    }
+
     [Fact]
     public void AppConfig_Clone_PreservesClipboardHistoryExclusion()
     {
