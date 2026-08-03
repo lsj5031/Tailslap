@@ -101,6 +101,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
     private byte[][] _buffers;
     private GCHandle[] _bufferHandles;
     private WAVEHDR[] _waveHeaders;
+    private GCHandle _waveHeaderHandle;
     private MemoryStream _recordedData;
     private bool _isRecording;
     private bool _disposed;
@@ -139,6 +140,9 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         _buffers = new byte[BUFFER_COUNT][];
         _bufferHandles = new GCHandle[BUFFER_COUNT];
         _waveHeaders = new WAVEHDR[BUFFER_COUNT];
+        // WinMM retains each WAVEHDR pointer after waveInAddBuffer returns.
+        // Keep the managed header array pinned until every header is unprepared.
+        _waveHeaderHandle = GCHandle.Alloc(_waveHeaders, GCHandleType.Pinned);
         _recordedData = new MemoryStream();
         InitializeWebRtcVad();
     }
@@ -463,6 +467,26 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         return true;
     }
 
+    internal static bool CanReleaseWaveHeader(uint flags)
+    {
+        // A returned prepared header is safe to unprepare. A queued header is
+        // still owned by WinMM and must remain pinned and untouched.
+        return (flags & WHDR_INQUEUE) == 0;
+    }
+
+    private bool WaitForAllBuffersReturnedSynchronously(int timeoutMs)
+    {
+        const int pollIntervalMs = 20;
+        int waitedMs = 0;
+        while (!IsAllBuffersReturned() && waitedMs < timeoutMs)
+        {
+            Thread.Sleep(pollIntervalMs);
+            waitedMs += pollIntervalMs;
+        }
+
+        return IsAllBuffersReturned();
+    }
+
     private async Task<bool> WaitForAllBuffersReturnedAsync(int timeoutMs, bool logOnTimeout = true)
     {
         const int pollIntervalMs = 20;
@@ -687,58 +711,43 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             {
                 Logger.Log("AudioRecorder.StopAsync: Calling waveInReset");
                 ResetWaveIn("AudioRecorder.StopAsync");
-            }
-
-            // Let WinMM return ownership of any in-flight buffers before unpreparing them.
-            await WaitForAllBuffersReturnedAsync(1000, logOnTimeout: false).ConfigureAwait(false);
-
-            // Unprepare headers BEFORE closing the device (requires valid handle)
-            for (int i = 0; i < BUFFER_COUNT; i++)
+            } // Let WinMM return ownership of any in-flight buffers before unpreparing them.
+            bool buffersReturned = false;
+            for (int attempt = 1; attempt <= 3 && !buffersReturned; attempt++)
             {
-                if (_bufferHandles[i].IsAllocated && (_waveHeaders[i].dwFlags & WHDR_PREPARED) != 0)
-                {
-                    try
-                    {
-                        int unprepResult = waveInUnprepareHeader(
-                            _hWaveIn,
-                            ref _waveHeaders[i],
-                            Marshal.SizeOf(typeof(WAVEHDR))
-                        );
-                        if (unprepResult != 0)
-                            Logger.LogWarning(
-                                $"AudioRecorder.StopAsync: waveInUnprepareHeader[{i}] returned error {unprepResult}"
-                            );
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogWarning(
-                            $"AudioRecorder.StopAsync: Exception unpreparing header {i}: {ex.Message}"
-                        );
-                    }
-                }
-            }
-
-            Logger.Log("AudioRecorder.StopAsync: Closing handle");
-            _hWaveIn.Dispose();
-            _hWaveIn = null;
-        }
-
-        // Free buffer handles
-        for (int i = 0; i < BUFFER_COUNT; i++)
-        {
-            if (_bufferHandles[i].IsAllocated)
-            {
-                try
-                {
-                    _bufferHandles[i].Free();
-                }
-                catch (Exception ex)
+                buffersReturned = await WaitForAllBuffersReturnedAsync(1000, logOnTimeout: false)
+                    .ConfigureAwait(false);
+                if (!buffersReturned)
                 {
                     Logger.LogWarning(
-                        $"AudioRecorder.StopAsync: Exception freeing buffer handle {i}: {ex.Message}"
+                        $"AudioRecorder.StopAsync: Buffers still queued after reset; retrying waveInReset (attempt {attempt}/3)"
                     );
+                    ResetWaveIn($"AudioRecorder.StopAsync retry {attempt}");
                 }
             }
+
+            bool headersReleased =
+                buffersReturned && TryUnprepareReturnedHeaders(_hWaveIn, "AudioRecorder.StopAsync");
+            if (headersReleased)
+            {
+                Logger.Log("AudioRecorder.StopAsync: Closing handle");
+                _hWaveIn.Dispose();
+                _hWaveIn = null;
+            }
+            else
+            {
+                Logger.LogWarning(
+                    "AudioRecorder.StopAsync: Leaving waveIn handle and pinned headers alive because buffers remain owned by WinMM"
+                );
+                // Allow DisposeAsync or a later terminal cleanup attempt to retry
+                // once WinMM returns ownership of the buffers.
+                Interlocked.Exchange(ref _stopInvoked, 0);
+            }
+        }
+
+        if (_hWaveIn == null)
+        {
+            FreeBufferHandles("AudioRecorder.StopAsync");
         }
         Logger.Log("AudioRecorder.StopAsync: Cleanup complete");
     }
@@ -767,6 +776,96 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
 
         return resetResult;
+    }
+
+    private bool TryUnprepareReturnedHeaders(SafeWaveInHandle waveIn, string caller)
+    {
+        bool allReleased = true;
+        for (int i = 0; i < BUFFER_COUNT; i++)
+        {
+            uint flags = _waveHeaders[i].dwFlags;
+            if (!CanReleaseWaveHeader(flags))
+            {
+                Logger.LogWarning(
+                    $"{caller}: Header {i} is still in WinMM queue; deferring unprepare"
+                );
+                allReleased = false;
+                continue;
+            }
+
+            if ((flags & WHDR_PREPARED) == 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                int result = waveInUnprepareHeader(
+                    waveIn,
+                    ref _waveHeaders[i],
+                    Marshal.SizeOf(typeof(WAVEHDR))
+                );
+                if (result != 0)
+                {
+                    Logger.LogWarning(
+                        $"{caller}: waveInUnprepareHeader[{i}] returned error {result}; deferring cleanup"
+                    );
+                    allReleased = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning($"{caller}: Exception unpreparing header {i}: {ex.Message}");
+                allReleased = false;
+            }
+        }
+
+        return allReleased;
+    }
+
+    private void FreeBufferHandles(string caller)
+    {
+        for (int i = 0; i < BUFFER_COUNT; i++)
+        {
+            if (!_bufferHandles[i].IsAllocated)
+            {
+                continue;
+            }
+
+            try
+            {
+                _bufferHandles[i].Free();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning($"{caller}: Exception freeing buffer handle {i}: {ex.Message}");
+            }
+        }
+    }
+
+    private void FreeWaveHeaderPin()
+    {
+        if (_waveHeaderHandle.IsAllocated)
+        {
+            _waveHeaderHandle.Free();
+        }
+    }
+
+    private void AbandonCaptureHandleSafely(string caller)
+    {
+        if (_hWaveIn == null || _hWaveIn.IsInvalid)
+        {
+            return;
+        }
+
+        // If WinMM still owns a queued header after bounded retries, do not let
+        // SafeHandle finalization call waveInClose against live buffers. Marking
+        // the handle invalid intentionally leaks this rare native handle and
+        // its pinned buffers, which is safer than closing/freeing live memory.
+        Logger.Error(
+            $"{caller}: Abandoning capture handle because WinMM still owns queued buffers"
+        );
+        _hWaveIn.SetHandleAsInvalid();
     }
 
     private static void SaveAsWav(
@@ -923,7 +1022,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         Logger.Log($"{caller}: Recording started successfully");
     }
 
-    private void ReleaseStreamingCaptureDevice(string caller)
+    private bool ReleaseStreamingCaptureDevice(string caller)
     {
         if (_hWaveIn != null && !_hWaveIn.IsInvalid)
         {
@@ -952,31 +1051,14 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                 Logger.LogWarning($"{caller}: Exception resetting waveIn device: {ex.Message}");
             }
 
-            for (int i = 0; i < BUFFER_COUNT; i++)
+            bool buffersReturned = WaitForAllBuffersReturnedSynchronously(1000);
+            bool headersReleased = buffersReturned && TryUnprepareReturnedHeaders(_hWaveIn, caller);
+            if (!headersReleased)
             {
-                if (_bufferHandles[i].IsAllocated && (_waveHeaders[i].dwFlags & WHDR_PREPARED) != 0)
-                {
-                    try
-                    {
-                        int unprepResult = waveInUnprepareHeader(
-                            _hWaveIn,
-                            ref _waveHeaders[i],
-                            Marshal.SizeOf(typeof(WAVEHDR))
-                        );
-                        if (unprepResult != 0)
-                        {
-                            Logger.LogWarning(
-                                $"{caller}: waveInUnprepareHeader[{i}] returned error {unprepResult}"
-                            );
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogWarning(
-                            $"{caller}: Exception unpreparing header {i}: {ex.Message}"
-                        );
-                    }
-                }
+                Logger.LogWarning(
+                    $"{caller}: Deferring device close because capture buffers remain owned by WinMM"
+                );
+                return false;
             }
 
             Logger.Log($"{caller}: Closing handle");
@@ -984,31 +1066,26 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             _hWaveIn = null;
         }
 
+        FreeBufferHandles(caller);
         for (int i = 0; i < BUFFER_COUNT; i++)
         {
-            if (_bufferHandles[i].IsAllocated)
-            {
-                try
-                {
-                    _bufferHandles[i].Free();
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(
-                        $"{caller}: Exception freeing buffer handle {i}: {ex.Message}"
-                    );
-                }
-            }
-
             _buffers[i] = Array.Empty<byte>();
             _waveHeaders[i] = default;
         }
+        return true;
     }
 
     private void ReopenStreamingCaptureDevice()
     {
         Logger.LogWarning("AudioRecorder.StreamingRecovery: Reopening capture device");
-        ReleaseStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen");
+        if (!ReleaseStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen"))
+        {
+            Logger.LogWarning(
+                "AudioRecorder.StreamingRecovery: Existing capture device still owns buffers; reopening skipped"
+            );
+            return;
+        }
+
         OpenStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen");
         _lastBufferTime = DateTime.Now;
         Logger.Log("AudioRecorder: Streaming recovery reopened capture device successfully");
@@ -1495,6 +1572,14 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         _recordedData?.Dispose();
         _webRtcVad?.Dispose();
         _webRtcVad = null;
+        if (_hWaveIn == null)
+        {
+            FreeWaveHeaderPin();
+        }
+        else
+        {
+            AbandonCaptureHandleSafely("AudioRecorder.DisposeAsync");
+        }
         _disposed = true;
         GC.SuppressFinalize(this);
     }
@@ -1504,9 +1589,25 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         if (_disposed)
             return;
         await StopAsync().ConfigureAwait(false);
+        if (_hWaveIn != null && !_hWaveIn.IsInvalid)
+        {
+            // StopAsync retries reset/drain internally; one additional terminal
+            // attempt covers a driver that returned buffers just after the last
+            // poll without ever unpreparing a still-queued header.
+            Interlocked.Exchange(ref _stopInvoked, 0);
+            await StopAsync().ConfigureAwait(false);
+        }
         _recordedData?.Dispose();
         _webRtcVad?.Dispose();
         _webRtcVad = null;
+        if (_hWaveIn == null)
+        {
+            FreeWaveHeaderPin();
+        }
+        else
+        {
+            AbandonCaptureHandleSafely("AudioRecorder.DisposeAsync");
+        }
         _disposed = true;
         GC.SuppressFinalize(this);
     }

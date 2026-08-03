@@ -4,6 +4,20 @@ using Xunit;
 
 public class AudioResamplerTests
 {
+    [Theory]
+    [InlineData(0u, true)]
+    [InlineData(0x1u, true)]
+    [InlineData(0x2u, true)]
+    [InlineData(0x10u, false)]
+    [InlineData(0x12u, false)]
+    public void CanReleaseWaveHeader_AllowsReturnedHeadersEvenWhenPrepared(
+        uint flags,
+        bool expected
+    )
+    {
+        Assert.Equal(expected, AudioRecorder.CanReleaseWaveHeader(flags));
+    }
+
     [Fact]
     public void Resample16To24_EmptyInput_ReturnsEmpty()
     {
