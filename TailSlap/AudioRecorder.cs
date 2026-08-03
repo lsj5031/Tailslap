@@ -392,12 +392,26 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
             if (!buffersReturned)
             {
-                Logger.LogWarning(
-                    "AudioRecorder: Buffers still queued after waveInStop; calling waveInReset for final drain"
+                Logger.Log(
+                    "AudioRecorder: waveInStop left buffers in flight; calling waveInReset for final drain"
                 );
-                ResetWaveIn("AudioRecorder");
-                await WaitForAllBuffersReturnedAsync(timeoutMs: 300, logOnTimeout: false)
+                int resetResult = ResetWaveIn("AudioRecorder");
+                bool buffersReturnedAfterReset = await WaitForAllBuffersReturnedAsync(
+                        timeoutMs: 1000,
+                        logOnTimeout: false
+                    )
                     .ConfigureAwait(false);
+
+                if (resetResult != 0 || !buffersReturnedAfterReset)
+                {
+                    Logger.LogWarning(
+                        $"AudioRecorder: Buffer drain incomplete after waveInReset (resetResult={resetResult}, buffersReturned={buffersReturnedAfterReset})"
+                    );
+                }
+                else
+                {
+                    Logger.Log("AudioRecorder: waveInReset returned all capture buffers");
+                }
             }
 
             // Collect any final data from buffers
@@ -745,7 +759,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
 
         int resetResult = waveInReset(_hWaveIn);
-        _waveInResetIssued = true;
+        _waveInResetIssued = resetResult == 0;
 
         if (resetResult != 0)
         {

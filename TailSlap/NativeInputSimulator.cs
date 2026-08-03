@@ -32,7 +32,24 @@ public static class NativeInputSimulator
     public struct INPUTUNION
     {
         [FieldOffset(0)]
+        public MOUSEINPUT mi;
+
+        [FieldOffset(0)]
         public KEYBDINPUT ki;
+    }
+
+    // INPUT is a union whose size is determined by MOUSEINPUT on Win32.
+    // Keep the unused member here so cbSize matches the native structure on
+    // both x86 and x64; SendInput rejects a smaller structure.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -49,7 +66,7 @@ public static class NativeInputSimulator
 
     #region P/Invoke
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
     [DllImport("user32.dll")]
@@ -141,16 +158,47 @@ public static class NativeInputSimulator
             var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
             if (sent != inputs.Length)
             {
+                int lastError = Marshal.GetLastWin32Error();
+                int sentCount = (int)Math.Min(sent, (uint)inputs.Length);
+
+                // A key-down performs the deletion. If SendInput stopped before
+                // its paired key-up, release the key and do not repeat that
+                // backspace through the fallback.
+                if ((sentCount & 1) != 0)
+                {
+                    var keyUp = inputs[sentCount - 1];
+                    keyUp.U.ki.dwFlags |= KEYEVENTF_KEYUP;
+                    _ = SendInput(1, new[] { keyUp }, Marshal.SizeOf<INPUT>());
+                }
+
+                int remainingCount = GetRemainingKeyPressCount(count, sentCount);
                 try
                 {
-                    Logger.LogWarning(
-                        $"NativeInputSimulator: SendInput sent {sent}/{inputs.Length} backspace events, falling back to SendKeys"
+                    Logger.Log(
+                        $"NativeInputSimulator: SendInput sent {sent}/{inputs.Length} backspace events (win32Error={lastError}), falling back to SendKeys for {remainingCount} remaining backspaces"
                     );
                 }
                 catch { }
 
-                SendKeys.SendWait("{BS " + count + "}");
-                SendKeys.Flush();
+                if (remainingCount > 0)
+                {
+                    try
+                    {
+                        SendKeys.SendWait("{BS " + remainingCount + "}");
+                        SendKeys.Flush();
+                    }
+                    catch (Exception ex)
+                    {
+                        try
+                        {
+                            Logger.LogWarning(
+                                $"NativeInputSimulator: SendKeys backspace fallback failed: {ex.Message}"
+                            );
+                        }
+                        catch { }
+                        throw;
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -161,6 +209,12 @@ public static class NativeInputSimulator
             }
             catch { }
         }
+    }
+
+    internal static int GetRemainingKeyPressCount(int requestedCount, int sentEventCount)
+    {
+        int completedKeyPresses = (Math.Max(0, sentEventCount) + 1) / 2;
+        return Math.Max(0, requestedCount - completedKeyPresses);
     }
 
     /// <summary>
@@ -177,17 +231,51 @@ public static class NativeInputSimulator
         var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
         if (sent != inputs.Length)
         {
+            int lastError = Marshal.GetLastWin32Error();
+            int sentCount = (int)Math.Min(sent, (uint)inputs.Length);
+
+            // SendInput can stop between the key-down and key-up pair. Release
+            // that key before handing only the unsent suffix to SendKeys.
+            if ((sentCount & 1) != 0)
+            {
+                var keyUp = inputs[sentCount - 1];
+                keyUp.U.ki.dwFlags |= KEYEVENTF_KEYUP;
+                _ = SendInput(1, new[] { keyUp }, Marshal.SizeOf<INPUT>());
+                sentCount++;
+            }
+
+            int sentCharacters = Math.Min(text.Length, sentCount / 2);
+            string fallbackText =
+                sentCharacters < text.Length ? text[sentCharacters..] : string.Empty;
+
             try
             {
-                Logger.LogWarning(
-                    $"NativeInputSimulator: Unicode SendInput sent {sent}/{inputs.Length} events, falling back to SendKeys"
+                Logger.Log(
+                    $"NativeInputSimulator: Unicode SendInput sent {sent}/{inputs.Length} events (win32Error={lastError}), falling back to SendKeys for {fallbackText.Length} remaining chars"
                 );
             }
             catch { }
 
-            var escaped = EscapeForSendKeys(text);
-            SendKeys.SendWait(escaped);
-            SendKeys.Flush();
+            if (fallbackText.Length > 0)
+            {
+                try
+                {
+                    var escaped = EscapeForSendKeys(fallbackText);
+                    SendKeys.SendWait(escaped);
+                    SendKeys.Flush();
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        Logger.LogWarning(
+                            $"NativeInputSimulator: SendKeys text fallback failed: {ex.Message}"
+                        );
+                    }
+                    catch { }
+                    throw;
+                }
+            }
         }
     }
 

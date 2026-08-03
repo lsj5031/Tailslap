@@ -271,6 +271,87 @@ public sealed class RemoteTranscriberTests
     }
 
     [Fact]
+    public async Task TranscribeStreamingAsync_NestedDataTranscript_ExtractsText()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse("data: {\"data\":{\"transcript\":\"nested text\"}}\n\ndata: [DONE]\n\n")
+        );
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "nested text" }, chunks);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_SegmentArray_ConcatenatesText()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse(
+                "data: {\"segments\":[{\"text\":\"first\"},{\"text\":\" second\"}]}\n\ndata: [DONE]\n\n"
+            )
+        );
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "first second" }, chunks);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_StatusResult_PrefersNestedTranscript()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse(
+                "data: {\"result\":\"success\",\"data\":{\"transcript\":\"actual text\"}}\n\ndata: [DONE]\n\n"
+            )
+        );
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "actual text" }, chunks);
+    }
+
+    [Fact]
+    public async Task TranscribeStreamingAsync_MultipleChoices_UsesFirstCandidate()
+    {
+        using var fixture = new RemoteTranscriberFixture(_ =>
+            SseResponse(
+                "data: {\"choices\":[{\"text\":\"first\"},{\"text\":\"second\"}]}\n\ndata: [DONE]\n\n"
+            )
+        );
+
+        var chunks = await CollectAsync(
+            fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(new[] { "first" }, chunks);
+    }
+
+    [Theory]
+    [InlineData("{\"message\":\"invalid request\"}")]
+    [InlineData("{\"error\":{\"message\":\"invalid request\"}}")]
+    [InlineData("{\"type\":\"response.failed\",\"message\":\"invalid request\"}")]
+    public async Task TranscribeStreamingAsync_ErrorPayload_ThrowsWithoutYieldingMessage(
+        string payload
+    )
+    {
+        using var fixture = new RemoteTranscriberFixture(_ => SseResponse($"data: {payload}\n\n"));
+
+        var error = await Assert.ThrowsAsync<TranscriberException>(async () =>
+            await CollectAsync(fixture.Transcriber.TranscribeStreamingAsync(fixture.AudioPath))
+        );
+
+        Assert.Equal(TranscriberErrorType.HttpError, error.ErrorType);
+        Assert.Contains("sha256=", error.ResponseText);
+        Assert.DoesNotContain("invalid request", error.ResponseText);
+    }
+
+    [Fact]
     public async Task TranscribeStreamingAsync_UnrecognizedJsonChunk_IsNotYielded()
     {
         using var fixture = new RemoteTranscriberFixture(_ =>

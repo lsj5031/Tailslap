@@ -1,4 +1,6 @@
+using System;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using TailSlap;
 using Xunit;
 
@@ -41,5 +43,30 @@ public class NativeInputSimulatorTests
         stopwatch.Stop();
         Assert.False(released);
         Assert.True(stopwatch.ElapsedMilliseconds >= 100);
+    }
+
+    [Fact]
+    public void InputStructMatchesWin32InputSize()
+    {
+        int expectedSize = IntPtr.Size == 8 ? 40 : 28;
+
+        Assert.Equal(expectedSize, Marshal.SizeOf<NativeInputSimulator.INPUT>());
+    }
+
+    [Theory]
+    [InlineData(4, 0, 4)]
+    [InlineData(4, 2, 3)]
+    [InlineData(4, 3, 2)]
+    [InlineData(4, 8, 0)]
+    public void GetRemainingKeyPressCount_DoesNotRepeatPartiallySentInput(
+        int requestedCount,
+        int sentEventCount,
+        int expectedRemaining
+    )
+    {
+        Assert.Equal(
+            expectedRemaining,
+            NativeInputSimulator.GetRemainingKeyPressCount(requestedCount, sentEventCount)
+        );
     }
 }

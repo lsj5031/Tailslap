@@ -226,9 +226,18 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
             .ConfigureAwait(false);
         if (!typeResult.DeliverySuccess)
         {
-            TryLogWarning(
-                $"TranscriptionResultSink: TextTyper delivery failed (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
-            );
+            if (typeResult.WindowChanged && typeResult.TextOnClipboard)
+            {
+                TryLog(
+                    "TranscriptionResultSink: Delivery skipped after the foreground window changed; text preserved on clipboard"
+                );
+            }
+            else
+            {
+                TryLogWarning(
+                    $"TranscriptionResultSink: TextTyper delivery failed (windowChanged={typeResult.WindowChanged}, onClipboard={typeResult.TextOnClipboard})"
+                );
+            }
         }
     }
 

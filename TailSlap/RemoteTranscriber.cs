@@ -650,8 +650,8 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
                 return true;
             }
 
-            Logger.LogWarning(
-                $"Streaming chunk is JSON without recognized text; skipping ({FingerprintPayload(payload)})"
+            Logger.Log(
+                $"Streaming chunk has no recognized text; skipping ({FingerprintPayload(payload)})"
             );
             text = "";
             return false;
@@ -675,86 +675,232 @@ public sealed class RemoteTranscriber : IRemoteTranscriber
         }
     }
 
+    private static readonly string[] StreamTextKeys =
+    {
+        "text",
+        "transcript",
+        "transcription",
+        "content",
+        "delta",
+        "partial",
+        "utterance",
+    };
+
+    private static readonly string[] StreamSingleContainerKeys =
+    {
+        "data",
+        "result",
+        "output",
+        "response",
+        "choice",
+        "message",
+        "delta",
+    };
+
+    private static readonly string[] StreamCandidateContainerKeys =
+    {
+        "choices",
+        "results",
+        "alternatives",
+    };
+
+    private static readonly string[] StreamSequentialContainerKeys = { "segments", "items" };
+
     private static string ExtractTextFromStreamChunk(string jsonData)
     {
         try
         {
             using var doc = JsonDocument.Parse(jsonData);
-            var root = doc.RootElement;
-
-            // Try common streaming formats
-            // Format 1: { "text": "..." } or { "content": "..." }
-            foreach (var key in new[] { "text", "content", "transcription", "delta" })
-            {
-                if (
-                    root.TryGetProperty(key, out var textElement)
-                    && textElement.ValueKind == JsonValueKind.String
-                )
-                {
-                    return textElement.GetString() ?? "";
-                }
-            }
-
-            // Format 2: { "choices": [{ "delta": { "content": "..." } }] } (OpenAI style)
             if (
-                root.TryGetProperty("choices", out var choices)
-                && choices.ValueKind == JsonValueKind.Array
+                ContainsStreamError(doc.RootElement)
+                || IsStandaloneStreamErrorMessage(doc.RootElement)
             )
             {
-                foreach (var choice in choices.EnumerateArray())
-                {
-                    if (
-                        choice.TryGetProperty("delta", out var delta)
-                        && delta.ValueKind == JsonValueKind.Object
-                    )
-                    {
-                        if (
-                            delta.TryGetProperty("content", out var content)
-                            && content.ValueKind == JsonValueKind.String
-                        )
-                        {
-                            return content.GetString() ?? "";
-                        }
-                        if (
-                            delta.TryGetProperty("text", out var text)
-                            && text.ValueKind == JsonValueKind.String
-                        )
-                        {
-                            return text.GetString() ?? "";
-                        }
-                    }
-                    // Also check direct text in choice
-                    if (
-                        choice.TryGetProperty("text", out var choiceText)
-                        && choiceText.ValueKind == JsonValueKind.String
-                    )
-                    {
-                        return choiceText.GetString() ?? "";
-                    }
-                }
+                throw new TranscriberException(
+                    TranscriberErrorType.HttpError,
+                    "Remote streaming error",
+                    responseText: FingerprintPayload(jsonData)
+                );
             }
 
-            // Format 3: { "result": { "text": "..." } }
-            if (
-                root.TryGetProperty("result", out var result)
-                && result.ValueKind == JsonValueKind.Object
-            )
-            {
-                if (
-                    result.TryGetProperty("text", out var resultText)
-                    && resultText.ValueKind == JsonValueKind.String
-                )
-                {
-                    return resultText.GetString() ?? "";
-                }
-            }
-
-            return "";
+            return ExtractTextFromStreamElement(doc.RootElement);
         }
         catch (JsonException)
         {
             return "";
         }
+    }
+
+    private static string ExtractTextFromStreamElement(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            return element.GetString() ?? "";
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            var items = element.EnumerateArray();
+            return items.MoveNext() ? ExtractTextFromStreamElement(items.Current) : "";
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return "";
+        }
+
+        // Prefer direct text fields so a payload containing both metadata and
+        // nested alternatives returns the provider's authoritative value.
+        foreach (var key in StreamTextKeys)
+        {
+            if (!TryGetPropertyIgnoreCase(element, key, out var value))
+            {
+                continue;
+            }
+
+            var text = ExtractTextFromStreamElement(value);
+            if (!string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+        }
+
+        // Providers commonly wrap text in data/result/output or expose segment
+        // arrays. Search only known containers so status/error metadata is not
+        // accidentally treated as transcript text.
+        foreach (var key in StreamSingleContainerKeys)
+        {
+            if (!TryGetPropertyIgnoreCase(element, key, out var value))
+            {
+                continue;
+            }
+
+            if (value.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+            {
+                continue;
+            }
+
+            var text = ExtractTextFromStreamElement(value);
+            if (!string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+        }
+
+        foreach (var key in StreamCandidateContainerKeys)
+        {
+            if (
+                !TryGetPropertyIgnoreCase(element, key, out var value)
+                || value.ValueKind != JsonValueKind.Array
+            )
+            {
+                continue;
+            }
+
+            var candidates = value.EnumerateArray();
+            if (candidates.MoveNext())
+            {
+                var text = ExtractTextFromStreamElement(candidates.Current);
+                if (!string.IsNullOrEmpty(text))
+                {
+                    return text;
+                }
+            }
+        }
+
+        foreach (var key in StreamSequentialContainerKeys)
+        {
+            if (
+                !TryGetPropertyIgnoreCase(element, key, out var value)
+                || value.ValueKind != JsonValueKind.Array
+            )
+            {
+                continue;
+            }
+
+            var builder = new StringBuilder();
+            foreach (var item in value.EnumerateArray())
+            {
+                builder.Append(ExtractTextFromStreamElement(item));
+            }
+
+            if (builder.Length > 0)
+            {
+                return builder.ToString();
+            }
+        }
+
+        return "";
+    }
+
+    private static bool ContainsStreamError(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray().Any(ContainsStreamError);
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (
+            TryGetPropertyIgnoreCase(element, "error", out var error)
+            && error.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined)
+        )
+        {
+            return true;
+        }
+
+        foreach (var key in new[] { "type", "status" })
+        {
+            if (
+                TryGetPropertyIgnoreCase(element, key, out var value)
+                && value.ValueKind == JsonValueKind.String
+            )
+            {
+                var marker = value.GetString() ?? "";
+                if (
+                    marker.Equals("error", StringComparison.OrdinalIgnoreCase)
+                    || marker.Equals("failed", StringComparison.OrdinalIgnoreCase)
+                    || marker.EndsWith(".error", StringComparison.OrdinalIgnoreCase)
+                    || marker.EndsWith(".failed", StringComparison.OrdinalIgnoreCase)
+                )
+                {
+                    return true;
+                }
+            }
+        }
+
+        return element.EnumerateObject().Any(property => ContainsStreamError(property.Value));
+    }
+
+    private static bool IsStandaloneStreamErrorMessage(JsonElement element)
+    {
+        return element.ValueKind == JsonValueKind.Object
+            && element.EnumerateObject().Count() == 1
+            && TryGetPropertyIgnoreCase(element, "message", out var message)
+            && message.ValueKind == JsonValueKind.String;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(
+        JsonElement objectElement,
+        string propertyName,
+        out JsonElement value
+    )
+    {
+        foreach (var property in objectElement.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
     }
 
     private static string ExtractTextFromResponseString(string responseText)
