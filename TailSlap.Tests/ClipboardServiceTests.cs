@@ -103,6 +103,15 @@ public class ClipboardServiceTests
     }
 
     [Fact]
+    public void PasteMethodOrder_UsesSendInputBeforeSendKeys()
+    {
+        Assert.Equal(
+            new[] { "WM_PASTE", "SendInput Ctrl+V", "Ctrl+V", "Shift+Insert" },
+            ClipboardService.PasteMethodOrder
+        );
+    }
+
+    [Fact]
     public void AppConfig_ClipboardFallback_DefaultsToDisabled()
     {
         Assert.False(new AppConfig().UseClipboardFallback);

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -1241,7 +1242,7 @@ public sealed class ClipboardService : IClipboardService
             }
 
             await Task.Delay(250).ConfigureAwait(true); // Increased delay for better focus restoration
-            bool success = await PasteWithMultipleMethodsAsync();
+            bool success = await PasteWithMultipleMethodsAsync(foregroundWindow);
             if (!success)
             {
                 try
@@ -1279,17 +1280,19 @@ public sealed class ClipboardService : IClipboardService
         return await PasteAsync().ConfigureAwait(false);
     }
 
-    private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync()
-    {
-        // Try multiple paste methods in order:
-        // 1. WM_PASTE to focused native edit controls
-        // 2. Ctrl+V / Shift+Insert keyboard-driven paste for custom controls and terminals
-        // 3. SendInput Ctrl+V as the lowest-level fallback
-        string[] methods = { "WM_PASTE", "Ctrl+V", "Shift+Insert", "SendInput Ctrl+V" };
+    internal static IReadOnlyList<string> PasteMethodOrder { get; } =
+        Array.AsReadOnly(new[] { "WM_PASTE", "SendInput Ctrl+V", "Ctrl+V", "Shift+Insert" });
 
+    private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync(
+        IntPtr expectedForegroundWindow
+    )
+    {
+        // Try window messages for native controls first, then real OS keyboard
+        // input for browser/custom controls. SendKeys is last because it can
+        // report completion without Firefox inserting into its content editor.
         LogPasteDiagnostic("PasteWithMultipleMethods");
 
-        foreach (string method in methods)
+        foreach (string method in PasteMethodOrder)
         {
             try
             {
@@ -1301,7 +1304,7 @@ public sealed class ClipboardService : IClipboardService
                     "WM_PASTE" => await TryPasteWindowMessageAsync(),
                     "Ctrl+V" => await TryPasteCtrlVAsync(),
                     "Shift+Insert" => await TryPasteShiftInsertAsync(),
-                    "SendInput Ctrl+V" => await TryPasteSendInputAsync(),
+                    "SendInput Ctrl+V" => await TryPasteSendInputAsync(expectedForegroundWindow),
                     _ => false,
                 };
 
@@ -1444,7 +1447,7 @@ public sealed class ClipboardService : IClipboardService
             NormalizeInputState();
             SendKeys.SendWait("^v");
             await Task.Delay(75).ConfigureAwait(true);
-            return true;
+            return false;
         }
         catch
         {
@@ -1472,7 +1475,7 @@ public sealed class ClipboardService : IClipboardService
             NormalizeInputState();
             SendKeys.SendWait("+{INSERT}");
             await Task.Delay(75).ConfigureAwait(true);
-            return true;
+            return false;
         }
         catch
         {
@@ -1480,7 +1483,9 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
-    private async System.Threading.Tasks.Task<bool> TryPasteSendInputAsync()
+    private async System.Threading.Tasks.Task<bool> TryPasteSendInputAsync(
+        IntPtr expectedForegroundWindow
+    )
     {
         try
         {
@@ -1492,10 +1497,15 @@ public sealed class ClipboardService : IClipboardService
                 {
                     0x11, /*CTRL*/
                 };
-                SendChordScancode(
-                    modifiers,
-                    0x56 /*'V'*/
-                );
+                if (
+                    !SendChordScancode(
+                        modifiers,
+                        0x56 /*'V'*/
+                    )
+                )
+                {
+                    throw new InvalidOperationException("SendInput rejected the Ctrl+V chord");
+                }
             }
 
             if (SupportsWindowMessagePaste(targetWindow))
@@ -1503,8 +1513,36 @@ public sealed class ClipboardService : IClipboardService
                 return await VerifyPasteDeliveryAsync(targetWindow, PasteWithSendInput);
             }
 
+            if (
+                expectedForegroundWindow != IntPtr.Zero
+                && NativeMethods.GetForegroundWindow() != expectedForegroundWindow
+            )
+            {
+                Logger.LogWarning(
+                    "Paste target changed while waiting for input; leaving text on the clipboard"
+                );
+                return false;
+            }
+
+            IntPtr focusedTarget = ResolvePasteTarget();
+            if (targetWindow != IntPtr.Zero && focusedTarget != targetWindow)
+            {
+                Logger.LogWarning(
+                    "Paste focus changed while waiting for input; leaving text on the clipboard"
+                );
+                return false;
+            }
+
             PasteWithSendInput();
             await Task.Delay(75).ConfigureAwait(true);
+            // Firefox and other browser editors do not expose a generic Win32
+            // text buffer for verification. SendInput is the most faithful
+            // delivery mechanism available, so treat a fully injected chord as
+            // the completed attempt and avoid replaying the paste through a
+            // second mechanism (which could duplicate text).
+            Logger.LogWarning(
+                "SendInput Ctrl+V was injected into an unverified browser/custom editor target"
+            );
             return true;
         }
         catch
@@ -1791,7 +1829,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 case CopyMethod.CtrlC:
                     NormalizeInputState();
-                    SendChordScancode(
+                    _ = SendChordScancode(
                         new ushort[]
                         {
                             0x11, /*VK_CONTROL*/
@@ -1808,7 +1846,7 @@ public sealed class ClipboardService : IClipboardService
                     break;
                 case CopyMethod.CtrlInsert:
                     NormalizeInputState();
-                    SendChordScancode(
+                    _ = SendChordScancode(
                         new ushort[]
                         {
                             0x11, /*VK_CONTROL*/
@@ -1818,7 +1856,7 @@ public sealed class ClipboardService : IClipboardService
                     break;
                 case CopyMethod.CtrlShiftC:
                     NormalizeInputState();
-                    SendChordScancode(
+                    _ = SendChordScancode(
                         new ushort[]
                         {
                             0x11 /*CTRL*/
@@ -1865,14 +1903,14 @@ public sealed class ClipboardService : IClipboardService
                     break;
                 case CopyMethod.DoubleCtrlC:
                     NormalizeInputState();
-                    SendChordScancode(new ushort[] { 0x11 }, 0x43);
+                    _ = SendChordScancode(new ushort[] { 0x11 }, 0x43);
                     Thread.Sleep(120);
-                    SendChordScancode(new ushort[] { 0x11 }, 0x43);
+                    _ = SendChordScancode(new ushort[] { 0x11 }, 0x43);
                     break;
                 case CopyMethod.MenuAltEC:
                     NormalizeInputState();
                     // Alt+E open Edit menu, then 'C' for Copy
-                    SendChordScancode(
+                    _ = SendChordScancode(
                         new ushort[]
                         {
                             0x12, /*ALT*/
@@ -1880,7 +1918,7 @@ public sealed class ClipboardService : IClipboardService
                         0x45 /*'E'*/
                     );
                     Thread.Sleep(150);
-                    SendChordScancode(
+                    _ = SendChordScancode(
                         Array.Empty<ushort>(),
                         0x43 /*'C'*/
                     );
@@ -1999,7 +2037,7 @@ public sealed class ClipboardService : IClipboardService
         return null;
     }
 
-    private static void SendChordScancode(ushort[] modifiersVk, ushort keyVk)
+    private static bool SendChordScancode(ushort[] modifiersVk, ushort keyVk)
     {
         ushort VK_INSERT = 0x2D;
         var inputs = new System.Collections.Generic.List<INPUT>();
@@ -2082,12 +2120,69 @@ public sealed class ClipboardService : IClipboardService
                 }
             );
         }
+        uint sent = 0;
         try
         {
-            SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
+            sent = SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
         }
         catch { }
+
+        if (sent > 0 && sent < inputs.Count)
+        {
+            // SendInput can stop between events. Release any chord keys whose
+            // key-down events may have been accepted so a partial paste cannot
+            // leave Ctrl or V logically held for the next operation.
+            var cleanup = new System.Collections.Generic.List<INPUT>();
+            int modifierCount = modifiersVk.Length;
+            if (sent == modifierCount + 1)
+            {
+                cleanup.Add(
+                    new INPUT
+                    {
+                        type = INPUT_KEYBOARD,
+                        U = new INPUTUNION
+                        {
+                            ki = new KEYBDINPUT
+                            {
+                                wVk = 0,
+                                wScan = (ushort)scKey,
+                                dwFlags = flagsUp,
+                            },
+                        },
+                    }
+                );
+            }
+
+            int acceptedModifiers = (int)Math.Min(sent, (uint)modifierCount);
+            for (int i = acceptedModifiers - 1; i >= 0; i--)
+            {
+                uint sc = MapVirtualKey(modifiersVk[i], MAPVK_VK_TO_VSC);
+                cleanup.Add(
+                    new INPUT
+                    {
+                        type = INPUT_KEYBOARD,
+                        U = new INPUTUNION
+                        {
+                            ki = new KEYBDINPUT
+                            {
+                                wVk = 0,
+                                wScan = (ushort)sc,
+                                dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP,
+                            },
+                        },
+                    }
+                );
+            }
+
+            try
+            {
+                SendInput((uint)cleanup.Count, cleanup.ToArray(), Marshal.SizeOf<INPUT>());
+            }
+            catch { }
+        }
+
         Thread.Sleep(30); // Reduced from 80ms for faster response
+        return sent == inputs.Count;
     }
 
     private static void NormalizeInputState()
