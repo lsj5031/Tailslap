@@ -360,6 +360,21 @@ public sealed class ClipboardService : IClipboardService
         return $"hWnd=0x{hWnd.ToInt64():X}, class={cls}, title={title}, proc={proc}";
     }
 
+    private static string GetWindowClassName(IntPtr hWnd)
+    {
+        try
+        {
+            var className = new StringBuilder(128);
+            return GetClassName(hWnd, className, className.Capacity) > 0
+                ? className.ToString()
+                : string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
     private static bool IsWindowClass(IntPtr hWnd, string expected)
     {
         try
@@ -1246,6 +1261,18 @@ public sealed class ClipboardService : IClipboardService
                 return false;
             }
 
+            if (RequiresManualPasteForWindowClass(GetWindowClassName(foregroundWindow)))
+            {
+                try
+                {
+                    Logger.LogWarning(
+                        "Firefox detected: automatic paste is disabled; leaving transcription on the clipboard for manual Ctrl+V"
+                    );
+                }
+                catch { }
+                return false;
+            }
+
             if (!TailSlap.NativeInputSimulator.WaitForModifierRelease(1000))
             {
                 try
@@ -1258,8 +1285,7 @@ public sealed class ClipboardService : IClipboardService
             }
 
             await Task.Delay(250).ConfigureAwait(true); // Increased delay for better focus restoration
-            bool isFirefox = IsWindowClass(foregroundWindow, "MozillaWindowClass");
-            bool success = await PasteWithMultipleMethodsAsync(foregroundWindow, isFirefox);
+            bool success = await PasteWithMultipleMethodsAsync(foregroundWindow);
             if (!success)
             {
                 try
@@ -1300,10 +1326,8 @@ public sealed class ClipboardService : IClipboardService
     internal static IReadOnlyList<string> PasteMethodOrder { get; } =
         Array.AsReadOnly(new[] { "WM_PASTE", "SendInput Ctrl+V", "Ctrl+V", "Shift+Insert" });
 
-    internal static IReadOnlyList<string> FirefoxPasteMethodOrder { get; } =
-        Array.AsReadOnly(new[] { "WM_PASTE", "SendInput Ctrl+V (virtual key)" });
-
-    private const string FirefoxVirtualKeyPasteMethod = "SendInput Ctrl+V (virtual key)";
+    internal static bool RequiresManualPasteForWindowClass(string windowClass) =>
+        string.Equals(windowClass, "MozillaWindowClass", StringComparison.Ordinal);
 
     private const string SendInputPasteMethod = "SendInput Ctrl+V";
 
@@ -1319,24 +1343,16 @@ public sealed class ClipboardService : IClipboardService
     )
     {
         return !supportsNativePaste
-            && (
-                method == SendInputPasteMethod
-                || method == FirefoxVirtualKeyPasteMethod
-                || method == SendKeysPasteMethod
-            );
+            && (method == SendInputPasteMethod || method == SendKeysPasteMethod);
     }
 
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync(
-        IntPtr expectedForegroundWindow,
-        bool isFirefox = false
+        IntPtr expectedForegroundWindow
     )
-    { // Try window messages for native controls first. Firefox gets a single
-        // virtual-key SendInput attempt because both SendKeys and scancode
-        // injection were observed to complete without inserting into its editor.
-
+    {
         LogPasteDiagnostic("PasteWithMultipleMethods");
         bool supportsNativePaste = SupportsWindowMessagePaste(ResolvePasteTarget());
-        IReadOnlyList<string> methodOrder = isFirefox ? FirefoxPasteMethodOrder : PasteMethodOrder;
+        IReadOnlyList<string> methodOrder = PasteMethodOrder;
 
         foreach (string method in methodOrder)
         {
@@ -1351,9 +1367,6 @@ public sealed class ClipboardService : IClipboardService
                     SendKeysPasteMethod => await TryPasteCtrlVAsync(),
                     ShiftInsertPasteMethod => await TryPasteShiftInsertAsync(),
                     SendInputPasteMethod => await TryPasteSendInputAsync(expectedForegroundWindow),
-                    FirefoxVirtualKeyPasteMethod => await TryPasteVirtualKeyAsync(
-                        expectedForegroundWindow
-                    ),
                     _ => false,
                 };
 
@@ -1362,7 +1375,7 @@ public sealed class ClipboardService : IClipboardService
                     // SendInput may safely fall back to SendKeys when it injects
                     // zero events. That helper logs the exact method, so do not
                     // attribute the result to SendInput here.
-                    if (method != SendInputPasteMethod && method != FirefoxVirtualKeyPasteMethod)
+                    if (method != SendInputPasteMethod)
                     {
                         Logger.Log($"Paste successful with {method}");
                     }
@@ -1573,93 +1586,6 @@ public sealed class ClipboardService : IClipboardService
         // cannot duplicate it. Partial delivery is unsafe to replay because Ctrl
         // or V may already have reached the target.
         return sentInputEvents == 0 && expectedInputEvents > 0;
-    }
-
-    internal static bool ShouldReportVirtualKeyPasteSuccess(
-        bool supportsNativePaste,
-        uint sentInputEvents,
-        uint expectedInputEvents
-    )
-    {
-        // Browser/DOM editors provide no Win32 verification. A complete injected
-        // chord is not proof that Firefox inserted the clipboard contents.
-        return supportsNativePaste && sentInputEvents == expectedInputEvents;
-    }
-
-    private async System.Threading.Tasks.Task<bool> TryPasteVirtualKeyAsync(
-        IntPtr expectedForegroundWindow
-    )
-    {
-        try
-        {
-            var targetWindow = ResolvePasteTarget();
-            bool supportsNativePaste = SupportsWindowMessagePaste(targetWindow);
-            if (supportsNativePaste)
-            {
-                return await VerifyPasteDeliveryAsync(
-                    targetWindow,
-                    () =>
-                    {
-                        NormalizeInputState();
-                        _ = SendChordVirtualKey(new ushort[] { 0x11 }, 0x56);
-                    }
-                );
-            }
-
-            if (
-                expectedForegroundWindow != IntPtr.Zero
-                && NativeMethods.GetForegroundWindow() != expectedForegroundWindow
-            )
-            {
-                Logger.LogWarning(
-                    "Firefox virtual-key paste target changed while waiting for input; leaving text on the clipboard"
-                );
-                return false;
-            }
-
-            IntPtr focusedTarget = ResolvePasteTarget();
-            if (targetWindow != IntPtr.Zero && focusedTarget != targetWindow)
-            {
-                Logger.LogWarning(
-                    "Firefox virtual-key paste focus changed while waiting for input; leaving text on the clipboard"
-                );
-                return false;
-            }
-
-            const uint expectedInputEvents = 4;
-            Logger.Log(
-                $"Firefox virtual-key paste target: foreground=0x{expectedForegroundWindow.ToInt64():X}, focused=0x{targetWindow.ToInt64():X}"
-            );
-            uint sentInputEvents = SendChordVirtualKey(new ushort[] { 0x11 }, 0x56);
-            if (sentInputEvents != expectedInputEvents)
-            {
-                Logger.LogWarning(
-                    $"Firefox virtual-key Ctrl+V was not fully injected (sent={sentInputEvents}/{expectedInputEvents}); no fallback will be attempted"
-                );
-                return false;
-            }
-
-            await Task.Delay(75).ConfigureAwait(true);
-            Logger.LogWarning(
-                "Firefox virtual-key Ctrl+V was injected, but Firefox editor delivery is unverified; no second paste attempt will be made"
-            );
-            return ShouldReportVirtualKeyPasteSuccess(
-                supportsNativePaste,
-                sentInputEvents,
-                expectedInputEvents
-            );
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                Logger.LogWarning(
-                    $"TryPasteVirtualKeyAsync failed: {ex.GetType().Name}: {ex.Message}"
-                );
-            }
-            catch { }
-            return false;
-        }
     }
 
     private async System.Threading.Tasks.Task<bool> TryPasteSendInputAsync(
@@ -2248,186 +2174,6 @@ public sealed class ClipboardService : IClipboardService
             Thread.Sleep(25);
         }
         return null;
-    }
-
-    private static uint SendChordVirtualKey(ushort[] modifiersVk, ushort keyVk)
-    {
-        var inputs = new System.Collections.Generic.List<INPUT>();
-        foreach (var vk in modifiersVk)
-        {
-            inputs.Add(
-                new INPUT
-                {
-                    type = INPUT_KEYBOARD,
-                    U = new INPUTUNION { ki = new KEYBDINPUT { wVk = vk } },
-                }
-            );
-        }
-
-        inputs.Add(
-            new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                U = new INPUTUNION { ki = new KEYBDINPUT { wVk = keyVk } },
-            }
-        );
-        inputs.Add(
-            new INPUT
-            {
-                type = INPUT_KEYBOARD,
-                U = new INPUTUNION
-                {
-                    ki = new KEYBDINPUT { wVk = keyVk, dwFlags = KEYEVENTF_KEYUP },
-                },
-            }
-        );
-        for (int i = modifiersVk.Length - 1; i >= 0; i--)
-        {
-            inputs.Add(
-                new INPUT
-                {
-                    type = INPUT_KEYBOARD,
-                    U = new INPUTUNION
-                    {
-                        ki = new KEYBDINPUT { wVk = modifiersVk[i], dwFlags = KEYEVENTF_KEYUP },
-                    },
-                }
-            );
-        }
-
-        uint sent = 0;
-        int lastError = 0;
-        try
-        {
-            sent = SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
-            lastError = Marshal.GetLastWin32Error();
-        }
-        catch (Exception ex)
-        {
-            try
-            {
-                Logger.LogWarning(
-                    $"Firefox virtual-key SendInput exception: {ex.GetType().Name}: {ex.Message}"
-                );
-            }
-            catch { }
-        }
-
-        if (sent != inputs.Count)
-        {
-            try
-            {
-                Logger.LogWarning(
-                    $"Firefox virtual-key SendInput incomplete: sent={sent}/{inputs.Count}, win32Error={lastError}"
-                );
-            }
-            catch { }
-        }
-
-        if (sent > 0 && sent < inputs.Count)
-        {
-            var cleanup = new System.Collections.Generic.List<INPUT>();
-            int modifierCount = modifiersVk.Length;
-            if (sent <= modifierCount)
-            {
-                for (int i = (int)sent - 1; i >= 0; i--)
-                {
-                    cleanup.Add(
-                        new INPUT
-                        {
-                            type = INPUT_KEYBOARD,
-                            U = new INPUTUNION
-                            {
-                                ki = new KEYBDINPUT
-                                {
-                                    wVk = modifiersVk[i],
-                                    dwFlags = KEYEVENTF_KEYUP,
-                                },
-                            },
-                        }
-                    );
-                }
-            }
-            else if (sent == modifierCount + 1)
-            {
-                cleanup.Add(
-                    new INPUT
-                    {
-                        type = INPUT_KEYBOARD,
-                        U = new INPUTUNION
-                        {
-                            ki = new KEYBDINPUT { wVk = keyVk, dwFlags = KEYEVENTF_KEYUP },
-                        },
-                    }
-                );
-                for (int i = modifierCount - 1; i >= 0; i--)
-                {
-                    cleanup.Add(
-                        new INPUT
-                        {
-                            type = INPUT_KEYBOARD,
-                            U = new INPUTUNION
-                            {
-                                ki = new KEYBDINPUT
-                                {
-                                    wVk = modifiersVk[i],
-                                    dwFlags = KEYEVENTF_KEYUP,
-                                },
-                            },
-                        }
-                    );
-                }
-            }
-            else
-            {
-                // The target key-up was accepted; only the modifier remains down.
-                for (int i = modifierCount - 1; i >= 0; i--)
-                {
-                    cleanup.Add(
-                        new INPUT
-                        {
-                            type = INPUT_KEYBOARD,
-                            U = new INPUTUNION
-                            {
-                                ki = new KEYBDINPUT
-                                {
-                                    wVk = modifiersVk[i],
-                                    dwFlags = KEYEVENTF_KEYUP,
-                                },
-                            },
-                        }
-                    );
-                }
-            }
-
-            try
-            {
-                uint cleanupSent = SendInput(
-                    (uint)cleanup.Count,
-                    cleanup.ToArray(),
-                    Marshal.SizeOf<INPUT>()
-                );
-                if (cleanupSent != cleanup.Count)
-                {
-                    Logger.LogWarning(
-                        $"Firefox virtual-key SendInput cleanup incomplete: sent={cleanupSent}/{cleanup.Count}, win32Error={Marshal.GetLastWin32Error()}"
-                    );
-                }
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    Logger.LogWarning(
-                        $"Firefox virtual-key SendInput cleanup exception: {ex.GetType().Name}: {ex.Message}"
-                    );
-                }
-                catch { }
-            }
-        }
-
-        Thread.Sleep(30);
-        return sent;
     }
 
     private static uint SendChordScancode(ushort[] modifiersVk, ushort keyVk)

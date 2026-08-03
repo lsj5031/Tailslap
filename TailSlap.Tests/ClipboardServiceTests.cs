@@ -117,18 +117,20 @@ public class ClipboardServiceTests
         );
     }
 
-    [Fact]
-    public void FirefoxPasteMethodOrder_UsesVirtualKeySendInputOnly()
+    [Theory]
+    [InlineData("MozillaWindowClass", true)]
+    [InlineData("Edit", false)]
+    [InlineData("", false)]
+    public void RequiresManualPasteForWindowClass_OnlyMatchesFirefox(
+        string windowClass,
+        bool expected
+    )
     {
-        Assert.Equal(
-            new[] { "WM_PASTE", "SendInput Ctrl+V (virtual key)" },
-            ClipboardService.FirefoxPasteMethodOrder
-        );
+        Assert.Equal(expected, ClipboardService.RequiresManualPasteForWindowClass(windowClass));
     }
 
     [Theory]
     [InlineData(false, "SendInput Ctrl+V", true)]
-    [InlineData(false, "SendInput Ctrl+V (virtual key)", true)]
     [InlineData(false, "Ctrl+V", true)]
     [InlineData(false, "Shift+Insert", false)]
     [InlineData(true, "SendInput Ctrl+V", false)]
@@ -158,28 +160,6 @@ public class ClipboardServiceTests
         Assert.Equal(
             expected,
             ClipboardService.ShouldTrySendKeysAfterSendInputFailure(
-                sentInputEvents,
-                expectedInputEvents
-            )
-        );
-    }
-
-    [Theory]
-    [InlineData(false, 4u, 4u, false)]
-    [InlineData(false, 0u, 4u, false)]
-    [InlineData(true, 3u, 4u, false)]
-    [InlineData(true, 4u, 4u, true)]
-    public void ShouldReportVirtualKeyPasteSuccess_RequiresVerifiedNativeTarget(
-        bool supportsNativePaste,
-        uint sentInputEvents,
-        uint expectedInputEvents,
-        bool expected
-    )
-    {
-        Assert.Equal(
-            expected,
-            ClipboardService.ShouldReportVirtualKeyPasteSuccess(
-                supportsNativePaste,
                 sentInputEvents,
                 expectedInputEvents
             )
