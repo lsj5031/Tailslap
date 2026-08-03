@@ -129,10 +129,19 @@ public sealed class TranscriptionController : ITranscriptionController
     {
         string audioFilePath = "";
         RecordingStats? recordingStats = null;
+        IntPtr targetWindow = NativeMethods.GetForegroundWindow();
+        NativeMethods.TryGetWindowIdentity(
+            targetWindow,
+            out uint targetProcessId,
+            out string targetWindowClass
+        );
 
         try
         {
             Logger.Log("TranscribeSelectionAsync started");
+            Logger.Log(
+                $"TranscribeSelectionAsync: Target captured 0x{targetWindow.ToInt64():X}, pid={targetProcessId}, class={targetWindowClass}"
+            );
             Logger.Log(
                 $"Transcriber config: BaseUrl={cfg.Transcriber.BaseUrl}, Model={cfg.Transcriber.Model}, Timeout={cfg.Transcriber.TimeoutSeconds}s"
             );
@@ -204,11 +213,8 @@ public sealed class TranscriptionController : ITranscriptionController
             OnProcessingStarted?.Invoke();
             NotificationService.ShowInfo("Sending to transcriber...");
 
-            // Capture the window the user was focused on when recording stopped.
-            // The single final paste must not land in a different app if the foreground
-            // changes while the transcription is running.
-            IntPtr targetWindow = NativeMethods.GetForegroundWindow();
-
+            // The target was captured before recording started. Best-effort final
+            // delivery can restore it if the user switched windows meanwhile.
             // Transcribe audio using remote API
             Logger.Log($"Creating RemoteTranscriber with BaseUrl: {cfg.Transcriber.BaseUrl}");
             var transcriber = _remoteTranscriberFactory.Create(cfg.Transcriber);
@@ -247,7 +253,9 @@ public sealed class TranscriptionController : ITranscriptionController
                         recordingStats?.DurationMs ?? 0,
                         TranscriptionDeliveryPolicy.DeliverFinalText,
                         ResultsAlreadyStreamed: false,
-                        TargetWindow: targetWindow
+                        TargetWindow: targetWindow,
+                        TargetProcessId: targetProcessId,
+                        TargetWindowClass: targetWindowClass
                     )
                 )
                 .ConfigureAwait(false);

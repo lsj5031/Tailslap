@@ -19,11 +19,13 @@ internal sealed record TranscriptionResultRequest(
     bool ResultsAlreadyStreamed = false,
     /// <summary>
     /// The window the user was focused on when transcription began. When set,
-    /// the final delivery is skipped (text left on clipboard) if the foreground
-    /// window changed during transcription, so a single paste never lands in a
-    /// different app. Null/zero disables the guard.
+    /// final delivery may best-effort restore this window if focus changed.
     /// </summary>
-    IntPtr? TargetWindow = null
+    IntPtr? TargetWindow = null,
+    /// <summary>Process identity captured with <see cref="TargetWindow"/>.</summary>
+    uint TargetProcessId = 0,
+    /// <summary>Window class captured with <see cref="TargetWindow"/>.</summary>
+    string? TargetWindowClass = null
 );
 
 internal sealed record TranscriptionResult(string FinalText, bool WasEnhanced);

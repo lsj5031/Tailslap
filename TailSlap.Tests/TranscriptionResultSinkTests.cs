@@ -65,11 +65,13 @@ public class TranscriptionResultSinkTests
         RecordingTextTyper textTyper,
         string? enhancedText = null,
         Action<CancellationToken>? captureToken = null,
-        Func<IntPtr>? getForegroundWindow = null
+        Func<IntPtr>? getForegroundWindow = null,
+        Func<IntPtr, uint, string, bool>? isWindowIdentityMatch = null,
+        Func<IntPtr, uint, string, bool>? tryRestoreWindow = null
     )
     {
         clipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
-        clipboard.Setup(c => c.PasteAsync()).ReturnsAsync(true);
+        clipboard.Setup(c => c.PasteAsync(It.IsAny<IntPtr?>())).ReturnsAsync(true);
 
         var refiner = new Mock<ITextRefiner>();
         refiner
@@ -90,7 +92,9 @@ public class TranscriptionResultSinkTests
             new ClipboardHelper(clipboard.Object),
             clipboard.Object,
             textTyper,
-            getForegroundWindow
+            getForegroundWindow,
+            isWindowIdentityMatch,
+            tryRestoreWindow
         );
     }
 
@@ -327,8 +331,33 @@ public class TranscriptionResultSinkTests
         history.Verify(h => h.Append("raw", "raw improved", "test-model"), Times.Once);
     }
 
+    [Theory]
+    [InlineData(true, 0x11L, 123u, "NotFirefox", true)]
+    [InlineData(true, 0x11L, 0u, "NotFirefox", false)]
+    [InlineData(true, 0x11L, 123u, "MozillaWindowClass", false)]
+    [InlineData(true, 0x11L, 123u, "", false)]
+    [InlineData(false, 0x11L, 123u, "NotFirefox", false)]
+    public void ShouldAttemptBestEffortRestore_RequiresTrustedNonFirefoxTarget(
+        bool foregroundChanged,
+        long targetWindowValue,
+        uint targetProcessId,
+        string targetWindowClass,
+        bool expected
+    )
+    {
+        Assert.Equal(
+            expected,
+            TranscriptionResultSink.ShouldAttemptBestEffortRestore(
+                new IntPtr(targetWindowValue),
+                targetProcessId,
+                targetWindowClass,
+                foregroundChanged
+            )
+        );
+    }
+
     [Fact]
-    public async Task ProcessAsync_TargetWindowChanged_LeavesTextOnClipboardWithoutPaste()
+    public async Task ProcessAsync_TargetIdentityLost_LeavesTextOnClipboardWithoutPaste()
     {
         var history = new Mock<IHistoryService>();
         var clipboard = new Mock<IClipboardService>();
@@ -337,7 +366,145 @@ public class TranscriptionResultSinkTests
             history,
             clipboard,
             typer,
-            getForegroundWindow: () => new IntPtr(0x99)
+            getForegroundWindow: () => new IntPtr(0x99),
+            isWindowIdentityMatch: (_, _, _) => false
+        );
+
+        await sink.ProcessAsync(
+            new TranscriptionResultRequest(
+                "raw",
+                CreateConfig(autoPaste: true),
+                123,
+                TranscriptionDeliveryPolicy.DeliverFinalText,
+                TargetWindow: new IntPtr(0x11),
+                TargetProcessId: 123,
+                TargetWindowClass: "NotFirefox"
+            )
+        );
+
+        // Guard triggered: text is preserved on the clipboard, but no paste fires.
+        clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
+        clipboard.Verify(c => c.PasteAsync(It.IsAny<IntPtr?>()), Times.Never);
+        history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TargetWindowChanged_RestoresTargetAndPastes()
+    {
+        var history = new Mock<IHistoryService>();
+        var clipboard = new Mock<IClipboardService>();
+        var typer = new RecordingTextTyper(clipboard.Object);
+        var foreground = new IntPtr(0x99);
+        var sink = CreateSink(
+            history,
+            clipboard,
+            typer,
+            getForegroundWindow: () => foreground,
+            isWindowIdentityMatch: (_, _, _) => true,
+            tryRestoreWindow: (window, _, _) =>
+            {
+                foreground = window;
+                return true;
+            }
+        );
+
+        await sink.ProcessAsync(
+            new TranscriptionResultRequest(
+                "raw",
+                CreateConfig(autoPaste: true),
+                123,
+                TranscriptionDeliveryPolicy.DeliverFinalText,
+                TargetWindow: new IntPtr(0x11),
+                TargetProcessId: 123,
+                TargetWindowClass: "NotFirefox"
+            )
+        );
+
+        clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
+        clipboard.Verify(c => c.PasteAsync(new IntPtr(0x11)), Times.Once);
+        history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TargetWindowChanged_RestoreFails_LeavesTextOnClipboard()
+    {
+        var history = new Mock<IHistoryService>();
+        var clipboard = new Mock<IClipboardService>();
+        var typer = new RecordingTextTyper(clipboard.Object);
+        var sink = CreateSink(
+            history,
+            clipboard,
+            typer,
+            getForegroundWindow: () => new IntPtr(0x99),
+            isWindowIdentityMatch: (_, _, _) => true,
+            tryRestoreWindow: (_, _, _) => false
+        );
+
+        await sink.ProcessAsync(
+            new TranscriptionResultRequest(
+                "raw",
+                CreateConfig(autoPaste: true),
+                123,
+                TranscriptionDeliveryPolicy.DeliverFinalText,
+                TargetWindow: new IntPtr(0x11),
+                TargetProcessId: 123,
+                TargetWindowClass: "NotFirefox"
+            )
+        );
+
+        clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
+        clipboard.Verify(c => c.PasteAsync(It.IsAny<IntPtr?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_FirefoxTargetChanged_LeavesTextOnClipboardWithoutRestore()
+    {
+        var history = new Mock<IHistoryService>();
+        var clipboard = new Mock<IClipboardService>();
+        var typer = new RecordingTextTyper(clipboard.Object);
+        bool restoreAttempted = false;
+        var sink = CreateSink(
+            history,
+            clipboard,
+            typer,
+            getForegroundWindow: () => new IntPtr(0x99),
+            isWindowIdentityMatch: (_, _, _) => true,
+            tryRestoreWindow: (_, _, _) =>
+            {
+                restoreAttempted = true;
+                return true;
+            }
+        );
+
+        await sink.ProcessAsync(
+            new TranscriptionResultRequest(
+                "raw",
+                CreateConfig(autoPaste: true),
+                123,
+                TranscriptionDeliveryPolicy.DeliverFinalText,
+                TargetWindow: new IntPtr(0x11),
+                TargetProcessId: 123,
+                TargetWindowClass: "MozillaWindowClass"
+            )
+        );
+
+        Assert.False(restoreAttempted);
+        clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
+        clipboard.Verify(c => c.PasteAsync(It.IsAny<IntPtr?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TargetUnchangedWithoutIdentity_StillPastes()
+    {
+        var history = new Mock<IHistoryService>();
+        var clipboard = new Mock<IClipboardService>();
+        var typer = new RecordingTextTyper(clipboard.Object);
+        var sink = CreateSink(
+            history,
+            clipboard,
+            typer,
+            getForegroundWindow: () => new IntPtr(0x11),
+            isWindowIdentityMatch: (_, _, _) => false
         );
 
         await sink.ProcessAsync(
@@ -350,10 +517,9 @@ public class TranscriptionResultSinkTests
             )
         );
 
-        // Guard triggered: text is preserved on the clipboard, but no paste fires.
+        // Identity capture can fail benignly; an unchanged foreground must still paste.
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(), Times.Never);
-        history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
+        clipboard.Verify(c => c.PasteAsync(new IntPtr(0x11)), Times.Once);
     }
 
     [Fact]
@@ -366,7 +532,8 @@ public class TranscriptionResultSinkTests
             history,
             clipboard,
             typer,
-            getForegroundWindow: () => new IntPtr(0x11)
+            getForegroundWindow: () => new IntPtr(0x11),
+            isWindowIdentityMatch: (_, _, _) => true
         );
 
         await sink.ProcessAsync(
@@ -375,12 +542,14 @@ public class TranscriptionResultSinkTests
                 CreateConfig(autoPaste: true),
                 123,
                 TranscriptionDeliveryPolicy.DeliverFinalText,
-                TargetWindow: new IntPtr(0x11)
+                TargetWindow: new IntPtr(0x11),
+                TargetProcessId: 123,
+                TargetWindowClass: "NotFirefox"
             )
         );
 
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(), Times.Once);
+        clipboard.Verify(c => c.PasteAsync(new IntPtr(0x11)), Times.Once);
         history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
     }
 

@@ -1197,7 +1197,7 @@ public sealed class ClipboardService : IClipboardService
         return new MemoryStream(BitConverter.GetBytes(value), writable: false);
     }
 
-    public System.Threading.Tasks.Task<bool> PasteAsync()
+    public System.Threading.Tasks.Task<bool> PasteAsync(IntPtr? expectedForegroundWindow = null)
     {
         var currentContext = SynchronizationContext.Current;
         bool hasUiContext = _uiContext != null;
@@ -1219,19 +1219,33 @@ public sealed class ClipboardService : IClipboardService
             }
             catch { }
 
-            return RunOnUiContextAsync(PasteAsyncCore);
+            return RunOnUiContextAsync(() => PasteAsyncCore(expectedForegroundWindow));
         }
 
-        return PasteAsyncCore();
+        return PasteAsyncCore(expectedForegroundWindow);
     }
 
-    private async System.Threading.Tasks.Task<bool> PasteAsyncCore()
+    private async System.Threading.Tasks.Task<bool> PasteAsyncCore(
+        IntPtr? expectedForegroundWindow = null
+    )
     {
         try
         {
             LogPasteDiagnostic("PasteAsync");
 
             var foregroundWindow = NativeMethods.GetForegroundWindow();
+            if (
+                expectedForegroundWindow.HasValue
+                && expectedForegroundWindow.Value != IntPtr.Zero
+                && foregroundWindow != expectedForegroundWindow.Value
+            )
+            {
+                Logger.LogWarning(
+                    "PasteAsync: Expected target window is no longer foreground; leaving text on the clipboard"
+                );
+                return false;
+            }
+
             if (foregroundWindow == IntPtr.Zero)
             {
                 try
@@ -1285,7 +1299,10 @@ public sealed class ClipboardService : IClipboardService
             }
 
             await Task.Delay(250).ConfigureAwait(true); // Increased delay for better focus restoration
-            bool success = await PasteWithMultipleMethodsAsync(foregroundWindow);
+            bool success = await PasteWithMultipleMethodsAsync(
+                foregroundWindow,
+                expectedForegroundWindow
+            );
             if (!success)
             {
                 try
@@ -1347,7 +1364,8 @@ public sealed class ClipboardService : IClipboardService
     }
 
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync(
-        IntPtr expectedForegroundWindow
+        IntPtr expectedForegroundWindow,
+        IntPtr? expectedForegroundOverride = null
     )
     {
         LogPasteDiagnostic("PasteWithMultipleMethods");
@@ -1359,8 +1377,20 @@ public sealed class ClipboardService : IClipboardService
             try
             {
                 Logger.Log($"Attempting paste with {method}");
-                NormalizeInputState();
 
+                if (
+                    expectedForegroundOverride.HasValue
+                    && expectedForegroundOverride.Value != IntPtr.Zero
+                    && NativeMethods.GetForegroundWindow() != expectedForegroundOverride.Value
+                )
+                {
+                    Logger.LogWarning(
+                        "PasteWithMultipleMethodsAsync: Target changed before injection"
+                    );
+                    return false;
+                }
+
+                NormalizeInputState();
                 bool success = method switch
                 {
                     WindowMessagePasteMethod => await TryPasteWindowMessageAsync(),

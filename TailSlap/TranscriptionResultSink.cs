@@ -6,12 +6,28 @@ namespace TailSlap;
 
 internal sealed class TranscriptionResultSink : ITranscriptionResultSink
 {
+    internal static bool ShouldAttemptBestEffortRestore(
+        IntPtr targetWindow,
+        uint targetProcessId,
+        string? targetWindowClass,
+        bool foregroundChanged
+    )
+    {
+        return foregroundChanged
+            && targetWindow != IntPtr.Zero
+            && targetProcessId != 0
+            && !string.IsNullOrWhiteSpace(targetWindowClass)
+            && !string.Equals(targetWindowClass, "MozillaWindowClass", StringComparison.Ordinal);
+    }
+
     private readonly IHistoryService _history;
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly ClipboardHelper _clipboardHelper;
     private readonly IClipboardService _clipboardService;
     private readonly TextTyper _textTyper;
     private readonly Func<IntPtr> _getForegroundWindow;
+    private readonly Func<IntPtr, uint, string, bool> _isWindowIdentityMatch;
+    private readonly Func<IntPtr, uint, string, bool> _tryRestoreWindow;
 
     public TranscriptionResultSink(
         IHistoryService history,
@@ -19,7 +35,9 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
         ClipboardHelper clipboardHelper,
         IClipboardService clipboardService,
         TextTyper textTyper,
-        Func<IntPtr>? getForegroundWindow = null
+        Func<IntPtr>? getForegroundWindow = null,
+        Func<IntPtr, uint, string, bool>? isWindowIdentityMatch = null,
+        Func<IntPtr, uint, string, bool>? tryRestoreWindow = null
     )
     {
         _history = history ?? throw new ArgumentNullException(nameof(history));
@@ -31,6 +49,18 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
             clipboardService ?? throw new ArgumentNullException(nameof(clipboardService));
         _textTyper = textTyper ?? throw new ArgumentNullException(nameof(textTyper));
         _getForegroundWindow = getForegroundWindow ?? (() => NativeMethods.GetForegroundWindow());
+        _isWindowIdentityMatch =
+            isWindowIdentityMatch
+            ?? (
+                (window, processId, windowClass) =>
+                    NativeMethods.IsWindowIdentityMatch(window, processId, windowClass)
+            );
+        _tryRestoreWindow =
+            tryRestoreWindow
+            ?? (
+                (window, processId, windowClass) =>
+                    NativeMethods.TryRestoreWindow(window, processId, windowClass)
+            );
     }
 
     public void RecordFailure(string? partialText, int durationMs, string errorSummary)
@@ -124,23 +154,30 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
                 case TranscriptionDeliveryPolicy.DeliverFinalText:
                     if (!request.ResultsAlreadyStreamed)
                     {
-                        // Single delivery: guard against pasting into a different app if the
-                        // foreground window changed while the transcription was running.
+                        // Prefer the original target captured for this session. If the
+                        // user changed windows, restore that target before pasting, but
+                        // only when its process identity is still valid. Firefox remains
+                        // clipboard-only. Without auto-paste no focus change is needed.
                         IntPtr target = request.TargetWindow ?? IntPtr.Zero;
-                        if (target != IntPtr.Zero && _getForegroundWindow() != target)
+                        bool autoPaste = request.Config.Transcriber.AutoPaste;
+                        if (autoPaste && target != IntPtr.Zero && _getForegroundWindow() != target)
                         {
-                            await _clipboardService.SetTextAsync(finalText).ConfigureAwait(false);
-                            TryLogWarning(
-                                "TranscriptionResultSink: Foreground window changed before final paste, text left on clipboard"
-                            );
-                            NotificationService.ShowWarning(
-                                "The window changed before text could be pasted. The text is on your clipboard — paste manually with Ctrl+V."
-                            );
-                            break;
+                            bool restoredTarget = await TryRestoreTargetAsync(
+                                    request,
+                                    target,
+                                    finalText
+                                )
+                                .ConfigureAwait(false);
+                            if (!restoredTarget)
+                                break;
                         }
 
                         bool delivered = await _clipboardHelper
-                            .SetTextAndPasteAsync(finalText, request.Config.Transcriber.AutoPaste)
+                            .SetTextAndPasteAsync(
+                                finalText,
+                                autoPaste,
+                                autoPaste && target != IntPtr.Zero ? target : (IntPtr?)null
+                            )
                             .ConfigureAwait(false);
                         if (!delivered)
                         {
@@ -213,6 +250,91 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
         {
             TryLogWarning($"TranscriptionResultSink: Delivery failed: {ex.GetType().Name}");
         }
+    }
+
+    private async Task<bool> TryRestoreTargetAsync(
+        TranscriptionResultRequest request,
+        IntPtr target,
+        string finalText
+    )
+    {
+        bool hasTargetIdentity =
+            request.TargetProcessId != 0 && !string.IsNullOrWhiteSpace(request.TargetWindowClass);
+        if (
+            !hasTargetIdentity
+            || !_isWindowIdentityMatch(target, request.TargetProcessId, request.TargetWindowClass!)
+        )
+        {
+            await LeaveOnClipboardAsync(finalText, "original target").ConfigureAwait(false);
+            return false;
+        }
+
+        if (
+            !ShouldAttemptBestEffortRestore(
+                target,
+                request.TargetProcessId,
+                request.TargetWindowClass,
+                foregroundChanged: true
+            )
+        )
+        {
+            await LeaveFirefoxOnClipboardAsync(finalText).ConfigureAwait(false);
+            return false;
+        }
+
+        bool restored =
+            _tryRestoreWindow(target, request.TargetProcessId, request.TargetWindowClass!)
+            && await WaitForForegroundAsync(target).ConfigureAwait(false);
+        if (!restored)
+        {
+            await LeaveOnClipboardAsync(finalText, "original target").ConfigureAwait(false);
+            return false;
+        }
+
+        TryLog(
+            $"TranscriptionResultSink: Restored original target window 0x{target.ToInt64():X} for best-effort delivery"
+        );
+        return true;
+    }
+
+    private async Task<bool> WaitForForegroundAsync(IntPtr target)
+    {
+        // Focus transitions are asynchronous; give the shell a short settle window
+        // before concluding the restore was rejected.
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            if (_getForegroundWindow() == target)
+                return true;
+            await Task.Delay(50).ConfigureAwait(false);
+        }
+
+        return _getForegroundWindow() == target;
+    }
+
+    private async Task LeaveFirefoxOnClipboardAsync(string text)
+    {
+        bool clipboardSet = await _clipboardService.SetTextAsync(text).ConfigureAwait(false);
+        TryLogWarning(
+            "TranscriptionResultSink: Firefox target is clipboard-only; automatic paste was skipped"
+        );
+        NotificationService.ShowWarning(
+            "Firefox delivery is clipboard-only. Press Ctrl+V in the original Firefox field to paste."
+        );
+        if (!clipboardSet)
+            TryLogWarning("TranscriptionResultSink: Failed to preserve Firefox text on clipboard");
+    }
+
+    private async Task LeaveOnClipboardAsync(string text, string targetDescription)
+    {
+        bool clipboardSet = await _clipboardService.SetTextAsync(text).ConfigureAwait(false);
+        TryLogWarning(
+            $"TranscriptionResultSink: Could not restore {targetDescription}; text left on clipboard"
+        );
+        NotificationService.ShowWarning(
+            "The original window could not be restored. The text is on your clipboard — paste manually with Ctrl+V."
+        );
+        if (!clipboardSet)
+            TryLogWarning("TranscriptionResultSink: Failed to preserve text on clipboard");
     }
 
     private async Task TypeAndObserveAsync(

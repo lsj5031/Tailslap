@@ -11,7 +11,11 @@ public sealed class ClipboardHelper
         _clip = clip ?? throw new System.ArgumentNullException(nameof(clip));
     }
 
-    public async Task<bool> SetTextAndPasteAsync(string text, bool autoPaste)
+    public async Task<bool> SetTextAndPasteAsync(
+        string text,
+        bool autoPaste,
+        System.IntPtr? expectedForegroundWindow = null
+    )
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -31,7 +35,9 @@ public sealed class ClipboardHelper
         if (autoPaste)
         {
             Logger.Log("Auto-paste attempt");
-            bool pasteSuccess = await _clip.PasteAsync().ConfigureAwait(false);
+            bool pasteSuccess = await _clip
+                .PasteAsync(expectedForegroundWindow)
+                .ConfigureAwait(false);
             if (!pasteSuccess)
             {
                 Logger.LogWarning("ClipboardHelper: Auto-paste failed, text is on the clipboard");

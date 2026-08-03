@@ -40,6 +40,8 @@ public sealed class TypelessController : ITypelessController
     private RecordingStats? _recordingStats;
     private AudioRecorder? _currentRecorder;
     private IntPtr _targetWindow;
+    private uint _targetProcessId;
+    private string _targetWindowClass = string.Empty;
     private readonly Func<IntPtr> _getForegroundWindow;
 
     public bool IsRecording
@@ -208,6 +210,11 @@ public sealed class TypelessController : ITypelessController
         // Capture the target before the overlay/recorder can affect focus. The
         // final delivery uses this handle to avoid pasting into another app.
         IntPtr targetWindow = _getForegroundWindow();
+        NativeMethods.TryGetWindowIdentity(
+            targetWindow,
+            out uint targetProcessId,
+            out string targetWindowClass
+        );
 
         // Start recording
         lock (_stateLock)
@@ -217,6 +224,8 @@ public sealed class TypelessController : ITypelessController
 
             _state = ControllerState.Recording;
             _targetWindow = targetWindow;
+            _targetProcessId = targetProcessId;
+            _targetWindowClass = targetWindowClass;
         }
 
         // Reset the TextTyper baseline for this new transcription session
@@ -246,6 +255,8 @@ public sealed class TypelessController : ITypelessController
     public async Task HandleKeyUpAsync()
     {
         IntPtr targetWindow;
+        uint targetProcessId;
+        string targetWindowClass;
         lock (_stateLock)
         {
             if (_state != ControllerState.Recording)
@@ -258,6 +269,8 @@ public sealed class TypelessController : ITypelessController
             // Atomically claim this recording so concurrent key-up callbacks cannot
             // stop and transcribe the same session more than once.
             targetWindow = _targetWindow;
+            targetProcessId = _targetProcessId;
+            targetWindowClass = _targetWindowClass;
             _state = ControllerState.Processing;
         }
 
@@ -316,6 +329,8 @@ public sealed class TypelessController : ITypelessController
                     tempWavPath,
                     stats.DurationMs,
                     targetWindow,
+                    targetProcessId,
+                    targetWindowClass,
                     cfg: _config.CreateValidatedCopy()
                 )
                 .ConfigureAwait(false);
@@ -401,6 +416,8 @@ public sealed class TypelessController : ITypelessController
         string wavPath,
         int durationMs,
         IntPtr targetWindow,
+        uint targetProcessId,
+        string targetWindowClass,
         AppConfig cfg
     )
     {
@@ -499,7 +516,9 @@ public sealed class TypelessController : ITypelessController
                     durationMs,
                     TranscriptionDeliveryPolicy.DeliverFinalText,
                     ResultsAlreadyStreamed: false,
-                    TargetWindow: targetWindow
+                    TargetWindow: targetWindow,
+                    TargetProcessId: targetProcessId,
+                    TargetWindowClass: targetWindowClass
                 )
             )
             .ConfigureAwait(false);
@@ -535,6 +554,8 @@ public sealed class TypelessController : ITypelessController
         {
             _state = ControllerState.Idle;
             _targetWindow = IntPtr.Zero;
+            _targetProcessId = 0;
+            _targetWindowClass = string.Empty;
         }
 
         try
