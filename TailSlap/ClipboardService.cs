@@ -1553,6 +1553,7 @@ public sealed class ClipboardService : IClipboardService
             {
                 0x11, /*CTRL*/
             };
+            uint expectedInputEvents = (uint)(modifiers.Length + 3);
 
             void PasteWithSendInput()
             {
@@ -1561,10 +1562,10 @@ public sealed class ClipboardService : IClipboardService
                     modifiers,
                     0x56 /*'V'*/
                 );
-                if (sent != 4)
+                if (sent != expectedInputEvents)
                 {
                     throw new InvalidOperationException(
-                        $"SendInput rejected the Ctrl+V chord (sent={sent}/4)"
+                        $"SendInput rejected the Ctrl+V chord (sent={sent}/{expectedInputEvents})"
                     );
                 }
             }
@@ -1613,13 +1614,14 @@ public sealed class ClipboardService : IClipboardService
                 Logger.LogWarning(
                     "SendKeys Ctrl+V fallback completed for an unverified custom-editor target"
                 );
+                Logger.Log("Paste delivered with SendKeys Ctrl+V fallback");
                 return true;
             }
 
-            if (sentInputEvents != 4)
+            if (sentInputEvents != expectedInputEvents)
             {
                 throw new InvalidOperationException(
-                    $"SendInput rejected the Ctrl+V chord (sent={sentInputEvents}/4)"
+                    $"SendInput rejected the Ctrl+V chord (sent={sentInputEvents}/{expectedInputEvents})"
                 );
             }
 
