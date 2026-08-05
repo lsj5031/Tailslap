@@ -5,6 +5,13 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-08-05
+
+### Fixed
+- **Refinement targeting the shell instead of the selection**: Refinement capture could resolve TailSlap's own hidden form, the Windows taskbar, or the desktop as the target window, reporting "No text selected" even when text was selected. TailSlap now tracks the last real foreground application window — excluding shell surfaces such as `Shell_TrayWnd`, `Progman`, `WorkerW`, and Start-menu windows — snapshots it before the hotkey/tray action or overlay changes activation, and carries it through capture, LLM refinement, and the final paste.
+- **Transcription paste targeting**: Toggle transcription and realtime streaming now snapshot the target window up front and restore it before the final paste, matching the refinement fix.
+- **UI Automation probe targeting**: Caret and deep-search probes now run against the captured target window instead of whatever is foreground later.
+
 ## [3.2.0] - 2026-08-04
 
 ### Added
