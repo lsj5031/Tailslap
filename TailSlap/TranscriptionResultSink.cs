@@ -176,7 +176,9 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
                             .SetTextAndPasteAsync(
                                 finalText,
                                 autoPaste,
-                                autoPaste && target != IntPtr.Zero ? target : (IntPtr?)null
+                                autoPaste && target != IntPtr.Zero ? target : (IntPtr?)null,
+                                request.TargetProcessId,
+                                request.TargetWindowClass
                             )
                             .ConfigureAwait(false);
                         if (!delivered)

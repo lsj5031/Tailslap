@@ -71,7 +71,9 @@ public class TranscriptionResultSinkTests
     )
     {
         clipboard.Setup(c => c.SetTextAsync(It.IsAny<string>())).ReturnsAsync(true);
-        clipboard.Setup(c => c.PasteAsync(It.IsAny<IntPtr?>())).ReturnsAsync(true);
+        clipboard
+            .Setup(c => c.PasteAsync(It.IsAny<IntPtr?>(), It.IsAny<uint>(), It.IsAny<string?>()))
+            .ReturnsAsync(true);
 
         var refiner = new Mock<ITextRefiner>();
         refiner
@@ -118,7 +120,10 @@ public class TranscriptionResultSinkTests
         Assert.Equal("raw", result.FinalText);
         Assert.False(result.WasEnhanced);
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(), Times.Once);
+        clipboard.Verify(
+            c => c.PasteAsync(null, It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Once
+        );
         history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
         history.Verify(
             h => h.Append(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
@@ -256,7 +261,10 @@ public class TranscriptionResultSinkTests
 
         Assert.Null(typer.TypedText);
         clipboard.Verify(c => c.SetTextAsync("raw improved"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(), Times.Never);
+        clipboard.Verify(
+            c => c.PasteAsync(null, It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Never
+        );
     }
 
     [Fact]
@@ -277,7 +285,10 @@ public class TranscriptionResultSinkTests
         );
 
         clipboard.Verify(c => c.SetTextAsync("raw improved"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(), Times.Never);
+        clipboard.Verify(
+            c => c.PasteAsync(null, It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Never
+        );
         Assert.Null(typer.TypedText);
         history.Verify(h => h.AppendTranscription("raw", 101), Times.Once);
         history.Verify(h => h.Append("raw", "raw improved", "test-model"), Times.Once);
@@ -384,7 +395,10 @@ public class TranscriptionResultSinkTests
 
         // Guard triggered: text is preserved on the clipboard, but no paste fires.
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(It.IsAny<IntPtr?>()), Times.Never);
+        clipboard.Verify(
+            c => c.PasteAsync(It.IsAny<IntPtr?>(), It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Never
+        );
         history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
     }
 
@@ -421,7 +435,10 @@ public class TranscriptionResultSinkTests
         );
 
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(new IntPtr(0x11)), Times.Once);
+        clipboard.Verify(
+            c => c.PasteAsync(new IntPtr(0x11), It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Once
+        );
         history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
     }
 
@@ -453,7 +470,10 @@ public class TranscriptionResultSinkTests
         );
 
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(It.IsAny<IntPtr?>()), Times.Never);
+        clipboard.Verify(
+            c => c.PasteAsync(It.IsAny<IntPtr?>(), It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Never
+        );
     }
 
     [Fact]
@@ -490,7 +510,10 @@ public class TranscriptionResultSinkTests
 
         Assert.False(restoreAttempted);
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(It.IsAny<IntPtr?>()), Times.Never);
+        clipboard.Verify(
+            c => c.PasteAsync(It.IsAny<IntPtr?>(), It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Never
+        );
     }
 
     [Fact]
@@ -519,7 +542,10 @@ public class TranscriptionResultSinkTests
 
         // Identity capture can fail benignly; an unchanged foreground must still paste.
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(new IntPtr(0x11)), Times.Once);
+        clipboard.Verify(
+            c => c.PasteAsync(new IntPtr(0x11), It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Once
+        );
     }
 
     [Fact]
@@ -549,7 +575,10 @@ public class TranscriptionResultSinkTests
         );
 
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
-        clipboard.Verify(c => c.PasteAsync(new IntPtr(0x11)), Times.Once);
+        clipboard.Verify(
+            c => c.PasteAsync(new IntPtr(0x11), It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Once
+        );
         history.Verify(h => h.AppendTranscription("raw", 123), Times.Once);
     }
 

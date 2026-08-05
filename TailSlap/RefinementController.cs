@@ -38,7 +38,7 @@ public sealed class RefinementController : IRefinementController
             clipboardHelper ?? throw new ArgumentNullException(nameof(clipboardHelper));
     }
 
-    public async Task<bool> TriggerRefineAsync()
+    public async Task<bool> TriggerRefineAsync(IntPtr? targetWindow = null)
     {
         var cfg = _config.CreateValidatedCopy();
 
@@ -80,7 +80,7 @@ public sealed class RefinementController : IRefinementController
             {
                 token = _currentCts?.Token ?? CancellationToken.None;
             }
-            var success = await RefineSelectionAsync(cfg, token);
+            var success = await RefineSelectionAsync(cfg, token, targetWindow);
             return success;
         }
         finally
@@ -114,15 +114,30 @@ public sealed class RefinementController : IRefinementController
         }
     }
 
-    private async Task<bool> RefineSelectionAsync(AppConfig cfg, CancellationToken ct)
+    private async Task<bool> RefineSelectionAsync(
+        AppConfig cfg,
+        CancellationToken ct,
+        IntPtr? targetWindow
+    )
     {
         string? originalText = null;
+        NativeMethods.TryGetWindowIdentity(
+            targetWindow.GetValueOrDefault(),
+            out uint targetProcessId,
+            out string targetWindowClass
+        );
         try
         {
             Logger.Log("RefineSelectionAsync started");
+            Logger.Log(
+                $"Refinement target: 0x{targetWindow.GetValueOrDefault().ToInt64():X}, pid={targetProcessId}, class={targetWindowClass}"
+            );
             Logger.Log("Starting capture from selection/clipboard");
 
-            var text = await _clip.CaptureSelectionOrClipboardAsync(cfg.UseClipboardFallback);
+            var text = await _clip.CaptureSelectionOrClipboardAsync(
+                cfg.UseClipboardFallback,
+                targetWindow
+            );
             Logger.Log(
                 $"Captured length: {text?.Length ?? 0}, sha256={Hashing.Sha256Hex(text ?? string.Empty)}"
             );
@@ -158,7 +173,13 @@ public sealed class RefinementController : IRefinementController
 
             ct.ThrowIfCancellationRequested();
 
-            var success = await _clipboardHelper.SetTextAndPasteAsync(refined, cfg.AutoPaste);
+            var success = await _clipboardHelper.SetTextAndPasteAsync(
+                refined,
+                cfg.AutoPaste,
+                targetWindow,
+                targetProcessId,
+                targetWindowClass
+            );
 
             try
             {

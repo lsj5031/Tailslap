@@ -14,7 +14,9 @@ public sealed class ClipboardHelper
     public async Task<bool> SetTextAndPasteAsync(
         string text,
         bool autoPaste,
-        System.IntPtr? expectedForegroundWindow = null
+        System.IntPtr? expectedForegroundWindow = null,
+        uint expectedProcessId = 0,
+        string? expectedWindowClass = null
     )
     {
         if (string.IsNullOrEmpty(text))
@@ -36,7 +38,7 @@ public sealed class ClipboardHelper
         {
             Logger.Log("Auto-paste attempt");
             bool pasteSuccess = await _clip
-                .PasteAsync(expectedForegroundWindow)
+                .PasteAsync(expectedForegroundWindow, expectedProcessId, expectedWindowClass)
                 .ConfigureAwait(false);
             if (!pasteSuccess)
             {

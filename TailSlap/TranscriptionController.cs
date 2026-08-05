@@ -59,7 +59,7 @@ public sealed class TranscriptionController : ITranscriptionController
         _recordFunc = recordFunc;
     }
 
-    public async Task<bool> TriggerTranscribeAsync()
+    public async Task<bool> TriggerTranscribeAsync(IntPtr? targetWindow = null)
     {
         var cfg = _config.CreateValidatedCopy();
 
@@ -96,7 +96,7 @@ public sealed class TranscriptionController : ITranscriptionController
 
         try
         {
-            await TranscribeSelectionAsync(cfg).ConfigureAwait(false);
+            await TranscribeSelectionAsync(cfg, targetWindow).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)
@@ -125,13 +125,17 @@ public sealed class TranscriptionController : ITranscriptionController
         }
     }
 
-    private async Task TranscribeSelectionAsync(AppConfig cfg)
+    private async Task TranscribeSelectionAsync(AppConfig cfg, IntPtr? targetWindow)
     {
         string audioFilePath = "";
         RecordingStats? recordingStats = null;
-        IntPtr targetWindow = NativeMethods.GetForegroundWindow();
+        IntPtr capturedTargetWindow = targetWindow.GetValueOrDefault();
+        if (capturedTargetWindow == IntPtr.Zero)
+        {
+            capturedTargetWindow = NativeMethods.GetForegroundWindow();
+        }
         NativeMethods.TryGetWindowIdentity(
-            targetWindow,
+            capturedTargetWindow,
             out uint targetProcessId,
             out string targetWindowClass
         );
@@ -140,7 +144,7 @@ public sealed class TranscriptionController : ITranscriptionController
         {
             Logger.Log("TranscribeSelectionAsync started");
             Logger.Log(
-                $"TranscribeSelectionAsync: Target captured 0x{targetWindow.ToInt64():X}, pid={targetProcessId}, class={targetWindowClass}"
+                $"TranscribeSelectionAsync: Target captured 0x{capturedTargetWindow.ToInt64():X}, pid={targetProcessId}, class={targetWindowClass}"
             );
             Logger.Log(
                 $"Transcriber config: BaseUrl={cfg.Transcriber.BaseUrl}, Model={cfg.Transcriber.Model}, Timeout={cfg.Transcriber.TimeoutSeconds}s"
@@ -253,7 +257,7 @@ public sealed class TranscriptionController : ITranscriptionController
                         recordingStats?.DurationMs ?? 0,
                         TranscriptionDeliveryPolicy.DeliverFinalText,
                         ResultsAlreadyStreamed: false,
-                        TargetWindow: targetWindow,
+                        TargetWindow: capturedTargetWindow,
                         TargetProcessId: targetProcessId,
                         TargetWindowClass: targetWindowClass
                     )

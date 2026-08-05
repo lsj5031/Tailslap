@@ -88,6 +88,7 @@ internal static class Program
     private static void ConfigureServices(IServiceCollection services)
     {
         services.AddSingleton<IConfigService, ConfigService>();
+        services.AddSingleton<ForegroundWindowTracker>();
         services.AddSingleton<IClipboardService, ClipboardService>();
         services.AddSingleton<ClipboardHelper>();
         services.AddSingleton<ITextRefinerFactory, TextRefinerFactory>();

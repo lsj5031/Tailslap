@@ -8,7 +8,7 @@ public interface ITranscriptionController
     bool IsTranscribing { get; }
     bool IsRecording { get; }
 
-    Task<bool> TriggerTranscribeAsync();
+    Task<bool> TriggerTranscribeAsync(System.IntPtr? targetWindow = null);
     void StopRecording();
 
     event Action? OnStarted;

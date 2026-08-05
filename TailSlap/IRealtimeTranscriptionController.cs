@@ -8,7 +8,7 @@ public interface IRealtimeTranscriptionController
     StreamingState State { get; }
     bool IsStreaming { get; }
 
-    Task TriggerStreamingAsync();
+    Task TriggerStreamingAsync(System.IntPtr? targetWindow = null);
     Task StartAsync();
     Task StopAsync();
 

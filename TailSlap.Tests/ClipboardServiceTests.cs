@@ -57,6 +57,8 @@ public class ClipboardServiceTests
 
         Assert.NotNull(method);
         Assert.Equal(typeof(Task<string>), method.ReturnType);
+        Assert.Equal(2, method.GetParameters().Length);
+        Assert.Equal(typeof(IntPtr?), method.GetParameters()[1].ParameterType);
     }
 
     [Fact]

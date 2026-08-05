@@ -51,6 +51,7 @@ public class MainForm : Form
     private readonly IRealtimeTranscriptionController _realtimeTranscriptionController;
     private readonly IAutoStartService _autoStartService;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ForegroundWindowTracker _foregroundWindowTracker;
 
     private uint _currentMods;
     private uint _currentVk;
@@ -78,7 +79,8 @@ public class MainForm : Form
         KeyboardHook keyboardHook,
         IRealtimeTranscriptionController realtimeTranscriptionController,
         IAutoStartService autoStartService,
-        IHttpClientFactory httpClientFactory
+        IHttpClientFactory httpClientFactory,
+        ForegroundWindowTracker foregroundWindowTracker
     )
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
@@ -104,6 +106,9 @@ public class MainForm : Form
             autoStartService ?? throw new ArgumentNullException(nameof(autoStartService));
         _httpClientFactory =
             httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+        _foregroundWindowTracker =
+            foregroundWindowTracker
+            ?? throw new ArgumentNullException(nameof(foregroundWindowTracker));
 
         SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
         DoubleBuffered = true;
@@ -987,6 +992,11 @@ public class MainForm : Form
     {
         try
         {
+            _foregroundWindowTracker.Dispose();
+        }
+        catch { }
+        try
+        {
             _keyboardHook?.Dispose();
         }
         catch { }
@@ -1047,17 +1057,25 @@ public class MainForm : Form
 
     private void TriggerRefine()
     {
-        SafeFireAndForget(_refinementController.TriggerRefineAsync());
+        // WM_HOTKEY is delivered to TailSlap's hidden form. Snapshot the last
+        // external foreground window before the refinement animation can run.
+        IntPtr targetWindow = _foregroundWindowTracker.GetTargetWindow();
+        Logger.Log($"Refinement target captured: 0x{targetWindow.ToInt64():X}");
+        SafeFireAndForget(_refinementController.TriggerRefineAsync(targetWindow));
     }
 
     private void TriggerTranscribe()
     {
-        SafeFireAndForget(_transcriptionController.TriggerTranscribeAsync());
+        IntPtr targetWindow = _foregroundWindowTracker.GetTargetWindow();
+        Logger.Log($"Transcription target captured: 0x{targetWindow.ToInt64():X}");
+        SafeFireAndForget(_transcriptionController.TriggerTranscribeAsync(targetWindow));
     }
 
     private void TriggerStreamingTranscribe()
     {
-        SafeFireAndForget(_realtimeTranscriptionController.TriggerStreamingAsync());
+        IntPtr targetWindow = _foregroundWindowTracker.GetTargetWindow();
+        Logger.Log($"Streaming target captured: 0x{targetWindow.ToInt64():X}");
+        SafeFireAndForget(_realtimeTranscriptionController.TriggerStreamingAsync(targetWindow));
     }
 
     private void ReloadConfigFromDisk()

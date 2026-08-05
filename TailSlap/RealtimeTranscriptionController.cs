@@ -101,7 +101,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         _resultSink = resultSink ?? throw new ArgumentNullException(nameof(resultSink));
     }
 
-    public async Task TriggerStreamingAsync()
+    public async Task TriggerStreamingAsync(IntPtr? targetWindow = null)
     {
         var cfg = _config.CreateValidatedCopy();
 
@@ -145,16 +145,16 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         }
         else
         {
-            await StartAsync(cfg);
+            await StartAsync(cfg, targetWindow);
         }
     }
 
     public async Task StartAsync()
     {
-        await StartAsync(_config.CreateValidatedCopy());
+        await StartAsync(_config.CreateValidatedCopy(), null);
     }
 
-    private async Task StartAsync(AppConfig cfg)
+    private async Task StartAsync(AppConfig cfg, IntPtr? targetWindow)
     {
         _textProcessingCts?.Cancel();
         _textProcessingCts?.Dispose();
@@ -228,7 +228,11 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 catch { }
             };
 
-            _streamingTargetWindow = NativeMethods.GetForegroundWindow();
+            _streamingTargetWindow = targetWindow.GetValueOrDefault();
+            if (_streamingTargetWindow == IntPtr.Zero)
+            {
+                _streamingTargetWindow = NativeMethods.GetForegroundWindow();
+            }
             _streamingStartTime = DateTime.UtcNow;
             Logger.Log($"StartAsync: Target window captured: 0x{_streamingTargetWindow:X}");
 
@@ -773,6 +777,9 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 }
                 _realtimeTranscriptionText = text;
                 _lastTypedLength = 0;
+                // The stream intentionally follows the user's new foreground
+                // window after a focus change; this is not the initial target
+                // capture and must remain dynamic.
                 _streamingTargetWindow = NativeMethods.GetForegroundWindow();
                 return;
             }

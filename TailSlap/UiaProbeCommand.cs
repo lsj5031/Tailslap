@@ -24,7 +24,7 @@ internal static class UiaProbeCommand
             string? text = request!.Mode switch
             {
                 UiaProbeMode.Focused => TryGetFocusedSelection(request.ForegroundWindowHandle),
-                UiaProbeMode.Caret => TryGetCaretSelection(),
+                UiaProbeMode.Caret => TryGetCaretSelection(request.ForegroundWindowHandle),
                 UiaProbeMode.Deep => TryGetDeepSelection(request.ForegroundWindowHandle),
                 _ => null,
             };
@@ -89,11 +89,14 @@ internal static class UiaProbeCommand
         return uiaTask.Wait(TimeSpan.FromMilliseconds(800)) ? uiaTask.Result : null;
     }
 
-    private static string? TryGetCaretSelection()
+    private static string? TryGetCaretSelection(long? foregroundWindowHandle)
     {
         var uiaTask = RunInMtaForUia(() =>
         {
-            var foreground = NativeMethods.GetForegroundWindow();
+            var foreground =
+                foregroundWindowHandle.HasValue && foregroundWindowHandle.Value != 0
+                    ? new IntPtr(foregroundWindowHandle.Value)
+                    : NativeMethods.GetForegroundWindow();
             if (foreground == IntPtr.Zero)
             {
                 return null;
@@ -144,7 +147,7 @@ internal static class UiaProbeCommand
     {
         var uiaTask = RunInMtaForUia(() =>
         {
-            string? caretSelection = TryGetSelectionAtCaretPoint();
+            string? caretSelection = TryGetSelectionAtCaretPoint(foregroundWindowHandle);
             if (!string.IsNullOrWhiteSpace(caretSelection))
             {
                 return caretSelection;
@@ -212,9 +215,12 @@ internal static class UiaProbeCommand
         return uiaTask.Wait(TimeSpan.FromMilliseconds(800)) ? uiaTask.Result : null;
     }
 
-    private static string? TryGetSelectionAtCaretPoint()
+    private static string? TryGetSelectionAtCaretPoint(long? foregroundWindowHandle)
     {
-        var hwnd = NativeMethods.GetForegroundWindow();
+        var hwnd =
+            foregroundWindowHandle.HasValue && foregroundWindowHandle.Value != 0
+                ? new IntPtr(foregroundWindowHandle.Value)
+                : NativeMethods.GetForegroundWindow();
         if (hwnd == IntPtr.Zero)
         {
             return null;

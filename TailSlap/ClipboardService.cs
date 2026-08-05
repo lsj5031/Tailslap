@@ -433,7 +433,10 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
-    public string CaptureSelectionOrClipboard(bool useClipboardFallback = false)
+    public string CaptureSelectionOrClipboard(
+        bool useClipboardFallback = false,
+        IntPtr? targetWindow = null
+    )
     {
         var sw = Stopwatch.StartNew();
 
@@ -445,31 +448,15 @@ public sealed class ClipboardService : IClipboardService
         }
         catch { }
 
-        // Notify UI to start animation
-        CaptureStarted?.Invoke();
-
-        try
+        // Resolve the target before any UI callback can show an overlay or otherwise
+        // change activation. A caller that captured the target at the hotkey boundary
+        // wins; the fallback is retained for tray/menu invocation.
+        IntPtr foregroundWindow = targetWindow.GetValueOrDefault();
+        if (foregroundWindow == IntPtr.Zero)
         {
-            // Snapshot only diagnostics here. Selection capture must not treat
-            // this pre-existing clipboard content as the user's selection.
-            LogClipboardState("Before selection capture");
-
-            IntPtr foregroundWindow = IntPtr.Zero;
             try
             {
-                try
-                {
-                    Logger.Log("Step 2: Getting foreground window...");
-                }
-                catch { }
                 foregroundWindow = NativeMethods.GetForegroundWindow();
-                try
-                {
-                    Logger.Log(
-                        $"Step 2a: Foreground window obtained: {DescribeWindow(foregroundWindow)}"
-                    );
-                }
-                catch { }
             }
             catch (Exception ex)
             {
@@ -481,6 +468,34 @@ public sealed class ClipboardService : IClipboardService
                 }
                 catch { }
             }
+        }
+
+        try
+        {
+            Logger.Log(
+                $"Step 2a: Capture target {(targetWindow.HasValue ? "provided" : "current foreground")}: {DescribeWindow(foregroundWindow)}"
+            );
+        }
+        catch { }
+
+        // Notify UI only after the target has been captured.
+        CaptureStarted?.Invoke();
+
+        if (targetWindow.HasValue && foregroundWindow == IntPtr.Zero)
+        {
+            try
+            {
+                Logger.LogWarning("Capture aborted: no external foreground target was available");
+            }
+            catch { }
+            return string.Empty;
+        }
+
+        try
+        {
+            // Snapshot only diagnostics here. Selection capture must not treat
+            // this pre-existing clipboard content as the user's selection.
+            LogClipboardState("Before selection capture");
 
             // Check window class for logging purposes (but don't skip any operations)
             string windowClass = "unknown";
@@ -1197,7 +1212,11 @@ public sealed class ClipboardService : IClipboardService
         return new MemoryStream(BitConverter.GetBytes(value), writable: false);
     }
 
-    public System.Threading.Tasks.Task<bool> PasteAsync(IntPtr? expectedForegroundWindow = null)
+    public System.Threading.Tasks.Task<bool> PasteAsync(
+        IntPtr? expectedForegroundWindow = null,
+        uint expectedProcessId = 0,
+        string? expectedWindowClass = null
+    )
     {
         var currentContext = SynchronizationContext.Current;
         bool hasUiContext = _uiContext != null;
@@ -1219,14 +1238,18 @@ public sealed class ClipboardService : IClipboardService
             }
             catch { }
 
-            return RunOnUiContextAsync(() => PasteAsyncCore(expectedForegroundWindow));
+            return RunOnUiContextAsync(() =>
+                PasteAsyncCore(expectedForegroundWindow, expectedProcessId, expectedWindowClass)
+            );
         }
 
-        return PasteAsyncCore(expectedForegroundWindow);
+        return PasteAsyncCore(expectedForegroundWindow, expectedProcessId, expectedWindowClass);
     }
 
     private async System.Threading.Tasks.Task<bool> PasteAsyncCore(
-        IntPtr? expectedForegroundWindow = null
+        IntPtr? expectedForegroundWindow = null,
+        uint expectedProcessId = 0,
+        string? expectedWindowClass = null
     )
     {
         try
@@ -1240,10 +1263,42 @@ public sealed class ClipboardService : IClipboardService
                 && foregroundWindow != expectedForegroundWindow.Value
             )
             {
-                Logger.LogWarning(
-                    "PasteAsync: Expected target window is no longer foreground; leaving text on the clipboard"
-                );
-                return false;
+                // The refinement hotkey is delivered to TailSlap's hidden form and
+                // an LLM request can also outlive a focus transition. Restore the
+                // exact captured target before refusing to inject input; never send
+                // a paste chord to whichever window happens to be foreground now.
+                uint targetProcessId = expectedProcessId;
+                string targetWindowClass = expectedWindowClass ?? string.Empty;
+                if (targetProcessId == 0 || string.IsNullOrWhiteSpace(targetWindowClass))
+                {
+                    NativeMethods.TryGetWindowIdentity(
+                        expectedForegroundWindow.Value,
+                        out targetProcessId,
+                        out targetWindowClass
+                    );
+                }
+
+                if (
+                    NativeMethods.TryRestoreWindow(
+                        expectedForegroundWindow.Value,
+                        targetProcessId,
+                        targetWindowClass
+                    )
+                    && NativeMethods.GetForegroundWindow() == expectedForegroundWindow.Value
+                )
+                {
+                    foregroundWindow = expectedForegroundWindow.Value;
+                    Logger.Log(
+                        $"PasteAsync: Restored expected target window 0x{foregroundWindow.ToInt64():X} before paste"
+                    );
+                }
+                else
+                {
+                    Logger.LogWarning(
+                        "PasteAsync: Expected target window is no longer foreground and could not be restored; leaving text on the clipboard"
+                    );
+                    return false;
+                }
             }
 
             if (foregroundWindow == IntPtr.Zero)
@@ -2462,10 +2517,11 @@ public sealed class ClipboardService : IClipboardService
     }
 
     public System.Threading.Tasks.Task<string> CaptureSelectionOrClipboardAsync(
-        bool useClipboardFallback = false
+        bool useClipboardFallback = false,
+        IntPtr? targetWindow = null
     )
     {
-        return RunInSta(() => CaptureSelectionOrClipboard(useClipboardFallback));
+        return RunInSta(() => CaptureSelectionOrClipboard(useClipboardFallback, targetWindow));
     }
 
     private static void RecordCaptureSuccess(string method, bool success)

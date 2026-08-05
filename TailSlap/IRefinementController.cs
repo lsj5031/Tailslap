@@ -7,7 +7,7 @@ public interface IRefinementController
     bool IsRefining { get; }
     CancellationTokenSource? CurrentCts { get; }
 
-    Task<bool> TriggerRefineAsync();
+    Task<bool> TriggerRefineAsync(System.IntPtr? targetWindow = null);
     void CancelRefine();
 
     event Action? OnStarted;

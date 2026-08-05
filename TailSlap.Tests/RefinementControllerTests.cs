@@ -169,6 +169,45 @@ public class RefinementControllerTests
     }
 
     [Fact]
+    public async Task TriggerRefineAsync_PassesCapturedTargetToCaptureAndPaste()
+    {
+        var targetWindow = new IntPtr(0x1234);
+        var mockConfig = CreateMockConfigService();
+        var mockClip = new Mock<IClipboardService>();
+        mockClip
+            .Setup(c => c.CaptureSelectionOrClipboardAsync(It.IsAny<bool>(), It.IsAny<IntPtr?>()))
+            .ReturnsAsync("test text");
+        mockClip.Setup(c => c.SetTextAsync("refined text")).ReturnsAsync(true);
+        mockClip
+            .Setup(c => c.PasteAsync(targetWindow, It.IsAny<uint>(), It.IsAny<string?>()))
+            .ReturnsAsync(true);
+
+        var mockRefiner = new Mock<ITextRefiner>();
+        mockRefiner
+            .Setup(r => r.RefineAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("refined text");
+        var mockRefinerFactory = new Mock<ITextRefinerFactory>();
+        mockRefinerFactory.Setup(f => f.Create(It.IsAny<LlmConfig>())).Returns(mockRefiner.Object);
+        var mockHistory = new Mock<IHistoryService>();
+        var controller = new RefinementController(
+            mockConfig.Object,
+            mockClip.Object,
+            mockRefinerFactory.Object,
+            mockHistory.Object,
+            new ClipboardHelper(mockClip.Object)
+        );
+
+        var result = await controller.TriggerRefineAsync(targetWindow);
+
+        Assert.True(result);
+        mockClip.Verify(c => c.CaptureSelectionOrClipboardAsync(true, targetWindow), Times.Once);
+        mockClip.Verify(
+            c => c.PasteAsync(targetWindow, It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Once
+        );
+    }
+
+    [Fact]
     public async Task TriggerRefineAsync_WhenSuccessful_AppendsToHistory()
     {
         // Arrange
