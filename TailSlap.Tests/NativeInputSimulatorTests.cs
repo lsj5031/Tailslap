@@ -42,7 +42,11 @@ public class NativeInputSimulatorTests
 
         stopwatch.Stop();
         Assert.False(released);
-        Assert.True(stopwatch.ElapsedMilliseconds >= 100);
+        // The loop exits when Environment.TickCount64 sees the timeout; the
+        // Stopwatch can read one tick (~1ms) less under load, so allow a small
+        // tolerance. The point of the assertion is that it waited out the
+        // timeout instead of returning immediately.
+        Assert.True(stopwatch.ElapsedMilliseconds >= 90);
     }
 
     [Fact]
