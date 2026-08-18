@@ -311,6 +311,10 @@ public class MainForm : Form
             autoStartItem.Checked = _autoStartService.IsEnabled("TailSlap");
         };
         _menu.Items.Add(autoStartItem);
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(
+            new ToolStripMenuItem($"TailSlap {BuildInfo.DisplayString}") { Enabled = false }
+        );
         _menu.Items.Add(
             "Quit",
             null,

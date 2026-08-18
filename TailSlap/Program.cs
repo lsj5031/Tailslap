@@ -19,7 +19,7 @@ internal static class Program
 
         try
         {
-            Logger.Log("App starting");
+            Logger.Log($"App starting {BuildInfo.DisplayString}");
         }
         catch { }
 
