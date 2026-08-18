@@ -53,6 +53,15 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     internal static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
+    internal delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    internal static extern bool EnumChildWindows(
+        IntPtr hWndParent,
+        EnumWindowsProc lpEnumFunc,
+        IntPtr lParam
+    );
+
     [DllImport("user32.dll")]
     private static extern bool IsWindow(IntPtr hWnd);
 

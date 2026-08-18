@@ -19,6 +19,28 @@ public class UiaProbeProtocolTests
     }
 
     [Fact]
+    public void TryParseArgs_ParsesControlValueMode()
+    {
+        bool ok = UiaProbeProtocol.TryParseArgs(
+            new[] { UiaProbeRequest.CommandName, "value", "0" },
+            out var request,
+            out var error
+        );
+
+        Assert.True(ok);
+        Assert.Null(error);
+        Assert.NotNull(request);
+        Assert.Equal(UiaProbeMode.ControlValue, request!.Mode);
+        Assert.Equal(0, request.ForegroundWindowHandle);
+    }
+
+    [Fact]
+    public void ToArgument_MapsControlValueMode()
+    {
+        Assert.Equal("value", UiaProbeProtocol.ToArgument(UiaProbeMode.ControlValue));
+    }
+
+    [Fact]
     public void TryParseArgs_RejectsUnknownMode()
     {
         bool ok = UiaProbeProtocol.TryParseArgs(

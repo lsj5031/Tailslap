@@ -26,6 +26,70 @@ internal static class UiaProbeClient
         int timeoutMs
     )
     {
+        var (response, failureReason) = TryInvoke(mode, foregroundWindow, timeoutMs);
+        if (failureReason != null)
+        {
+            return UiaProbeInvocationResult.Fatal(failureReason);
+        }
+
+        if (response == null)
+        {
+            return UiaProbeInvocationResult.Fatal("Probe response was unexpectedly null.");
+        }
+
+        if (string.Equals(response.Status, "success", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(response.Text)
+                ? UiaProbeInvocationResult.Empty()
+                : UiaProbeInvocationResult.Success(response.Text);
+        }
+
+        if (string.Equals(response.Status, "empty", StringComparison.OrdinalIgnoreCase))
+        {
+            return UiaProbeInvocationResult.Empty();
+        }
+
+        string probeError = !string.IsNullOrWhiteSpace(response.Error)
+            ? response.Error
+            : "Probe reported an unspecified error.";
+        return UiaProbeInvocationResult.Fatal(probeError);
+    }
+
+    /// <summary>
+    /// Reads the full text value of the focused editable control. Unlike
+    /// <see cref="TryGetSelection"/>, a readable-but-empty control is reported
+    /// as found with an empty value so callers can distinguish an empty field
+    /// from a control that could not be read at all.
+    /// </summary>
+    public static (bool Found, string? Value) TryGetControlValue(
+        IntPtr foregroundWindow,
+        int timeoutMs
+    )
+    {
+        var (response, failureReason) = TryInvoke(
+            UiaProbeMode.ControlValue,
+            foregroundWindow,
+            timeoutMs
+        );
+        if (failureReason != null || response == null)
+        {
+            return (false, null);
+        }
+
+        if (string.Equals(response.Status, "success", StringComparison.OrdinalIgnoreCase))
+        {
+            return (true, response.Text ?? string.Empty);
+        }
+
+        return (false, null);
+    }
+
+    private static (UiaProbeResponse? Response, string? FailureReason) TryInvoke(
+        UiaProbeMode mode,
+        IntPtr foregroundWindow,
+        int timeoutMs
+    )
+    {
         string? executablePath = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(executablePath))
         {
@@ -42,7 +106,7 @@ internal static class UiaProbeClient
 
         if (string.IsNullOrWhiteSpace(executablePath))
         {
-            return UiaProbeInvocationResult.Fatal("Current process path is unavailable.");
+            return (null, "Current process path is unavailable.");
         }
 
         using var process = new Process();
@@ -67,14 +131,12 @@ internal static class UiaProbeClient
         {
             if (!process.Start())
             {
-                return UiaProbeInvocationResult.Fatal("Probe process failed to start.");
+                return (null, "Probe process failed to start.");
             }
         }
         catch (Exception ex)
         {
-            return UiaProbeInvocationResult.Fatal(
-                $"Probe process start failed: {ex.GetType().Name}: {ex.Message}"
-            );
+            return (null, $"Probe process start failed: {ex.GetType().Name}: {ex.Message}");
         }
 
         Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
@@ -89,9 +151,7 @@ internal static class UiaProbeClient
             }
             catch { }
 
-            return UiaProbeInvocationResult.Fatal(
-                $"Probe process timed out after {timeoutMs + StartupBufferMs}ms."
-            );
+            return (null, $"Probe process timed out after {timeoutMs + StartupBufferMs}ms.");
         }
 
         string stdout = stdoutTask.GetAwaiter().GetResult().Trim();
@@ -100,7 +160,7 @@ internal static class UiaProbeClient
         if (!UiaProbeProtocol.TryDeserialize(stdout, out var response, out var parseError))
         {
             string detail = !string.IsNullOrWhiteSpace(stderr) ? $" stderr={stderr}" : string.Empty;
-            return UiaProbeInvocationResult.Fatal($"{parseError}{detail}");
+            return (null, $"{parseError}{detail}");
         }
 
         if (process.ExitCode != 0)
@@ -111,29 +171,9 @@ internal static class UiaProbeClient
             string error = string.IsNullOrWhiteSpace(responseError)
                 ? $"Probe process exited with code {process.ExitCode}."
                 : $"Probe process exited with code {process.ExitCode}: {responseError}";
-            return UiaProbeInvocationResult.Fatal(error);
+            return (null, error);
         }
 
-        if (response == null)
-        {
-            return UiaProbeInvocationResult.Fatal("Probe response was unexpectedly null.");
-        }
-
-        if (string.Equals(response.Status, "success", StringComparison.OrdinalIgnoreCase))
-        {
-            return string.IsNullOrWhiteSpace(response.Text)
-                ? UiaProbeInvocationResult.Empty()
-                : UiaProbeInvocationResult.Success(response.Text);
-        }
-
-        if (string.Equals(response.Status, "empty", StringComparison.OrdinalIgnoreCase))
-        {
-            return UiaProbeInvocationResult.Empty();
-        }
-
-        string probeError = !string.IsNullOrWhiteSpace(response.Error)
-            ? response.Error
-            : "Probe reported an unspecified error.";
-        return UiaProbeInvocationResult.Fatal(probeError);
+        return (response, null);
     }
 }

@@ -110,6 +110,23 @@ public class ClipboardServiceTests
         Assert.Equal(IntPtr.Size == 8 ? 40 : 28, ClipboardService.NativeInputSize);
     }
 
+    [Theory]
+    [InlineData("a\u0000b", "a\u0000bc", "c", true)] // second edit grew
+    [InlineData("a\u0000b", "ab\u0000b", "b", true)] // first edit changed
+    [InlineData("a\u0000b", "a\u0000b", "c", false)] // no edit changed
+    [InlineData(null, "a", "a", false)] // unreadable before
+    [InlineData("", "x", "x", true)] // single empty edit, paste grows it
+    [InlineData("a\u0000", "a\u0000x", "x", true)] // trailing empty edit grew
+    public void IsPasteDelivered_DetectsChangeInAnyEdit(
+        string? before,
+        string? after,
+        string? clipboard,
+        bool expected
+    )
+    {
+        Assert.Equal(expected, ClipboardService.IsPasteDelivered(before, after, clipboard));
+    }
+
     [Fact]
     public void PasteMethodOrder_UsesSendInputBeforeSendKeys()
     {
@@ -119,22 +136,42 @@ public class ClipboardServiceTests
         );
     }
 
+    [Fact]
+    public void CustomEditorPasteMethodOrder_AppendsPlainTextPasteAsLastResort()
+    {
+        Assert.Equal(
+            new[] { "WM_PASTE", "SendInput Ctrl+V", "Ctrl+V", "Shift+Insert", "Ctrl+Shift+V" },
+            ClipboardService.CustomEditorPasteMethodOrder
+        );
+    }
+
     [Theory]
-    [InlineData("MozillaWindowClass", true)]
-    [InlineData("Edit", false)]
-    [InlineData("", false)]
-    public void RequiresManualPasteForWindowClass_OnlyMatchesFirefox(
-        string windowClass,
+    [InlineData("", "hello", "hello", true)] // empty field, paste grows it
+    [InlineData("abc", "abchello", "hello", true)] // append at caret
+    [InlineData("abc", "axc", "x", true)] // selection replace, value shrinks
+    [InlineData("abc", "abc", "hello", false)] // unchanged
+    [InlineData("abc", "abx", null, false)] // no clipboard text, no growth
+    [InlineData("abc", "abcd", null, true)] // no clipboard text, growth
+    [InlineData("abc", "x", null, true)] // selection replace shrinks value
+    [InlineData("abc", "ab", "hello", true)] // normalized paste, length shrank
+    [InlineData(null, "hello", "hello", false)] // unreadable before
+    [InlineData("abc", null, "hello", false)] // unreadable after
+    [InlineData("abc", "abcxyz", "xyz", true)] // paste inside existing text
+    public void IsPasteDelivered_JudgesValueChange(
+        string? before,
+        string? after,
+        string? clipboard,
         bool expected
     )
     {
-        Assert.Equal(expected, ClipboardService.RequiresManualPasteForWindowClass(windowClass));
+        Assert.Equal(expected, ClipboardService.IsPasteDelivered(before, after, clipboard));
     }
 
     [Theory]
     [InlineData(false, "SendInput Ctrl+V", true)]
     [InlineData(false, "Ctrl+V", true)]
     [InlineData(false, "Shift+Insert", false)]
+    [InlineData(false, "Ctrl+Shift+V", false)]
     [InlineData(true, "SendInput Ctrl+V", false)]
     public void ShouldStopAfterUnverifiedPasteAttempt_PreventsDuplicateCustomEditorPaste(
         bool supportsNativePaste,
@@ -145,26 +182,6 @@ public class ClipboardServiceTests
         Assert.Equal(
             expected,
             ClipboardService.ShouldStopAfterUnverifiedPasteAttempt(supportsNativePaste, method)
-        );
-    }
-
-    [Theory]
-    [InlineData(0u, 4u, true)]
-    [InlineData(1u, 4u, false)]
-    [InlineData(3u, 4u, false)]
-    [InlineData(4u, 4u, false)]
-    public void ShouldTrySendKeysAfterSendInputFailure_OnlyRetriesZeroEvents(
-        uint sentInputEvents,
-        uint expectedInputEvents,
-        bool expected
-    )
-    {
-        Assert.Equal(
-            expected,
-            ClipboardService.ShouldTrySendKeysAfterSendInputFailure(
-                sentInputEvents,
-                expectedInputEvents
-            )
         );
     }
 

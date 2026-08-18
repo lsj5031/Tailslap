@@ -6,6 +6,7 @@ internal enum UiaProbeMode
     Focused,
     Caret,
     Deep,
+    ControlValue,
 }
 
 internal sealed class UiaProbeRequest
@@ -58,7 +59,7 @@ internal static class UiaProbeProtocol
 
         if (args.Length < 2 || args.Length > 3)
         {
-            error = "Usage: --uia-probe <focused|caret|deep> [foreground-hwnd]";
+            error = "Usage: --uia-probe <focused|caret|deep|value> [foreground-hwnd]";
             return false;
         }
 
@@ -146,6 +147,7 @@ internal static class UiaProbeProtocol
             UiaProbeMode.Focused => "focused",
             UiaProbeMode.Caret => "caret",
             UiaProbeMode.Deep => "deep",
+            UiaProbeMode.ControlValue => "value",
             _ => throw new ArgumentOutOfRangeException(nameof(mode)),
         };
 
@@ -166,6 +168,12 @@ internal static class UiaProbeProtocol
         if (string.Equals(value, "deep", StringComparison.OrdinalIgnoreCase))
         {
             mode = UiaProbeMode.Deep;
+            return true;
+        }
+
+        if (string.Equals(value, "value", StringComparison.OrdinalIgnoreCase))
+        {
+            mode = UiaProbeMode.ControlValue;
             return true;
         }
 

@@ -342,31 +342,6 @@ public class TranscriptionResultSinkTests
         history.Verify(h => h.Append("raw", "raw improved", "test-model"), Times.Once);
     }
 
-    [Theory]
-    [InlineData(true, 0x11L, 123u, "NotFirefox", true)]
-    [InlineData(true, 0x11L, 0u, "NotFirefox", false)]
-    [InlineData(true, 0x11L, 123u, "MozillaWindowClass", false)]
-    [InlineData(true, 0x11L, 123u, "", false)]
-    [InlineData(false, 0x11L, 123u, "NotFirefox", false)]
-    public void ShouldAttemptBestEffortRestore_RequiresTrustedNonFirefoxTarget(
-        bool foregroundChanged,
-        long targetWindowValue,
-        uint targetProcessId,
-        string targetWindowClass,
-        bool expected
-    )
-    {
-        Assert.Equal(
-            expected,
-            TranscriptionResultSink.ShouldAttemptBestEffortRestore(
-                new IntPtr(targetWindowValue),
-                targetProcessId,
-                targetWindowClass,
-                foregroundChanged
-            )
-        );
-    }
-
     [Fact]
     public async Task ProcessAsync_TargetIdentityLost_LeavesTextOnClipboardWithoutPaste()
     {
@@ -477,21 +452,21 @@ public class TranscriptionResultSinkTests
     }
 
     [Fact]
-    public async Task ProcessAsync_FirefoxTargetChanged_LeavesTextOnClipboardWithoutRestore()
+    public async Task ProcessAsync_FirefoxTargetChanged_RestoresTargetAndPastes()
     {
         var history = new Mock<IHistoryService>();
         var clipboard = new Mock<IClipboardService>();
         var typer = new RecordingTextTyper(clipboard.Object);
-        bool restoreAttempted = false;
+        var foreground = new IntPtr(0x99);
         var sink = CreateSink(
             history,
             clipboard,
             typer,
-            getForegroundWindow: () => new IntPtr(0x99),
+            getForegroundWindow: () => foreground,
             isWindowIdentityMatch: (_, _, _) => true,
-            tryRestoreWindow: (_, _, _) =>
+            tryRestoreWindow: (window, _, _) =>
             {
-                restoreAttempted = true;
+                foreground = window;
                 return true;
             }
         );
@@ -508,11 +483,12 @@ public class TranscriptionResultSinkTests
             )
         );
 
-        Assert.False(restoreAttempted);
+        // Firefox is no longer clipboard-only: it restores and pastes like any
+        // other app, and the verified paste pipeline decides delivery.
         clipboard.Verify(c => c.SetTextAsync("raw"), Times.Once);
         clipboard.Verify(
-            c => c.PasteAsync(It.IsAny<IntPtr?>(), It.IsAny<uint>(), It.IsAny<string?>()),
-            Times.Never
+            c => c.PasteAsync(new IntPtr(0x11), It.IsAny<uint>(), It.IsAny<string?>()),
+            Times.Once
         );
     }
 

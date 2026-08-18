@@ -6,20 +6,6 @@ namespace TailSlap;
 
 internal sealed class TranscriptionResultSink : ITranscriptionResultSink
 {
-    internal static bool ShouldAttemptBestEffortRestore(
-        IntPtr targetWindow,
-        uint targetProcessId,
-        string? targetWindowClass,
-        bool foregroundChanged
-    )
-    {
-        return foregroundChanged
-            && targetWindow != IntPtr.Zero
-            && targetProcessId != 0
-            && !string.IsNullOrWhiteSpace(targetWindowClass)
-            && !string.Equals(targetWindowClass, "MozillaWindowClass", StringComparison.Ordinal);
-    }
-
     private readonly IHistoryService _history;
     private readonly ITextRefinerFactory _textRefinerFactory;
     private readonly ClipboardHelper _clipboardHelper;
@@ -156,8 +142,7 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
                     {
                         // Prefer the original target captured for this session. If the
                         // user changed windows, restore that target before pasting, but
-                        // only when its process identity is still valid. Firefox remains
-                        // clipboard-only. Without auto-paste no focus change is needed.
+                        // only when its process identity is still valid.
                         IntPtr target = request.TargetWindow ?? IntPtr.Zero;
                         bool autoPaste = request.Config.Transcriber.AutoPaste;
                         if (autoPaste && target != IntPtr.Zero && _getForegroundWindow() != target)
@@ -271,19 +256,6 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
             return false;
         }
 
-        if (
-            !ShouldAttemptBestEffortRestore(
-                target,
-                request.TargetProcessId,
-                request.TargetWindowClass,
-                foregroundChanged: true
-            )
-        )
-        {
-            await LeaveFirefoxOnClipboardAsync(finalText).ConfigureAwait(false);
-            return false;
-        }
-
         bool restored =
             _tryRestoreWindow(target, request.TargetProcessId, request.TargetWindowClass!)
             && await WaitForForegroundAsync(target).ConfigureAwait(false);
@@ -311,19 +283,6 @@ internal sealed class TranscriptionResultSink : ITranscriptionResultSink
         }
 
         return _getForegroundWindow() == target;
-    }
-
-    private async Task LeaveFirefoxOnClipboardAsync(string text)
-    {
-        bool clipboardSet = await _clipboardService.SetTextAsync(text).ConfigureAwait(false);
-        TryLogWarning(
-            "TranscriptionResultSink: Firefox target is clipboard-only; automatic paste was skipped"
-        );
-        NotificationService.ShowWarning(
-            "Firefox delivery is clipboard-only. Press Ctrl+V in the original Firefox field to paste."
-        );
-        if (!clipboardSet)
-            TryLogWarning("TranscriptionResultSink: Failed to preserve Firefox text on clipboard");
     }
 
     private async Task LeaveOnClipboardAsync(string text, string targetDescription)

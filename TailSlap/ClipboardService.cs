@@ -574,12 +574,11 @@ public sealed class ClipboardService : IClipboardService
 
             // 1) Try UI Automation first, but isolate it in a helper process so provider crashes
             // cannot terminate the main tray app.
-            bool isFirefox = windowClass.Equals("MozillaWindowClass", StringComparison.Ordinal);
             bool isSublime = IsWindowClass(foregroundWindow, "PX_WINDOW_CLASS");
             try
             {
                 Logger.Log(
-                    $"Step 3c: Window analysis: isFirefox={isFirefox}, isSublime={isSublime}, useClipboardFallback={useClipboardFallback}"
+                    $"Step 3c: Window analysis: isSublime={isSublime}, useClipboardFallback={useClipboardFallback}"
                 );
             }
             catch { }
@@ -810,28 +809,21 @@ public sealed class ClipboardService : IClipboardService
             }
             catch { }
 
-            // Optimized capture strategy: faster timeouts, better order
-            int timeoutPrimary = 600; // Reduced from 1200ms
-            int timeoutAlt = 300; // Reduced from 1200ms
-
-            // Firefox-specific strategy: prioritize SendKeys and use longer timeouts
-            if (isFirefox)
-            {
-                try
-                {
-                    Logger.Log("Firefox: Starting Firefox-specific copy strategy...");
-                }
-                catch { }
-                timeoutPrimary = 800; // Longer timeout for Firefox
-                timeoutAlt = 500;
-            }
+            // Unified copy strategy: the same method sequence and timeouts for
+            // every app. Whether a copy landed is decided by the clipboard
+            // sequence check inside TryCopyAndRead, not by the target's window
+            // class, so no app needs special-casing. The longer timeouts only
+            // bind on failure paths; successful copies return as soon as the
+            // clipboard changes.
+            const int timeoutPrimary = 800;
+            const int timeoutAlt = 500;
 
             try
             {
                 Logger.Log("Step 6c: Starting SendKeys copy attempts...");
             }
             catch { }
-            // Try SendKeys first (fastest for most apps, especially reliable for Firefox)
+            // Try SendKeys first (fastest for most apps)
             if (
                 TryCopyAndRead(
                     targetHwnd,
@@ -846,16 +838,14 @@ public sealed class ClipboardService : IClipboardService
                 try
                 {
                     Logger.Log(
-                        $"Step 7: Captured via SendKeys Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms){(isFirefox ? " [Firefox]" : "")}"
+                        $"Step 7: Captured via SendKeys Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"
                     );
                 }
                 catch
                 {
                     try
                     {
-                        Logger.Log(
-                            $"=== CAPTURE SUCCESS (SendKeys){(isFirefox ? " [Firefox]" : "")} ==="
-                        );
+                        Logger.Log("=== CAPTURE SUCCESS (SendKeys) ===");
                     }
                     catch { }
                 }
@@ -892,126 +882,53 @@ public sealed class ClipboardService : IClipboardService
                 }
             }
 
-            // Firefox-specific: try additional methods if SendKeys failed
-            if (isFirefox)
+            // Standard Ctrl+C, then Ctrl+Insert as the fallback: one shared
+            // sequence for every app.
+            if (
+                TryCopyAndRead(
+                    targetHwnd,
+                    seqBefore,
+                    CopyMethod.CtrlC,
+                    out copied,
+                    ref clipboardChanged,
+                    timeoutAlt
+                )
+            )
             {
                 try
                 {
-                    Logger.LogWarning(
-                        "Firefox: SendKeys failed, trying alternative copy methods..."
+                    Logger.Log(
+                        $"Captured via Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"
                     );
                 }
                 catch { }
-                // Try standard Ctrl+C with SendInput for Firefox
-                if (
-                    TryCopyAndRead(
-                        targetHwnd,
-                        seqBefore,
-                        CopyMethod.CtrlC,
-                        out copied,
-                        ref clipboardChanged,
-                        timeoutAlt
-                    )
-                )
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"Firefox: Captured via Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"
-                        );
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            Logger.Log("=== CAPTURE SUCCESS (Firefox Ctrl+C) ===");
-                        }
-                        catch { }
-                    }
-                    return copied;
-                }
-
-                // Try Ctrl+Insert as Firefox fallback
-                if (
-                    TryCopyAndRead(
-                        targetHwnd,
-                        seqBefore,
-                        CopyMethod.CtrlInsert,
-                        out copied,
-                        ref clipboardChanged,
-                        400
-                    )
-                )
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"Firefox: Captured via Ctrl+Insert: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"
-                        );
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            Logger.Log("=== CAPTURE SUCCESS (Firefox Ctrl+Insert) ===");
-                        }
-                        catch { }
-                    }
-                    return copied;
-                }
+                return copied;
             }
-            else
-            {
-                // Try standard Ctrl+C with shorter timeout for non-Firefox
-                if (
-                    TryCopyAndRead(
-                        targetHwnd,
-                        seqBefore,
-                        CopyMethod.CtrlC,
-                        out copied,
-                        ref clipboardChanged,
-                        timeoutAlt
-                    )
-                )
-                {
-                    try
-                    {
-                        Logger.Log(
-                            $"Captured via Ctrl+C: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"
-                        );
-                    }
-                    catch { }
-                    return copied;
-                }
 
-                // Last resort methods with minimal timeout
-                if (
-                    TryCopyAndRead(
-                        targetHwnd,
-                        seqBefore,
-                        CopyMethod.CtrlInsert,
-                        out copied,
-                        ref clipboardChanged,
-                        200
-                    )
+            if (
+                TryCopyAndRead(
+                    targetHwnd,
+                    seqBefore,
+                    CopyMethod.CtrlInsert,
+                    out copied,
+                    ref clipboardChanged,
+                    timeoutAlt
                 )
+            )
+            {
+                try
                 {
-                    try
-                    {
-                        Logger.Log(
-                            $"Captured via Ctrl+Insert: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"
-                        );
-                    }
-                    catch { }
-                    return copied;
+                    Logger.Log(
+                        $"Captured via Ctrl+Insert: len={copied.Length} (elapsed {sw.ElapsedMilliseconds} ms)"
+                    );
                 }
+                catch { }
+                return copied;
             }
 
             try
             {
-                Logger.LogWarning(
-                    $"All copy attempts failed to update clipboard{(isFirefox ? " [Firefox]" : "")}"
-                );
+                Logger.LogWarning("All copy attempts failed to update clipboard");
             }
             catch { }
 
@@ -1029,7 +946,7 @@ public sealed class ClipboardService : IClipboardService
                         if (!string.IsNullOrWhiteSpace(fallback))
                         {
                             Logger.LogWarning(
-                                $"No selection captured; using changed clipboard fallback (elapsed {sw.ElapsedMilliseconds} ms){(isFirefox ? " [Firefox]" : "")}, len={fallback.Length}"
+                                $"No selection captured; using changed clipboard fallback (elapsed {sw.ElapsedMilliseconds} ms), len={fallback.Length}"
                             );
                             return fallback;
                         }
@@ -1047,44 +964,25 @@ public sealed class ClipboardService : IClipboardService
                 }
             }
 
-            // Enhanced Firefox failure diagnostics when even fallback has nothing
-            if (isFirefox)
+            try
             {
-                try
-                {
-                    Logger.Error(
-                        $"Firefox capture failed: No copy methods succeeded and no clipboard fallback available (elapsed {sw.ElapsedMilliseconds} ms)"
-                    );
-                }
-                catch { }
-                try
-                {
-                    Logger.LogWarning(
-                        "Firefox troubleshooting: Make sure text is highlighted in Firefox before triggering hotkey"
-                    );
-                }
-                catch { }
-                try
-                {
-                    Logger.Error("=== CAPTURE FAILED (Firefox) ===");
-                }
-                catch { }
+                Logger.LogWarning(
+                    $"Step FINAL: No selection captured; not falling back to existing clipboard (elapsed {sw.ElapsedMilliseconds} ms)"
+                );
             }
-            else
+            catch { }
+            try
             {
-                try
-                {
-                    Logger.LogWarning(
-                        $"Step FINAL: No selection captured; not falling back to existing clipboard (elapsed {sw.ElapsedMilliseconds} ms)"
-                    );
-                }
-                catch { }
-                try
-                {
-                    Logger.Error("=== CAPTURE FAILED ===");
-                }
-                catch { }
+                Logger.LogWarning(
+                    "Troubleshooting: make sure text is highlighted in the target app before triggering the hotkey"
+                );
             }
+            catch { }
+            try
+            {
+                Logger.Error("=== CAPTURE FAILED ===");
+            }
+            catch { }
             return string.Empty;
         }
         finally
@@ -1330,18 +1228,6 @@ public sealed class ClipboardService : IClipboardService
                 return false;
             }
 
-            if (RequiresManualPasteForWindowClass(GetWindowClassName(foregroundWindow)))
-            {
-                try
-                {
-                    Logger.LogWarning(
-                        "Firefox detected: automatic paste is disabled; leaving transcription on the clipboard for manual Ctrl+V"
-                    );
-                }
-                catch { }
-                return false;
-            }
-
             if (!TailSlap.NativeInputSimulator.WaitForModifierRelease(1000))
             {
                 try
@@ -1398,14 +1284,22 @@ public sealed class ClipboardService : IClipboardService
     internal static IReadOnlyList<string> PasteMethodOrder { get; } =
         Array.AsReadOnly(new[] { "WM_PASTE", "SendInput Ctrl+V", "Ctrl+V", "Shift+Insert" });
 
-    internal static bool RequiresManualPasteForWindowClass(string windowClass) =>
-        string.Equals(windowClass, "MozillaWindowClass", StringComparison.Ordinal);
+    // Custom editors (browsers, Electron, etc.) get one extra last-resort
+    // method: paste as plain text. Its plain-text handler is more permissive
+    // than the HTML paste path and is a known workaround when the normal
+    // Ctrl+V chord is dropped. It is only reached when every earlier method
+    // was verified not to have landed, so the side effects of Ctrl+Shift+V in
+    // other editors are acceptable.
+    internal static IReadOnlyList<string> CustomEditorPasteMethodOrder { get; } =
+        Array.AsReadOnly(PasteMethodOrder.Concat(new[] { PlainTextPasteMethod }).ToArray());
 
     private const string SendInputPasteMethod = "SendInput Ctrl+V";
 
     private const string SendKeysPasteMethod = "Ctrl+V";
 
     private const string ShiftInsertPasteMethod = "Shift+Insert";
+
+    private const string PlainTextPasteMethod = "Ctrl+Shift+V";
 
     private const string WindowMessagePasteMethod = "WM_PASTE";
 
@@ -1424,8 +1318,34 @@ public sealed class ClipboardService : IClipboardService
     )
     {
         LogPasteDiagnostic("PasteWithMultipleMethods");
-        bool supportsNativePaste = SupportsWindowMessagePaste(ResolvePasteTarget());
-        IReadOnlyList<string> methodOrder = PasteMethodOrder;
+        var pasteTarget = ResolvePasteTarget();
+        bool supportsNativePaste = SupportsWindowMessagePaste(pasteTarget);
+        IReadOnlyList<string> methodOrder =
+            pasteTarget != IntPtr.Zero && !supportsNativePaste
+                ? CustomEditorPasteMethodOrder
+                : PasteMethodOrder;
+
+        // Browser/custom editors have no generic Win32 paste verification.
+        // Read the focused control's value through the UIA probe before
+        // injecting anything so each attempt can be verified instead of
+        // trusted: retries then happen only when the text provably did not
+        // land, which keeps a fallback chord from duplicating a successful one.
+        string? valueBefore = null;
+        string? clipboardText = null;
+        if (!supportsNativePaste)
+        {
+            clipboardText = TryReadClipboardText();
+            valueBefore = await TryReadFocusedValueAsync();
+            try
+            {
+                Logger.Log(
+                    valueBefore != null
+                        ? $"Custom-editor paste verification armed (focused control value is readable, len={valueBefore.Length})"
+                        : "Custom-editor paste verification unavailable; at most one unverified attempt will be made"
+                );
+            }
+            catch { }
+        }
 
         foreach (string method in methodOrder)
         {
@@ -1451,15 +1371,84 @@ public sealed class ClipboardService : IClipboardService
                     WindowMessagePasteMethod => await TryPasteWindowMessageAsync(),
                     SendKeysPasteMethod => await TryPasteCtrlVAsync(),
                     ShiftInsertPasteMethod => await TryPasteShiftInsertAsync(),
+                    PlainTextPasteMethod => await TryPasteCtrlShiftVAsync(),
                     SendInputPasteMethod => await TryPasteSendInputAsync(expectedForegroundWindow),
                     _ => false,
                 };
 
-                if (success)
+                if (supportsNativePaste)
                 {
-                    // SendInput may safely fall back to SendKeys when it injects
-                    // zero events. That helper logs the exact method, so do not
-                    // attribute the result to SendInput here.
+                    if (success)
+                    {
+                        Logger.Log($"Paste successful with {method}");
+                        return true;
+                    }
+                }
+                else if (valueBefore != null && method != WindowMessagePasteMethod)
+                {
+                    // WM_PASTE returns false before sending anything when the
+                    // target is unsupported, so it cannot have delivered; skip
+                    // its probe round trip. Every other method may have
+                    // injected, so poll the control (browser commits are
+                    // asynchronous) and decide.
+                    string? valueAfter = await PollForPasteDeliveryAsync(
+                        valueBefore,
+                        clipboardText
+                    );
+                    if (valueAfter == null)
+                    {
+                        // Verification was lost mid-flight. The injection may
+                        // well have landed, so never report failure (and never
+                        // retry, which could duplicate): trust the method's own
+                        // result and stop the loop.
+                        try
+                        {
+                            Logger.LogWarning(
+                                $"{method}: verification read failed after injection; treating the attempt as delivered to avoid a duplicate paste"
+                            );
+                        }
+                        catch { }
+                        if (success)
+                        {
+                            return true;
+                        }
+
+                        try
+                        {
+                            Logger.LogWarning(
+                                $"{method}: verification lost and the method reported no success; trying the next method"
+                            );
+                        }
+                        catch { }
+                    }
+                    else if (IsPasteDelivered(valueBefore, valueAfter, clipboardText))
+                    {
+                        try
+                        {
+                            Logger.Log(
+                                $"{method}: paste verified delivered (focused value length {valueBefore.Length} -> {valueAfter.Length})"
+                            );
+                        }
+                        catch { }
+                        return true;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            Logger.Log(
+                                $"{method}: paste verified NOT delivered (focused value length {valueBefore.Length} -> {valueAfter.Length} after polling); trying the next method"
+                            );
+                        }
+                        catch { }
+                    }
+                }
+                else if (success)
+                {
+                    // Unverified path: trust the injection as past builds did.
+                    // SendInput may safely fall back to SendKeys when it
+                    // injects zero events. That helper logs the exact method,
+                    // so do not attribute the result to SendInput here.
                     if (method != SendInputPasteMethod)
                     {
                         Logger.Log($"Paste successful with {method}");
@@ -1467,7 +1456,7 @@ public sealed class ClipboardService : IClipboardService
                     return true;
                 }
 
-                if (method == SendInputPasteMethod && !supportsNativePaste)
+                if (method == SendInputPasteMethod && !supportsNativePaste && valueBefore == null)
                 {
                     // TryPasteSendInputAsync owns the zero-event fallback so
                     // it can distinguish zero delivery from partial delivery.
@@ -1483,11 +1472,15 @@ public sealed class ClipboardService : IClipboardService
                 catch { }
             }
 
-            // For browser/custom editors, keyboard paste has no generic Win32
-            // verification. Never send another blind paste chord after the
-            // first attempt: it may have succeeded even if we could not prove
-            // it, and a fallback chord could duplicate the text.
-            if (ShouldStopAfterUnverifiedPasteAttempt(supportsNativePaste, method))
+            // For browser/custom editors, never send another blind paste chord
+            // after an unverified first attempt: it may have succeeded even if
+            // we could not prove it, and a fallback chord could duplicate the
+            // text. Verified attempts are exempt because they provably did not
+            // land before the next method is tried.
+            if (
+                ShouldStopAfterUnverifiedPasteAttempt(supportsNativePaste, method)
+                && valueBefore == null
+            )
             {
                 try
                 {
@@ -1624,7 +1617,7 @@ public sealed class ClipboardService : IClipboardService
             SendKeys.SendWait("^v");
             await Task.Delay(75).ConfigureAwait(true);
             Logger.LogWarning(
-                "Firefox/custom-editor SendKeys Ctrl+V completed without generic verification"
+                "Custom-editor SendKeys Ctrl+V completed without generic verification"
             );
             return true;
         }
@@ -1662,15 +1655,44 @@ public sealed class ClipboardService : IClipboardService
         }
     }
 
-    internal static bool ShouldTrySendKeysAfterSendInputFailure(
-        uint sentInputEvents,
-        uint expectedInputEvents
-    )
+    private async System.Threading.Tasks.Task<bool> TryPasteCtrlShiftVAsync()
     {
-        // Zero means the chord was not injected at all, so one SendKeys fallback
-        // cannot duplicate it. Partial delivery is unsafe to replay because Ctrl
-        // or V may already have reached the target.
-        return sentInputEvents == 0 && expectedInputEvents > 0;
+        try
+        {
+            var targetWindow = ResolvePasteTarget();
+            if (SupportsWindowMessagePaste(targetWindow))
+            {
+                return await VerifyPasteDeliveryAsync(
+                    targetWindow,
+                    () =>
+                    {
+                        NormalizeInputState();
+                        SendKeys.SendWait("^+v");
+                    }
+                );
+            }
+
+            // Paste-as-plain-text is the last-resort method for custom
+            // editors; use the same split-batch virtual-key chord as Ctrl+V so
+            // the injection mechanism matches what the UIA verification is
+            // testing.
+            return await TryPasteSendInputChordAsync(
+                new ushort[]
+                {
+                    0x11 /*CTRL*/
+                    ,
+                    0x10, /*SHIFT*/
+                },
+                0x56 /*'V'*/
+                ,
+                "^+v",
+                "Ctrl+Shift+V"
+            );
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async System.Threading.Tasks.Task<bool> TryPasteSendInputAsync(
@@ -1730,37 +1752,22 @@ public sealed class ClipboardService : IClipboardService
             Logger.Log(
                 $"SendInput paste target: foreground=0x{expectedForegroundWindow.ToInt64():X}, focused=0x{targetWindow.ToInt64():X}"
             );
-            uint sentInputEvents = SendChordScancode(
-                modifiers,
+
+            // Browsers and other custom editors have historically dropped a
+            // Ctrl+V chord whose keydown and keyup arrive in one atomic
+            // SendInput batch. Use a virtual-key chord split across two batches
+            // with a delay for every custom editor, and let the caller's UIA
+            // verification decide whether it landed.
+            return await TryPasteSendInputChordAsync(
+                new ushort[]
+                {
+                    0x11, /*CTRL*/
+                },
                 0x56 /*'V'*/
+                ,
+                "^v",
+                "Ctrl+V"
             );
-            if (sentInputEvents == 0)
-            {
-                Logger.LogWarning(
-                    "SendInput injected zero events; trying one SendKeys Ctrl+V fallback"
-                );
-                NormalizeInputState();
-                SendKeys.SendWait("^v");
-                await Task.Delay(75).ConfigureAwait(true);
-                Logger.LogWarning(
-                    "SendKeys Ctrl+V fallback completed for an unverified custom-editor target"
-                );
-                Logger.Log("Paste delivered with SendKeys Ctrl+V fallback");
-                return true;
-            }
-
-            if (sentInputEvents != expectedInputEvents)
-            {
-                throw new InvalidOperationException(
-                    $"SendInput rejected the Ctrl+V chord (sent={sentInputEvents}/{expectedInputEvents})"
-                );
-            }
-
-            await Task.Delay(75).ConfigureAwait(true);
-            Logger.LogWarning(
-                "SendInput Ctrl+V was injected into an unverified browser/custom editor target"
-            );
-            return true;
         }
         catch (Exception ex)
         {
@@ -1950,22 +1957,6 @@ public sealed class ClipboardService : IClipboardService
     {
         result = string.Empty;
 
-        // Enhanced Firefox diagnostics - declare in outer scope for exception handling
-        bool isFirefoxWindow = IsWindowClass(hwnd, "MozillaWindowClass");
-        if (isFirefoxWindow)
-        {
-            try
-            {
-                Logger.Log($"Firefox: Copy method {method} being attempted on Firefox window");
-            }
-            catch { }
-            try
-            {
-                Logger.Log($"Firefox: Window details: {DescribeWindow(hwnd)}");
-            }
-            catch { }
-        }
-
         try
         {
             try
@@ -2153,70 +2144,31 @@ public sealed class ClipboardService : IClipboardService
             if (!string.IsNullOrWhiteSpace(text))
             {
                 result = text!;
-                if (isFirefoxWindow)
+                try
                 {
-                    try
-                    {
-                        Logger.Log(
-                            $"Firefox: Copy method {method} SUCCEEDED: len={text.Length}, seq={seqBefore}->{GetClipboardSequenceNumber()}"
-                        );
-                    }
-                    catch { }
+                    Logger.Log($"TryCopyAndRead success: method={method}, len={text.Length}");
                 }
-                else
-                {
-                    try
-                    {
-                        Logger.Log($"TryCopyAndRead success: method={method}, len={text.Length}");
-                    }
-                    catch { }
-                }
+                catch { }
                 return true;
             }
             else
             {
-                if (isFirefoxWindow)
+                try
                 {
-                    try
-                    {
-                        Logger.LogWarning(
-                            $"Firefox: Copy method {method} FAILED: no clipboard change, seq={seqBefore}->{GetClipboardSequenceNumber()}"
-                        );
-                    }
-                    catch { }
+                    Logger.Log($"TryCopyAndRead no change: method={method}");
                 }
-                else
-                {
-                    try
-                    {
-                        Logger.Log($"TryCopyAndRead no change: method={method}");
-                    }
-                    catch { }
-                }
+                catch { }
             }
         }
         catch (Exception ex)
         {
-            if (isFirefoxWindow)
+            try
             {
-                try
-                {
-                    Logger.LogWarning(
-                        $"Firefox: Copy method {method} EXCEPTION: {ex.GetType().Name}: {ex.Message}"
-                    );
-                }
-                catch { }
+                Logger.LogWarning(
+                    $"TryCopyAndRead({method}) error: {ex.GetType().Name}: {ex.Message}"
+                );
             }
-            else
-            {
-                try
-                {
-                    Logger.LogWarning(
-                        $"TryCopyAndRead({method}) error: {ex.GetType().Name}: {ex.Message}"
-                    );
-                }
-                catch { }
-            }
+            catch { }
         }
         return false;
     }
@@ -2446,6 +2398,303 @@ public sealed class ClipboardService : IClipboardService
 
         Thread.Sleep(30); // Reduced from 80ms for faster response
         return sent;
+    }
+
+    private enum PasteChordInjection
+    {
+        AllEventsSent,
+        ZeroEventsSent,
+        PartialDelivery,
+    }
+
+    private static PasteChordInjection SendPasteChordVk(ushort[] modifiers, ushort key)
+    {
+        // Browsers and other custom editors are known to drop a chord whose
+        // keydown and keyup arrive in one atomic SendInput batch: the target's
+        // input pipeline can miss the keydown before the keyup is already
+        // queued. Split the chord into two batches (downs, then ups after a
+        // delay) so the keydown is observed first. Virtual key codes are used
+        // because browsers match shortcuts on the VK of the key messages; the
+        // older scancode-only batch chord is what was observed to fail.
+        int size = Marshal.SizeOf<INPUT>();
+
+        INPUT KeyDown(ushort vk) =>
+            new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                U = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT { wVk = vk, wScan = 0 },
+                },
+            };
+
+        INPUT KeyUp(ushort vk) =>
+            new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                U = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = vk,
+                        wScan = 0,
+                        dwFlags = KEYEVENTF_KEYUP,
+                    },
+                },
+            };
+
+        var downBatch = new INPUT[modifiers.Length + 1];
+        for (int i = 0; i < modifiers.Length; i++)
+        {
+            downBatch[i] = KeyDown(modifiers[i]);
+        }
+        downBatch[modifiers.Length] = KeyDown(key);
+
+        uint sentDown = SendInput((uint)downBatch.Length, downBatch, size);
+        if (sentDown == 0)
+        {
+            return PasteChordInjection.ZeroEventsSent;
+        }
+
+        if (sentDown < downBatch.Length)
+        {
+            // The first `sentDown` key-downs were accepted; release them in
+            // reverse so no chord key can stick.
+            var acceptedDowns = new ushort[(int)sentDown];
+            for (int i = 0; i < acceptedDowns.Length; i++)
+            {
+                acceptedDowns[i] = downBatch[i].U.ki.wVk;
+            }
+            ReleaseKeys(acceptedDowns, size);
+            return PasteChordInjection.PartialDelivery;
+        }
+
+        Thread.Sleep(60);
+
+        var upBatch = new INPUT[modifiers.Length + 1];
+        upBatch[0] = KeyUp(key);
+        for (int i = 0; i < modifiers.Length; i++)
+        {
+            upBatch[i + 1] = KeyUp(modifiers[i]);
+        }
+
+        uint sentUp = SendInput((uint)upBatch.Length, upBatch, size);
+        if (sentUp == upBatch.Length)
+        {
+            return PasteChordInjection.AllEventsSent;
+        }
+
+        // Key-ups that were not accepted leave their keys logically held;
+        // release the remainder in reverse.
+        var heldVks = new ushort[upBatch.Length - (int)sentUp];
+        for (int i = 0; i < heldVks.Length; i++)
+        {
+            heldVks[i] = upBatch[(int)sentUp + i].U.ki.wVk;
+        }
+        ReleaseKeys(heldVks, size);
+        return PasteChordInjection.PartialDelivery;
+    }
+
+    private static void ReleaseKeys(ushort[] heldVks, int size)
+    {
+        if (heldVks.Length == 0)
+        {
+            return;
+        }
+
+        // Key-ups in reverse order of the held keys.
+        var inputs = new INPUT[heldVks.Length];
+        for (int i = 0; i < heldVks.Length; i++)
+        {
+            inputs[i] = new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                U = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = heldVks[heldVks.Length - 1 - i],
+                        wScan = 0,
+                        dwFlags = KEYEVENTF_KEYUP,
+                    },
+                },
+            };
+        }
+
+        try
+        {
+            SendInput((uint)inputs.Length, inputs, size);
+        }
+        catch { }
+    }
+
+    private async System.Threading.Tasks.Task<bool> TryPasteSendInputChordAsync(
+        ushort[] modifiers,
+        ushort key,
+        string sendKeysSpec,
+        string label
+    )
+    {
+        var chordResult = SendPasteChordVk(modifiers, key);
+        if (chordResult == PasteChordInjection.ZeroEventsSent)
+        {
+            Logger.LogWarning(
+                $"SendInput injected zero events for the custom editor ({label}); trying one SendKeys {label} fallback"
+            );
+            NormalizeInputState();
+            SendKeys.SendWait(sendKeysSpec);
+            await Task.Delay(75).ConfigureAwait(true);
+            Logger.LogWarning($"SendKeys {label} fallback completed for the custom editor");
+            Logger.Log($"Paste delivered with SendKeys {label} fallback");
+            return true;
+        }
+
+        if (chordResult == PasteChordInjection.PartialDelivery)
+        {
+            Logger.LogWarning(
+                $"SendInput {label} partially delivered for the custom editor; leaving text on the clipboard"
+            );
+            return false;
+        }
+
+        await Task.Delay(75).ConfigureAwait(true);
+        Logger.LogWarning(
+            $"SendInput {label} was injected into the custom editor; delivery pending verification"
+        );
+        return true;
+    }
+
+    private static async System.Threading.Tasks.Task<string?> PollForPasteDeliveryAsync(
+        string valueBefore,
+        string? clipboardText
+    )
+    {
+        // Browsers commit a paste asynchronously in the renderer process, so a
+        // single read shortly after injection can miss a commit that lands a
+        // few hundred milliseconds later and falsely report "not delivered",
+        // which then moves on and duplicates the paste. Poll a few times,
+        // stopping at the first read that shows the paste. The poll is also a
+        // safety net for the previous method's late commit: any change stops
+        // the loop, so a slow paste from method N is noticed while verifying
+        // method N+1 and never duplicated.
+        string? latest = await TryReadFocusedValueAsync();
+        if (latest == null)
+        {
+            return null;
+        }
+
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            if (IsPasteDelivered(valueBefore, latest, clipboardText))
+            {
+                return latest;
+            }
+
+            await Task.Delay(150).ConfigureAwait(true);
+            latest = await TryReadFocusedValueAsync();
+            if (latest == null)
+            {
+                return null;
+            }
+        }
+
+        return latest;
+    }
+
+    private static async System.Threading.Tasks.Task<string?> TryReadFocusedValueAsync()
+    {
+        var foregroundWindow = NativeMethods.GetForegroundWindow();
+        if (foregroundWindow == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        return await System
+            .Threading.Tasks.Task.Run(() =>
+            {
+                var (found, value) = UiaProbeClient.TryGetControlValue(foregroundWindow, 1200);
+                return found ? value : null;
+            })
+            .ConfigureAwait(true);
+    }
+
+    private static string? TryReadClipboardText()
+    {
+        try
+        {
+            if (Clipboard.ContainsText())
+            {
+                string? text = Clipboard.GetText(TextDataFormat.UnicodeText);
+                return string.IsNullOrEmpty(text) ? null : text;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private const char ValueSeparator = '\u0000';
+
+    internal static bool IsPasteDelivered(
+        string? joinedBefore,
+        string? joinedAfter,
+        string? clipboardText
+    )
+    {
+        if (joinedBefore == null || joinedAfter == null)
+        {
+            return false;
+        }
+
+        if (string.Equals(joinedAfter, joinedBefore, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // The probe returns the values of every Edit control in the target
+        // window, joined by a separator, so a change in ANY of them counts as
+        // delivery (the paste target may not be the first Edit in tree order).
+        string[] before = joinedBefore.Split(ValueSeparator);
+        string[] after = joinedAfter.Split(ValueSeparator);
+        int count = Math.Min(before.Length, after.Length);
+        for (int i = 0; i < count; i++)
+        {
+            if (IsSingleEditDelivered(before[i], after[i], clipboardText))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSingleEditDelivered(
+        string valueBefore,
+        string valueAfter,
+        string? clipboardText
+    )
+    {
+        if (string.Equals(valueAfter, valueBefore, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // The pasted text is the strongest signal: it also covers inserts that
+        // replace an existing selection, where the value may not grow.
+        if (
+            !string.IsNullOrEmpty(clipboardText)
+            && valueAfter.Contains(clipboardText, StringComparison.Ordinal)
+        )
+        {
+            return true;
+        }
+
+        // Browsers may normalize pasted text (trim whitespace, strip trailing
+        // newlines), so a strict containment match can false-negative even when
+        // the paste landed. Any length change right after a paste injection is
+        // treated as delivery: a false positive only stops retrying (the text
+        // stays on the clipboard), while a false negative would retry and
+        // duplicate the paste.
+        return valueAfter.Length != valueBefore.Length;
     }
 
     private static void NormalizeInputState()
