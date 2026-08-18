@@ -66,6 +66,25 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         int cbwh
     );
 
+    // uDeviceID is UINT_PTR in the native signature; IntPtr matches on x64.
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode)]
+    private static extern int waveInGetDevCaps(IntPtr uDeviceID, ref WAVEINCAPS pwics, int cbwics);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct WAVEINCAPS
+    {
+        public ushort wMid;
+        public ushort wPid;
+        public uint vDriverVersion;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string szPname;
+
+        public uint dwFormats;
+        public ushort wChannels;
+        public ushort wReserved1;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct WAVEFORMATEX
     {
@@ -191,9 +210,35 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         int numDevices = waveInGetNumDevs();
         for (int i = 0; i < numDevices; i++)
         {
-            devices.Add($"Device {i}");
+            devices.Add(GetMicrophoneName(i));
         }
         return devices;
+    }
+
+    /// <summary>
+    /// Reads the human-readable product name for a wave input device via
+    /// waveInGetDevCaps, falling back to a generic label when the query fails.
+    /// The list order (device index == list index) is preserved so the
+    /// PreferredMicrophoneIndex semantics remain stable.
+    /// </summary>
+    private static string GetMicrophoneName(int deviceIndex)
+    {
+        try
+        {
+            var caps = new WAVEINCAPS();
+            int result = waveInGetDevCaps(
+                new IntPtr(deviceIndex),
+                ref caps,
+                Marshal.SizeOf(typeof(WAVEINCAPS))
+            );
+            if (result == 0 && !string.IsNullOrWhiteSpace(caps.szPname))
+            {
+                return caps.szPname;
+            }
+        }
+        catch { }
+
+        return $"Device {deviceIndex}";
     }
 
     public async Task<RecordingStats> RecordAsync(
@@ -221,90 +266,8 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
         try
         {
-            // Audio format: 16-bit mono at 16kHz
-            var wfx = new WAVEFORMATEX
-            {
-                wFormatTag = WAVE_FORMAT_PCM,
-                nChannels = 1,
-                nSamplesPerSec = 16000,
-                nAvgBytesPerSec = 32000,
-                nBlockAlign = 2,
-                wBitsPerSample = 16,
-                cbSize = 0,
-            };
-
-            // Open recording device (use preferred device if specified)
-            int deviceId = _preferredDeviceIndex >= 0 ? _preferredDeviceIndex : WAVE_MAPPER;
-            Logger.Log($"AudioRecorder: Opening device {deviceId}");
-            int result = waveInOpen(
-                out _hWaveIn,
-                deviceId,
-                ref wfx,
-                IntPtr.Zero,
-                IntPtr.Zero,
-                CALLBACK_NULL
-            );
-            if (result != 0)
-            {
-                Logger.Error($"AudioRecorder: waveInOpen FAILED with error {result}");
-                _hWaveIn?.SetHandleAsInvalid();
-                throw new InvalidOperationException(
-                    $"Failed to open waveIn device (deviceId={deviceId}, numDevices={numDevices}): error {result}"
-                );
-            }
-            Logger.Log(
-                $"AudioRecorder: waveInOpen succeeded, handle=0x{_hWaveIn.DangerousGetHandle():X}"
-            );
-
-            // Allocate and prepare buffers
-            for (int i = 0; i < BUFFER_COUNT; i++)
-            {
-                _buffers[i] = new byte[BUFFER_SIZE];
-                _bufferHandles[i] = GCHandle.Alloc(_buffers[i], GCHandleType.Pinned);
-
-                _waveHeaders[i] = new WAVEHDR
-                {
-                    lpData = _bufferHandles[i].AddrOfPinnedObject(),
-                    dwBufferLength = (uint)BUFFER_SIZE,
-                    dwBytesRecorded = 0,
-                    dwUser = IntPtr.Zero,
-                    dwFlags = 0,
-                    dwLoops = 0,
-                };
-
-                result = waveInPrepareHeader(
-                    _hWaveIn,
-                    ref _waveHeaders[i],
-                    Marshal.SizeOf(typeof(WAVEHDR))
-                );
-                if (result != 0)
-                    throw new InvalidOperationException(
-                        $"Failed to prepare wave header {i}: error {result}"
-                    );
-
-                result = waveInAddBuffer(
-                    _hWaveIn,
-                    ref _waveHeaders[i],
-                    Marshal.SizeOf(typeof(WAVEHDR))
-                );
-                if (result != 0)
-                    throw new InvalidOperationException(
-                        $"Failed to add buffer {i}: error {result}"
-                    );
-            }
-
-            _isRecording = true;
+            OpenCaptureDevice("AudioRecorder.RecordAsync");
             _recordedData.SetLength(0);
-
-            // Start recording
-            Logger.Log("AudioRecorder: Starting recording");
-            result = waveInStart(_hWaveIn);
-            if (result != 0)
-            {
-                Logger.Error($"AudioRecorder: waveInStart FAILED with error {result}");
-                throw new InvalidOperationException($"Failed to start recording: error {result}");
-            }
-            Logger.Log("AudioRecorder: Recording started successfully");
 
             // Track silence for VAD (in milliseconds)
             int consecutiveSilenceMs = 0;
@@ -474,19 +437,6 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         return (flags & WHDR_INQUEUE) == 0;
     }
 
-    private bool WaitForAllBuffersReturnedSynchronously(int timeoutMs)
-    {
-        const int pollIntervalMs = 20;
-        int waitedMs = 0;
-        while (!IsAllBuffersReturned() && waitedMs < timeoutMs)
-        {
-            Thread.Sleep(pollIntervalMs);
-            waitedMs += pollIntervalMs;
-        }
-
-        return IsAllBuffersReturned();
-    }
-
     private async Task<bool> WaitForAllBuffersReturnedAsync(int timeoutMs, bool logOnTimeout = true)
     {
         const int pollIntervalMs = 20;
@@ -557,7 +507,12 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
                         if (enableVAD && !isFinalDrain && data.Length >= 2)
                         {
-                            bool isSpeech = DetectSpeech(data, out float rms);
+                            bool isSpeech = DetectSpeech(
+                                data,
+                                useHysteresis: false,
+                                hasDetectedSpeech,
+                                out float rms
+                            );
                             int bufferDurationMs = data.Length / BYTES_PER_MS;
 
                             if (!isSpeech)
@@ -647,52 +602,43 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         return sampleCount > 0 ? (float)Math.Sqrt(sum / sampleCount) : 0;
     }
 
-    private bool DetectSpeech(byte[] audioData, out float rms)
+    /// <summary>
+    /// Detects speech in a captured frame using WebRTC VAD when available and an
+    /// RMS threshold fallback otherwise. The file-recording path (useHysteresis =
+    /// false) always trusts WebRTC and uses the silence threshold for the RMS
+    /// fallback; the streaming path (useHysteresis = true) is lenient on sustain
+    /// so soft speech endings are not cut off once speech is active.
+    /// </summary>
+    private bool DetectSpeech(
+        byte[] audioData,
+        bool useHysteresis,
+        bool hasDetectedSpeech,
+        out float rms
+    )
     {
         rms = CalculateRMS(audioData);
 
-        // Use WebRTC VAD if available and enabled
-        if (_useWebRtcVad && _webRtcVad != null)
-        {
-            return _webRtcVad.HasSpeech(audioData);
-        }
-
-        // Fallback to RMS-based detection
-        return rms > _vadSilenceThreshold;
-    }
-
-    private bool DetectSpeechWithHysteresis(byte[] audioData, bool hasDetectedSpeech, out float rms)
-    {
-        rms = CalculateRMS(audioData);
-
-        // Use WebRTC VAD if available and enabled
         if (_useWebRtcVad && _webRtcVad != null)
         {
             bool webRtcSpeech = _webRtcVad.HasSpeech(audioData);
 
-            // Hybrid approach: use WebRTC for activation, but also consider RMS for sustain
-            // This helps catch edge cases where WebRTC might miss soft speech endings
-            if (!hasDetectedSpeech)
+            // Sustain: either WebRTC or moderately loud RMS keeps the session alive.
+            if (useHysteresis && hasDetectedSpeech)
             {
-                // For activation, trust WebRTC VAD
-                return webRtcSpeech;
-            }
-            else
-            {
-                // For sustain, use either WebRTC OR high RMS (more lenient to avoid cutting off)
                 return webRtcSpeech || rms > _vadSustainThreshold;
             }
+
+            // Activation (and the entire simple path) trusts WebRTC alone.
+            return webRtcSpeech;
         }
 
-        // Fallback to RMS-based hysteresis detection
-        if (!hasDetectedSpeech)
+        if (useHysteresis)
         {
-            return rms > _vadActivationThreshold;
+            // Activation requires a clear signal; sustain is more lenient.
+            return hasDetectedSpeech ? rms > _vadSustainThreshold : rms > _vadActivationThreshold;
         }
-        else
-        {
-            return rms > _vadSustainThreshold;
-        }
+
+        return rms > _vadSilenceThreshold;
     }
 
     private async Task StopAsync()
@@ -936,7 +882,14 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         return _preferredDeviceIndex >= 0 ? _preferredDeviceIndex : WAVE_MAPPER;
     }
 
-    private void OpenStreamingCaptureDevice(string caller)
+    /// <summary>
+    /// Opens the configured wave input device, allocates/prepares/queues the
+    /// capture buffers, and starts recording. Shared by the file-recording and
+    /// streaming paths so buffer setup stays in one place. Existing pinned
+    /// buffers are released first, which is a no-op on a fresh instance but
+    /// required when reopening after streaming recovery.
+    /// </summary>
+    private void OpenCaptureDevice(string caller)
     {
         int numDevices = waveInGetNumDevs();
         if (numDevices == 0)
@@ -1022,71 +975,33 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         Logger.Log($"{caller}: Recording started successfully");
     }
 
-    private bool ReleaseStreamingCaptureDevice(string caller)
-    {
-        if (_hWaveIn != null && !_hWaveIn.IsInvalid)
-        {
-            try
-            {
-                int stopResult = waveInStop(_hWaveIn);
-                if (stopResult != 0)
-                {
-                    Logger.LogWarning($"{caller}: waveInStop returned error {stopResult}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning($"{caller}: Exception stopping waveIn device: {ex.Message}");
-            }
-
-            try
-            {
-                if (!_waveInResetIssued)
-                {
-                    ResetWaveIn(caller);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning($"{caller}: Exception resetting waveIn device: {ex.Message}");
-            }
-
-            bool buffersReturned = WaitForAllBuffersReturnedSynchronously(1000);
-            bool headersReleased = buffersReturned && TryUnprepareReturnedHeaders(_hWaveIn, caller);
-            if (!headersReleased)
-            {
-                Logger.LogWarning(
-                    $"{caller}: Deferring device close because capture buffers remain owned by WinMM"
-                );
-                return false;
-            }
-
-            Logger.Log($"{caller}: Closing handle");
-            _hWaveIn.Dispose();
-            _hWaveIn = null;
-        }
-
-        FreeBufferHandles(caller);
-        for (int i = 0; i < BUFFER_COUNT; i++)
-        {
-            _buffers[i] = Array.Empty<byte>();
-            _waveHeaders[i] = default;
-        }
-        return true;
-    }
-
-    private void ReopenStreamingCaptureDevice()
+    /// <summary>
+    /// Releases the current capture device through the shared teardown path
+    /// (StopAsync) and reopens it. Used when streaming recovery must fall back
+    /// to a full device reopen.
+    /// </summary>
+    private async Task ReopenStreamingCaptureDeviceAsync()
     {
         Logger.LogWarning("AudioRecorder.StreamingRecovery: Reopening capture device");
-        if (!ReleaseStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen"))
+
+        // StopAsync resets the device, drains the buffers, unprepares the headers,
+        // closes the handle, and frees the pinned buffers.
+        await StopAsync().ConfigureAwait(false);
+        if (_hWaveIn != null && !_hWaveIn.IsInvalid)
         {
+            // StopAsync left the handle alive because WinMM still owns queued
+            // buffers (and reset _stopInvoked to 0). Keep that state, skip reopen.
             Logger.LogWarning(
                 "AudioRecorder.StreamingRecovery: Existing capture device still owns buffers; reopening skipped"
             );
             return;
         }
 
-        OpenStreamingCaptureDevice("AudioRecorder.StreamingRecovery.Reopen");
+        // StopAsync succeeded with _stopInvoked left at 1; re-arm it so the
+        // session's final StopAsync (in StartStreamingAsync's finally) can clean up.
+        Interlocked.Exchange(ref _stopInvoked, 0);
+
+        OpenCaptureDevice("AudioRecorder.StreamingRecovery.Reopen");
         _lastBufferTime = DateTime.Now;
         Logger.Log("AudioRecorder: Streaming recovery reopened capture device successfully");
     }
@@ -1125,7 +1040,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
         try
         {
-            OpenStreamingCaptureDevice("AudioRecorder.StartStreamingAsync");
+            OpenCaptureDevice("AudioRecorder.StartStreamingAsync");
 
             while (_isRecording && !ct.IsCancellationRequested)
             {
@@ -1294,8 +1209,9 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
                         if (enableVAD && data.Length >= 2)
                         {
-                            bool isSpeech = DetectSpeechWithHysteresis(
+                            bool isSpeech = DetectSpeech(
                                 data,
+                                useHysteresis: true,
                                 result.HasDetectedSpeech,
                                 out float rms
                             );
@@ -1467,7 +1383,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                 Logger.LogWarning(
                     "AudioRecorder.StreamingRecovery: Timed out waiting for buffers; reopening capture device"
                 );
-                ReopenStreamingCaptureDevice();
+                await ReopenStreamingCaptureDeviceAsync().ConfigureAwait(false);
                 return;
             }
 
@@ -1544,7 +1460,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
             try
             {
-                ReopenStreamingCaptureDevice();
+                await ReopenStreamingCaptureDeviceAsync().ConfigureAwait(false);
             }
             catch (Exception reopenEx)
             {
