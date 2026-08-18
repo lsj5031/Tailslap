@@ -3,6 +3,14 @@ using System.Linq;
 using TailSlap;
 using Xunit;
 
+// LoggerTests read the shared static Logger's on-disk log file. Other test
+// classes run in parallel and write to the same Logger, which made these tests
+// flaky (entries not yet durable when read). This collection runs in isolation
+// so the log is quiescent while these tests read it.
+[CollectionDefinition("LoggerTests", DisableParallelization = true)]
+public class LoggerTestsCollection { }
+
+[Collection("LoggerTests")]
 public class LoggerTests
 {
     [Fact]
@@ -23,7 +31,11 @@ public class LoggerTests
     [Fact]
     public void ReadRecentIssues_NewestFirst()
     {
+        // Windows DateTime.UtcNow has ~15ms resolution; back-to-back writes can
+        // share a timestamp and the timestamp sort is unstable for ties. Pause
+        // so the two entries are guaranteed distinct timestamps.
         Logger.LogWarning("older warning entry");
+        System.Threading.Thread.Sleep(25);
         Logger.Error("newer error entry");
         Logger.Flush();
 

@@ -59,6 +59,11 @@ public static class Logger
     private static volatile int _droppedCount = 0;
     private static int _queueSize = 0;
 
+    // Set while the background writer is between dequeuing and flushing a batch
+    // to disk. Flush() waits on this so it cannot return before the buffered
+    // lines are actually durable.
+    private static volatile bool _writerActive = false;
+
     public static bool VerboseEnabled { get; set; } = false;
 
     static Logger()
@@ -148,42 +153,50 @@ public static class Logger
 
                     if (Interlocked.CompareExchange(ref _queueSize, 0, 0) > 0)
                     {
-                        RotateIfNeeded();
-
-                        using var stream = new FileStream(
-                            LogPath,
-                            FileMode.Append,
-                            FileAccess.Write,
-                            FileShare.ReadWrite
-                        );
-                        using var writer = new StreamWriter(stream);
-
-                        int dropped = Interlocked.Exchange(ref _droppedCount, 0);
-                        if (dropped > 0)
+                        _writerActive = true;
+                        try
                         {
-                            var warnEntry = new LogEntry
-                            {
-                                Ts = DateTime.UtcNow.ToString("o"),
-                                Level = "warn",
-                                Source = "Logger",
-                                Msg = $"{dropped} log messages dropped due to queue overflow",
-                            };
-                            writer.WriteLine(
-                                JsonSerializer.Serialize(
-                                    warnEntry,
-                                    TailSlapJsonContext.Default.LogEntry
-                                )
+                            RotateIfNeeded();
+
+                            using var stream = new FileStream(
+                                LogPath,
+                                FileMode.Append,
+                                FileAccess.Write,
+                                FileShare.ReadWrite
                             );
-                        }
+                            using var writer = new StreamWriter(stream);
 
-                        int itemsWritten = 0;
-                        while (LogQueue.TryDequeue(out var line) && itemsWritten < BatchSize)
-                        {
-                            Interlocked.Decrement(ref _queueSize);
-                            writer.WriteLine(line);
-                            itemsWritten++;
+                            int dropped = Interlocked.Exchange(ref _droppedCount, 0);
+                            if (dropped > 0)
+                            {
+                                var warnEntry = new LogEntry
+                                {
+                                    Ts = DateTime.UtcNow.ToString("o"),
+                                    Level = "warn",
+                                    Source = "Logger",
+                                    Msg = $"{dropped} log messages dropped due to queue overflow",
+                                };
+                                writer.WriteLine(
+                                    JsonSerializer.Serialize(
+                                        warnEntry,
+                                        TailSlapJsonContext.Default.LogEntry
+                                    )
+                                );
+                            }
+
+                            int itemsWritten = 0;
+                            while (LogQueue.TryDequeue(out var line) && itemsWritten < BatchSize)
+                            {
+                                Interlocked.Decrement(ref _queueSize);
+                                writer.WriteLine(line);
+                                itemsWritten++;
+                            }
+                            writer.Flush();
                         }
-                        writer.Flush();
+                        finally
+                        {
+                            _writerActive = false;
+                        }
                     }
                 }
                 catch { }
@@ -334,10 +347,16 @@ public static class Logger
     {
         try
         {
+            // Wait for the queue to drain AND the writer to finish flushing its
+            // batch to disk. The queue alone is not enough: items are dequeued
+            // before the buffered write is flushed, so a reader could otherwise
+            // miss entries that Flush() had already acknowledged.
             int attempts = 0;
-            while (Interlocked.CompareExchange(ref _queueSize, 0, 0) > 0 && attempts < 10)
+            while (Interlocked.CompareExchange(ref _queueSize, 0, 0) > 0 || _writerActive)
             {
-                Thread.Sleep(50);
+                if (attempts >= 200)
+                    break;
+                Thread.Sleep(5);
                 attempts++;
             }
         }
