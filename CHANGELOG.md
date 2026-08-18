@@ -5,6 +5,25 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-08-18
+
+### Added
+- **Verified custom-editor paste delivery**: Paste into browsers and other custom editors is now verified instead of trusted. A new UI Automation probe mode (`value`) reads the focused edit control's value, each injected paste is polled for a commit, and a different paste method is only tried when the text provably did not land — preventing the duplicate pastes that blind fallbacks could cause. When no verification is possible, at most one unverified attempt is made.
+- **Paste-as-plain-text fallback**: Custom editors gain a final `Ctrl+Shift+V` last-resort attempt that runs only when every earlier method was verified not to have delivered.
+- **Reliable virtual-key paste chords**: Paste into custom editors uses a split-batch chord (keydowns, then keyups after a delay) with virtual key codes, which browsers accept where a single atomic SendInput batch was dropped; partially delivered keys are released instead of left held.
+- **Microphone device names**: The device list now shows real product names read via `waveInGetDevCaps` instead of generic `Device N` labels.
+- **Build info in tray menu**: The tray context menu shows the running build's version and publish time, and the startup log records them too.
+
+### Changed
+- **Firefox is no longer clipboard-only**: Firefox windows now restore and paste like any other app under the verified paste pipeline, instead of leaving final text on the clipboard with a manual `Ctrl+V` hint. Copy capture uses one shared method sequence for every app, decided by clipboard sequence changes rather than window class.
+- **Audio capture lifecycle**: File recording and streaming share a single device open/teardown path, and streaming recovery reopens through the same stop-then-open sequence, removing the separate release/reopen helpers.
+- **Voice activity detection**: `DetectSpeech` is unified behind one implementation with an explicit hysteresis flag — streaming still leniently sustains active speech, while file recording trusts WebRTC VAD and the silence threshold directly.
+- **Logger flush semantics**: `Flush()` now waits for the background writer to finish writing its batch to disk, not just for the in-memory queue to drain, so log readers see durable entries.
+
+### Fixed
+- **InformationalVersion drift**: The assembly informational version now matches the packaged version instead of lagging a release behind.
+- **Flaky logger tests**: Logger tests run isolated from other parallel test collections and account for Windows' coarse timestamp resolution.
+
 ## [3.2.1] - 2026-08-05
 
 ### Fixed
