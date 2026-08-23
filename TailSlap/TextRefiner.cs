@@ -106,6 +106,8 @@ public sealed class TextRefiner : ITextRefiner
         using var http = _httpClientFactory.CreateClient(HttpClientNames.Default);
 
         int attempts = 2;
+        Exception? lastException = null;
+        string? lastUserFriendlyError = null;
         while (attempts-- > 0)
         {
             try
@@ -168,7 +170,7 @@ public sealed class TextRefiner : ITextRefiner
                         .Content.ReadAsStringAsync(timeoutCts.Token)
                         .ConfigureAwait(false);
                     var userFriendlyError = GetUserFriendlyError(resp.StatusCode, errorBody);
-                    NotificationService.ShowError($"LLM request failed: {userFriendlyError}");
+                    lastUserFriendlyError = userFriendlyError;
                     Logger.LogWarning(
                         $"LLM error response: status={(int)resp.StatusCode}, len={errorBody.Length}, sha256={Hashing.Sha256Hex(errorBody)}"
                     );
@@ -230,8 +232,16 @@ public sealed class TextRefiner : ITextRefiner
 
                 return result;
             }
-            catch (Exception ex) when (attempts > 0)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                if (attempts <= 0)
+                    break;
+
                 try
                 {
                     Logger.LogWarning($"LLM exception: type={ex.GetType().Name}; retrying in 1s");
@@ -244,10 +254,16 @@ public sealed class TextRefiner : ITextRefiner
 
         var finalElapsedMs = (long)(DateTime.UtcNow - startTime).TotalMilliseconds;
         var finalError =
-            $"LLM service unavailable after multiple attempts at {_cfg.BaseUrl}. Please check your connection and settings.";
+            lastException != null && ApiFailureMessages.IsConnectionFailure(lastException)
+                ? ApiFailureMessages.LlmConnectionFailed(retryFromTray: false)
+                : lastUserFriendlyError
+                    ?? (
+                        lastException != null
+                            ? $"LLM request failed: {ShortenError(lastException.Message)}"
+                            : "LLM request failed after multiple attempts. Check your connection and settings."
+                    );
         DiagnosticsEventSource.Log.RefinementFailed(finalError, null);
-        NotificationService.ShowError(finalError);
-        throw new Exception(finalError);
+        throw new InvalidOperationException(finalError, lastException);
     }
 
     private async Task<string> RetryForShortOutputAsync(
@@ -354,6 +370,15 @@ public sealed class TextRefiner : ITextRefiner
 
                 </source_text>
                 """;
+    }
+
+    private static string ShortenError(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return "the provider returned an unexpected error.";
+
+        const int maxLength = 200;
+        return message.Length <= maxLength ? message : message[..maxLength] + "…";
     }
 
     private string GetUserFriendlyError(System.Net.HttpStatusCode statusCode, string errorBody)

@@ -428,6 +428,27 @@ public sealed class RemoteTranscriberTests
     }
 
     [Fact]
+    public async Task TranscribeAudioAsync_ConnectionFailure_UsesSafeRetryMessage()
+    {
+        int calls = 0;
+        using var fixture = new RemoteTranscriberFixture(_ =>
+        {
+            calls++;
+            throw new HttpRequestException("connection refused");
+        });
+
+        var error = await Assert.ThrowsAsync<TranscriberException>(() =>
+            fixture.Transcriber.TranscribeAudioAsync(fixture.AudioPath)
+        );
+
+        Assert.Equal(TranscriberErrorType.ConnectionFailed, error.ErrorType);
+        Assert.Contains("Could not connect to your transcription API", error.Message);
+        Assert.Contains("then try again", error.Message);
+        Assert.DoesNotContain("connection refused", error.Message);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
     public async Task TranscribeStreamingAsync_HttpError_DoesNotRetry()
     {
         int calls = 0;

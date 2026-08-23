@@ -197,10 +197,8 @@ public sealed class RefinementController : IRefinementController
         }
         catch (Exception ex)
         {
-            var msg = ex.Message;
-            if (msg.Length > 200)
-                msg = msg.Substring(0, 200) + "…";
-            NotificationService.ShowError("Refinement failed: " + msg);
+            var msg = ApiFailureMessages.RefinementFailed(ex);
+            NotificationService.ShowError(msg);
             Logger.Error(
                 $"Refinement error: type={ex.GetType().Name}, msgLen={ex.Message?.Length ?? 0}"
             );

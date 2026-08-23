@@ -161,6 +161,22 @@ public class TextRefinerTests
     }
 
     [Fact]
+    public async Task RefineAsync_ConnectionFailure_ExplainsHowToRetry()
+    {
+        var handler = new ThrowingHandler(new HttpRequestException("connection refused"));
+        var refiner = CreateRefiner(handler);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            refiner.RefineAsync("rough text")
+        );
+
+        Assert.Contains("Could not connect to your API", error.Message);
+        Assert.Contains("then try again", error.Message);
+        Assert.DoesNotContain("connection refused", error.Message);
+        Assert.Equal(2, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task RefineAsync_BadRequest_FailsWithoutExposingResponseBody()
     {
         const string privateBody = "private provider diagnostics";
@@ -256,6 +272,27 @@ public class TextRefinerTests
                     : await request.Content.ReadAsStringAsync(cancellationToken)
             );
             return _responses.Dequeue();
+        }
+    }
+
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        private readonly Exception _exception;
+
+        public int RequestCount { get; private set; }
+
+        public ThrowingHandler(Exception exception)
+        {
+            _exception = exception;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken
+        )
+        {
+            RequestCount++;
+            throw _exception;
         }
     }
 }

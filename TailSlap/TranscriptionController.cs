@@ -268,7 +268,7 @@ public sealed class TranscriptionController : ITranscriptionController
         }
         catch (Exception ex)
         {
-            NotificationService.ShowError("Transcription failed: " + ex.Message);
+            NotificationService.ShowError(ApiFailureMessages.TranscriptionFailed(ex));
             Logger.Error($"TranscribeSelectionAsync error: {ex.GetType().Name}: {ex.Message}");
 
             try
@@ -383,7 +383,7 @@ public sealed class TranscriptionController : ITranscriptionController
             Logger.Error(
                 $"TranscriberException: ErrorType={ex.ErrorType}, StatusCode={ex.StatusCode}, Message={ex.Message}"
             );
-            NotificationService.ShowError($"Transcription failed: {ex.Message}");
+            NotificationService.ShowError(ApiFailureMessages.TranscriptionFailed(ex));
             try
             {
                 _resultSink.RecordFailure(null, durationMs, ex.Message);
@@ -394,7 +394,7 @@ public sealed class TranscriptionController : ITranscriptionController
         catch (Exception ex)
         {
             Logger.Error($"Unexpected exception: {ex.GetType().Name}: {ex.Message}");
-            NotificationService.ShowError($"Transcription failed: {ex.Message}");
+            NotificationService.ShowError(ApiFailureMessages.TranscriptionFailed(ex));
             try
             {
                 _resultSink.RecordFailure(null, durationMs, ex.Message);
@@ -456,7 +456,7 @@ public sealed class TranscriptionController : ITranscriptionController
                 Logger.Error(
                     $"Streaming transcription failed before any text: {ex.ErrorType}, {ex.Message}"
                 );
-                NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                NotificationService.ShowError(ApiFailureMessages.TranscriptionFailed(ex));
                 try
                 {
                     _resultSink.RecordFailure(null, durationMs, ex.Message);
@@ -476,7 +476,7 @@ public sealed class TranscriptionController : ITranscriptionController
                 Logger.Error(
                     $"Unexpected streaming transcription exception before any text: {ex.GetType().Name}: {ex.Message}"
                 );
-                NotificationService.ShowError($"Transcription failed: {ex.Message}");
+                NotificationService.ShowError(ApiFailureMessages.TranscriptionFailed(ex));
                 try
                 {
                     _resultSink.RecordFailure(null, durationMs, ex.Message);

@@ -168,10 +168,11 @@ public class ClipboardServiceTests
     }
 
     [Theory]
+    [InlineData(false, "WM_PASTE", false)]
     [InlineData(false, "SendInput Ctrl+V", true)]
     [InlineData(false, "Ctrl+V", true)]
-    [InlineData(false, "Shift+Insert", false)]
-    [InlineData(false, "Ctrl+Shift+V", false)]
+    [InlineData(false, "Shift+Insert", true)]
+    [InlineData(false, "Ctrl+Shift+V", true)]
     [InlineData(true, "SendInput Ctrl+V", false)]
     public void ShouldStopAfterUnverifiedPasteAttempt_PreventsDuplicateCustomEditorPaste(
         bool supportsNativePaste,
@@ -182,6 +183,31 @@ public class ClipboardServiceTests
         Assert.Equal(
             expected,
             ClipboardService.ShouldStopAfterUnverifiedPasteAttempt(supportsNativePaste, method)
+        );
+    }
+
+    [Theory]
+    [InlineData(false, "WM_PASTE", true, false)]
+    [InlineData(false, "SendInput Ctrl+V", true, true)]
+    [InlineData(false, "Ctrl+V", true, true)]
+    [InlineData(false, "Shift+Insert", true, true)]
+    [InlineData(false, "Ctrl+Shift+V", true, true)]
+    [InlineData(false, "SendInput Ctrl+V", false, false)]
+    [InlineData(true, "SendInput Ctrl+V", true, false)]
+    public void ShouldTrustUnverifiedPasteAttempt_WhenInjectionSucceeded(
+        bool supportsNativePaste,
+        string method,
+        bool injectionSucceeded,
+        bool expected
+    )
+    {
+        Assert.Equal(
+            expected,
+            ClipboardService.ShouldTrustUnverifiedPasteAttempt(
+                supportsNativePaste,
+                method,
+                injectionSucceeded
+            )
         );
     }
 

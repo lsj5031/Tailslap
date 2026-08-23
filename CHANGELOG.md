@@ -5,6 +5,15 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.1] - 2026-08-23
+
+### Added
+- **API retry recovery**: Connection failures now use safe, actionable messages and the tray menu offers `Retry Last Operation` for refinement and transcription workflows.
+
+### Fixed
+- **Duplicate custom-editor pastes**: Browser and Electron-style editors no longer receive blind fallback paste chords after an injection that may already have succeeded.
+- **False auto-paste failures**: Successful custom-editor input is treated as delivered when UI Automation cannot observe the renderer update, preventing an erroneous failure notification after text was pasted.
+
 ## [3.3.0] - 2026-08-18
 
 ### Added

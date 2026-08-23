@@ -1308,8 +1308,24 @@ public sealed class ClipboardService : IClipboardService
         string method
     )
     {
-        return !supportsNativePaste
-            && (method == SendInputPasteMethod || method == SendKeysPasteMethod);
+        // WM_PASTE is only a capability probe for custom editors and sends no
+        // input when unsupported. Every other custom-editor method injects a
+        // real paste chord, so never follow it with another blind chord: UIA
+        // verification can be stale or can observe the wrong control.
+        return !supportsNativePaste && method != WindowMessagePasteMethod;
+    }
+
+    internal static bool ShouldTrustUnverifiedPasteAttempt(
+        bool supportsNativePaste,
+        string method,
+        bool injectionSucceeded
+    )
+    {
+        // A custom editor can accept the paste while UIA still reports the
+        // old value. If the input method injected successfully, trust that
+        // result and suppress the misleading failure notification. Native
+        // targets and the WM_PASTE probe still require their normal result.
+        return (!supportsNativePaste && method != WindowMessagePasteMethod && injectionSucceeded);
     }
 
     private async System.Threading.Tasks.Task<bool> PasteWithMultipleMethodsAsync(
@@ -1416,7 +1432,7 @@ public sealed class ClipboardService : IClipboardService
                         try
                         {
                             Logger.LogWarning(
-                                $"{method}: verification lost and the method reported no success; trying the next method"
+                                $"{method}: verification lost and the method reported no success; stopping to avoid a duplicate paste"
                             );
                         }
                         catch { }
@@ -1437,10 +1453,22 @@ public sealed class ClipboardService : IClipboardService
                         try
                         {
                             Logger.Log(
-                                $"{method}: paste verified NOT delivered (focused value length {valueBefore.Length} -> {valueAfter.Length} after polling); trying the next method"
+                                $"{method}: paste verification reported NOT delivered (focused value length {valueBefore.Length} -> {valueAfter.Length} after polling); stopping to avoid a duplicate paste"
                             );
                         }
                         catch { }
+
+                        if (ShouldTrustUnverifiedPasteAttempt(supportsNativePaste, method, success))
+                        {
+                            try
+                            {
+                                Logger.Log(
+                                    $"{method}: input injection succeeded but UIA did not observe the paste; treating delivery as successful"
+                                );
+                            }
+                            catch { }
+                            return true;
+                        }
                     }
                 }
                 else if (success)
@@ -1472,15 +1500,12 @@ public sealed class ClipboardService : IClipboardService
                 catch { }
             }
 
-            // For browser/custom editors, never send another blind paste chord
-            // after an unverified first attempt: it may have succeeded even if
-            // we could not prove it, and a fallback chord could duplicate the
-            // text. Verified attempts are exempt because they provably did not
-            // land before the next method is tried.
-            if (
-                ShouldStopAfterUnverifiedPasteAttempt(supportsNativePaste, method)
-                && valueBefore == null
-            )
+            // For browser/custom editors, never send another paste chord after
+            // the first real injection. UIA may report a false negative even
+            // after the target accepted the paste, and a fallback chord would
+            // duplicate the text. WM_PASTE is exempt because unsupported
+            // custom editors return before sending any input.
+            if (ShouldStopAfterUnverifiedPasteAttempt(supportsNativePaste, method))
             {
                 try
                 {

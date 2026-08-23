@@ -345,7 +345,9 @@ public sealed class TypelessController : ITypelessController
             }
             catch { }
 
-            NotificationService.ShowError($"Transcription failed: {ex.Message}");
+            NotificationService.ShowError(
+                ApiFailureMessages.TranscriptionFailed(ex, retryFromTray: false)
+            );
 
             try
             {

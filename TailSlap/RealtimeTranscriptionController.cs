@@ -251,7 +251,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         catch (Exception ex)
         {
             Logger.Error($"StartAsync: Error - {ex.Message}");
-            NotificationService.ShowError($"Real-time transcription failed: {ex.Message}");
+            NotificationService.ShowError(ApiFailureMessages.TranscriptionFailed(ex));
             _sessionFailureReason = TruncateError(ex.Message);
             await CleanupAsync();
         }
@@ -943,8 +943,14 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
         try
         {
             var truncatedError = TruncateError(error);
-            Logger.Error($"HandleRealtimeError: {truncatedError}");
-            NotificationService.ShowError($"Real-time transcription error: {truncatedError}");
+            var isConnectionError =
+                error.StartsWith("Connection failed:", StringComparison.OrdinalIgnoreCase)
+                || error.StartsWith("Connection error:", StringComparison.OrdinalIgnoreCase);
+            var displayError = isConnectionError
+                ? ApiFailureMessages.TranscriptionConnectionFailed()
+                : $"Real-time transcription error: {truncatedError}";
+            Logger.Error($"HandleRealtimeError: {displayError}");
+            NotificationService.ShowError(displayError);
 
             lock (_streamingStateLock)
             {
@@ -956,7 +962,7 @@ public sealed class RealtimeTranscriptionController : IRealtimeTranscriptionCont
                 _streamingState = StreamingState.Stopping;
             }
 
-            _sessionFailureReason = truncatedError;
+            _sessionFailureReason = isConnectionError ? displayError : truncatedError;
             await StopAsyncInternal(suppressInterimUpdates: true);
         }
         catch (Exception ex)

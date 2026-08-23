@@ -64,6 +64,8 @@ public class MainForm : Form
 
     private ToolStripMenuItem? _llmToggleItem;
     private ToolStripMenuItem? _transcriberToggleItem;
+    private ToolStripMenuItem? _retryLastItem;
+    private Func<Task>? _retryLastAction;
     private readonly bool _allowVisible = false; // intentionally always false for tray-only app
     private RecordingOverlayForm? _recordingOverlay;
 
@@ -212,6 +214,9 @@ public class MainForm : Form
         _menu = new ContextMenuStrip();
         _menu.Items.Add("Refine Now", null, (_, __) => TriggerRefine());
         _menu.Items.Add("Transcribe Now", null, (_, __) => TriggerTranscribe());
+        _retryLastItem = new ToolStripMenuItem("Retry Last Operation") { Enabled = false };
+        _retryLastItem.Click += (_, __) => RetryLastOperation();
+        _menu.Items.Add(_retryLastItem);
         _menu.Items.Add(new ToolStripSeparator());
 
         // Quick toggles
@@ -1065,6 +1070,7 @@ public class MainForm : Form
         // external foreground window before the refinement animation can run.
         IntPtr targetWindow = _foregroundWindowTracker.GetTargetWindow();
         Logger.Log($"Refinement target captured: 0x{targetWindow.ToInt64():X}");
+        SetLastRetryAction(RetryRefinementAsync);
         SafeFireAndForget(_refinementController.TriggerRefineAsync(targetWindow));
     }
 
@@ -1072,6 +1078,7 @@ public class MainForm : Form
     {
         IntPtr targetWindow = _foregroundWindowTracker.GetTargetWindow();
         Logger.Log($"Transcription target captured: 0x{targetWindow.ToInt64():X}");
+        SetLastRetryAction(RetryTranscriptionAsync);
         SafeFireAndForget(_transcriptionController.TriggerTranscribeAsync(targetWindow));
     }
 
@@ -1079,7 +1086,76 @@ public class MainForm : Form
     {
         IntPtr targetWindow = _foregroundWindowTracker.GetTargetWindow();
         Logger.Log($"Streaming target captured: 0x{targetWindow.ToInt64():X}");
+        SetLastRetryAction(RetryStreamingTranscriptionAsync);
         SafeFireAndForget(_realtimeTranscriptionController.TriggerStreamingAsync(targetWindow));
+    }
+
+    private void SetLastRetryAction(Func<Task> action)
+    {
+        _retryLastAction = action;
+        if (_retryLastItem != null)
+            _retryLastItem.Enabled = true;
+    }
+
+    private void RetryLastOperation()
+    {
+        var retry = _retryLastAction;
+        if (retry == null)
+        {
+            NotificationService.ShowWarning("There is no operation to retry yet.");
+            return;
+        }
+
+        if (_retryLastItem != null)
+            _retryLastItem.Enabled = false;
+
+        SafeFireAndForget(RunRetryAsync(retry));
+    }
+
+    private async Task RunRetryAsync(Func<Task> retry)
+    {
+        try
+        {
+            await retry().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error($"Retry operation failed: type={ex.GetType().Name}");
+            NotificationService.ShowError(
+                "Retry failed. Check your API settings and choose Retry Last Operation again."
+            );
+        }
+        finally
+        {
+            RunOnUiThread(() =>
+            {
+                if (_retryLastItem != null)
+                    _retryLastItem.Enabled = _retryLastAction != null;
+            });
+        }
+    }
+
+    private async Task RetryRefinementAsync()
+    {
+        var targetWindow = _foregroundWindowTracker.GetTargetWindow();
+        Logger.Log($"Retrying refinement for target: 0x{targetWindow.ToInt64():X}");
+        await _refinementController.TriggerRefineAsync(targetWindow).ConfigureAwait(false);
+    }
+
+    private async Task RetryTranscriptionAsync()
+    {
+        var targetWindow = _foregroundWindowTracker.GetTargetWindow();
+        Logger.Log($"Retrying transcription for target: 0x{targetWindow.ToInt64():X}");
+        await _transcriptionController.TriggerTranscribeAsync(targetWindow).ConfigureAwait(false);
+    }
+
+    private async Task RetryStreamingTranscriptionAsync()
+    {
+        var targetWindow = _foregroundWindowTracker.GetTargetWindow();
+        Logger.Log($"Retrying streaming transcription for target: 0x{targetWindow.ToInt64():X}");
+        await _realtimeTranscriptionController
+            .TriggerStreamingAsync(targetWindow)
+            .ConfigureAwait(false);
     }
 
     private void ReloadConfigFromDisk()

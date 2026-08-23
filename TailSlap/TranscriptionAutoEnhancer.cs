@@ -63,7 +63,18 @@ internal static class TranscriptionAutoEnhancer
             Logger.LogWarning(
                 $"Auto-enhancement failed: {ex.Message}. Using original transcription."
             );
-            NotificationService.ShowWarning("Enhancement failed. Using original transcription.");
+            if (ApiFailureMessages.IsConnectionFailure(ex))
+            {
+                NotificationService.ShowWarning(
+                    $"{ApiFailureMessages.LlmConnectionFailed()} The original transcription was kept."
+                );
+            }
+            else
+            {
+                NotificationService.ShowWarning(
+                    "Enhancement failed. Using the original transcription."
+                );
+            }
         }
 
         return transcriptionText;
