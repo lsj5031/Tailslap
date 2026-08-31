@@ -5,6 +5,18 @@ All notable changes to TailSlap will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.2] - 2026-08-31
+
+### Fixed
+- **Logger batch loss**: Fixed `Logger.Flush` batch loop that dequeued before checking the batch cap, silently dropping one entry per full 100-item batch and leaving the queue-size counter permanently inflated. Added regression coverage for bursts larger than the batch size.
+- **LLM retry on 4xx**: Non-retryable client errors (`InvalidOperationException`, including `400 Bad Request`) are no longer retried — the second attempt would fail identically and only waste a second of user time. Only transient connection failures are retried.
+- **Audio device lifecycle**: Opening a new WinMM capture now retries teardown of a previous device that still owns buffers and refuses to start if teardown still fails, avoiding orphaned handles and unpinned arrays. Final drain no longer reads buffers still marked `WHDR_INQUEUE`; RMS uses a double accumulator to avoid float overflow; `OnAudioChunk` is guarded so a throwing subscriber does not remove a buffer from the rotation; `Dispose`/`DisposeAsync` paths are corrected.
+- **Hung-window paste**: All cross-process window messages now use `SendMessageTimeout` with `SMTO_ABORTIFHUNG` so a hung foreground app cannot freeze the UI thread. Paste verification treats any length change as delivered, handles selection-overlay replacements by checking selection collapse/move, tracks the expected window to avoid cross-window false positives, and retries the next method (including the `Ctrl+Shift+V` plain-text last resort) when injection failed and verification confirmed no delivery. Clipboard capture adds a grace window for owners that publish non-text first and avoids double-waiting.
+- **VAD allocations**: `WebRtcVadService` reuses 10ms/20ms frame buffers under lock instead of allocating a fresh array per 20ms slice.
+- **UIA probe hang**: `UiaProbeClient` bounds redirected-stream drain to 2 seconds after `WaitForExit` so a grandchild inheriting the pipes cannot hang the call forever.
+- **Retry guard**: Tray menu `Retry Last Operation` is now disabled while typeless, toggle, or realtime operations are in progress and warns instead of stopping an in-flight recording. Retry failure logs now include the exception message.
+- **Capture stats**: Clipboard capture metrics are now synchronized for per-call STA threads.
+
 ## [3.3.1] - 2026-08-23
 
 ### Added
