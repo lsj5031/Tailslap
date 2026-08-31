@@ -15,6 +15,11 @@ public sealed class WebRtcVadService : IDisposable
     private bool _disposed;
     private readonly object _lock = new();
 
+    // Reused under _lock: a fresh frame per 20ms slice would allocate ~50
+    // arrays per second of recording for no benefit.
+    private readonly byte[] _frame20Ms = new byte[640]; // 20ms at 16kHz, 16-bit mono
+    private readonly byte[] _frame10Ms = new byte[320]; // 10ms at 16kHz, 16-bit mono
+
     public WebRtcVadService(VadSensitivity sensitivity = VadSensitivity.High)
     {
         _vad = new WebRtcVad
@@ -63,17 +68,16 @@ public sealed class WebRtcVadService : IDisposable
                 // WebRTC VAD requires specific frame sizes for 16kHz: 10ms (160 samples/320 bytes),
                 // 20ms (320 samples/640 bytes), or 30ms (480 samples/960 bytes)
                 // We'll process in 20ms chunks (640 bytes) and return true if ANY chunk has speech
-                const int frameSize = 640; // 20ms at 16kHz, 16-bit mono
+                int frameSize = _frame20Ms.Length;
 
                 int frames = audioData.Length / frameSize;
                 if (frames == 0)
                 {
                     // Buffer too small - try to process what we have if it's at least 10ms
-                    if (audioData.Length >= 320)
+                    if (audioData.Length >= _frame10Ms.Length)
                     {
-                        byte[] frame = new byte[320];
-                        Array.Copy(audioData, frame, 320);
-                        return _vad.HasSpeech(frame, SampleRate.Is16kHz, FrameLength.Is10ms);
+                        Array.Copy(audioData, _frame10Ms, _frame10Ms.Length);
+                        return _vad.HasSpeech(_frame10Ms, SampleRate.Is16kHz, FrameLength.Is10ms);
                     }
                     return false;
                 }
@@ -81,10 +85,9 @@ public sealed class WebRtcVadService : IDisposable
                 // Check each 20ms frame - return true if any frame contains speech
                 for (int i = 0; i < frames; i++)
                 {
-                    byte[] frame = new byte[frameSize];
-                    Array.Copy(audioData, i * frameSize, frame, 0, frameSize);
+                    Array.Copy(audioData, i * frameSize, _frame20Ms, 0, frameSize);
 
-                    if (_vad.HasSpeech(frame, SampleRate.Is16kHz, FrameLength.Is20ms))
+                    if (_vad.HasSpeech(_frame20Ms, SampleRate.Is16kHz, FrameLength.Is20ms))
                     {
                         return true;
                     }
@@ -112,7 +115,7 @@ public sealed class WebRtcVadService : IDisposable
 
             try
             {
-                const int frameSize = 640; // 20ms at 16kHz, 16-bit mono
+                int frameSize = _frame20Ms.Length;
                 int frames = audioData.Length / frameSize;
                 if (frames == 0)
                     return (false, 0, 0);
@@ -120,10 +123,9 @@ public sealed class WebRtcVadService : IDisposable
                 int speechFrames = 0;
                 for (int i = 0; i < frames; i++)
                 {
-                    byte[] frame = new byte[frameSize];
-                    Array.Copy(audioData, i * frameSize, frame, 0, frameSize);
+                    Array.Copy(audioData, i * frameSize, _frame20Ms, 0, frameSize);
 
-                    if (_vad.HasSpeech(frame, SampleRate.Is16kHz, FrameLength.Is20ms))
+                    if (_vad.HasSpeech(_frame20Ms, SampleRate.Is16kHz, FrameLength.Is20ms))
                     {
                         speechFrames++;
                     }

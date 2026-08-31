@@ -251,6 +251,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(AudioRecorder));
+        await EnsurePreviousCaptureReleasedAsync("AudioRecorder.RecordAsync").ConfigureAwait(false);
         _stopInvoked = 0;
         _waveInResetIssued = false;
         Logger.Log(
@@ -473,10 +474,13 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
             try
             {
                 // Check if buffer is done (WHDR_DONE = 0x00000001) or if we are force draining and it has bytes
-                bool bufferDone = (_waveHeaders[i].dwFlags & 0x00000001) != 0;
+                bool bufferDone = (_waveHeaders[i].dwFlags & WHDR_DONE) != 0;
                 bool hasData = _waveHeaders[i].dwBytesRecorded > 0;
+                // A final drain must never read a buffer WinMM still owns:
+                // the driver can be concurrently writing into it.
+                bool stillQueued = (_waveHeaders[i].dwFlags & WHDR_INQUEUE) != 0;
 
-                if (bufferDone || (hasData && isFinalDrain))
+                if (bufferDone || (hasData && isFinalDrain && !stillQueued))
                 {
                     if (hasData)
                     {
@@ -589,13 +593,15 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
 
     private float CalculateRMS(byte[] audioBuffer)
     {
-        float sum = 0;
+        // Double accumulator: squared 16-bit samples overflow float's exact
+        // integer range within one 200ms buffer, silently dropping samples.
+        double sum = 0;
         for (int i = 0; i < audioBuffer.Length; i += 2)
         {
             if (i + 1 < audioBuffer.Length)
             {
                 short sample = BitConverter.ToInt16(audioBuffer, i);
-                sum += sample * sample;
+                sum += (double)sample * sample;
             }
         }
         int sampleCount = audioBuffer.Length / 2;
@@ -701,6 +707,32 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
     private void Stop()
     {
         StopAsync().GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// A previous stop can leave the waveIn handle alive because WinMM still
+    /// owns queued buffers. Opening a new device in that state would orphan
+    /// the old handle (whose finalizer calls waveInClose against live buffers)
+    /// and unpin arrays the stuck device can still write into, so give the
+    /// teardown one more attempt and refuse to start if it still fails.
+    /// </summary>
+    private async Task EnsurePreviousCaptureReleasedAsync(string caller)
+    {
+        if (_hWaveIn == null || _hWaveIn.IsInvalid)
+        {
+            return;
+        }
+
+        Logger.LogWarning(
+            $"{caller}: Previous capture device still owns buffers; retrying teardown before reopening"
+        );
+        await StopAsync().ConfigureAwait(false);
+        if (_hWaveIn != null && !_hWaveIn.IsInvalid)
+        {
+            throw new InvalidOperationException(
+                "The previous recording is still releasing the audio device. Try again in a moment."
+            );
+        }
     }
 
     [DllImport("winmm.dll")]
@@ -1014,6 +1046,8 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(AudioRecorder));
+        await EnsurePreviousCaptureReleasedAsync("AudioRecorder.StartStreamingAsync")
+            .ConfigureAwait(false);
 
         // Reset debug counters for new session
         _totalBuffersProcessed = 0;
@@ -1194,7 +1228,19 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
                             (int)_waveHeaders[i].dwBytesRecorded
                         );
 
-                        OnAudioChunk?.Invoke(new ArraySegment<byte>(data));
+                        // Guard the subscriber: a throwing handler would skip
+                        // the re-arm below and permanently remove this buffer
+                        // from the capture rotation.
+                        try
+                        {
+                            OnAudioChunk?.Invoke(new ArraySegment<byte>(data));
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogWarning(
+                                $"VAD[ERROR]: OnAudioChunk handler threw: {ex.GetType().Name}: {ex.Message}"
+                            );
+                        }
 
                         // Fire RMS level event for UI visualization
                         if (data.Length >= 2)
@@ -1494,7 +1540,7 @@ public sealed class AudioRecorder : IDisposable, IAsyncDisposable
         }
         else
         {
-            AbandonCaptureHandleSafely("AudioRecorder.DisposeAsync");
+            AbandonCaptureHandleSafely("AudioRecorder.Dispose");
         }
         _disposed = true;
         GC.SuppressFinalize(this);
