@@ -179,12 +179,10 @@ public class TextRefinerTests
     [Fact]
     public async Task RefineAsync_BadRequest_FailsWithoutExposingResponseBody()
     {
+        // Non-retryable 4xx errors should not be retried: a duplicate request
+        // would fail identically and waste a second of the user's time.
         const string privateBody = "private provider diagnostics";
         var handler = new SequencedHandler(
-            new HttpResponseMessage(HttpStatusCode.BadRequest)
-            {
-                Content = new StringContent(privateBody),
-            },
             new HttpResponseMessage(HttpStatusCode.BadRequest)
             {
                 Content = new StringContent(privateBody),
@@ -198,7 +196,7 @@ public class TextRefinerTests
 
         Assert.Contains("Invalid request", error.Message);
         Assert.DoesNotContain(privateBody, error.Message);
-        Assert.Equal(2, handler.RequestCount);
+        Assert.Equal(1, handler.RequestCount);
     }
 
     [Fact]

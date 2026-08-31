@@ -239,7 +239,12 @@ public sealed class TextRefiner : ITextRefiner
             catch (Exception ex)
             {
                 lastException = ex;
-                if (attempts <= 0)
+                // Non-retryable client errors (4xx) and short-output failures are
+                // thrown as InvalidOperationException; retrying them wastes a second
+                // and a duplicate request that fails identically. Only transient
+                // connection failures (HttpRequestException, TaskCanceledException,
+                // TimeoutException) are worth the second attempt.
+                if (ex is InvalidOperationException || attempts <= 0)
                     break;
 
                 try
