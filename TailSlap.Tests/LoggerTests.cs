@@ -52,6 +52,26 @@ public class LoggerTests
     }
 
     [Fact]
+    public void Flush_BurstLargerThanBatchSize_WritesEveryEntry()
+    {
+        // Regression: the writer's batch loop used to dequeue-then-check the
+        // batch cap, silently dropping one entry per full 100-item batch and
+        // leaving the queue-size counter permanently inflated.
+        const int entryCount = 250;
+        string marker = Guid.NewGuid().ToString("N");
+        for (int i = 0; i < entryCount; i++)
+        {
+            Logger.LogWarning($"batch overflow probe {marker} #{i}");
+        }
+        Logger.Flush();
+
+        var issues = Logger.ReadRecentIssues(maxEntries: 1000);
+
+        int found = issues.Count(i => i.Msg.Contains(marker));
+        Assert.Equal(entryCount, found);
+    }
+
+    [Fact]
     public void ReadRecentIssues_NeverThrows()
     {
         // Safe to call even if no log exists yet / files are unreadable.

@@ -185,7 +185,10 @@ public static class Logger
                             }
 
                             int itemsWritten = 0;
-                            while (LogQueue.TryDequeue(out var line) && itemsWritten < BatchSize)
+                            // Check the cap before dequeuing: the reversed order
+                            // would dequeue-and-drop one entry per full batch and
+                            // leave _queueSize permanently inflated.
+                            while (itemsWritten < BatchSize && LogQueue.TryDequeue(out var line))
                             {
                                 Interlocked.Decrement(ref _queueSize);
                                 writer.WriteLine(line);
