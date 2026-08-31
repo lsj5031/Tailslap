@@ -1106,6 +1106,22 @@ public class MainForm : Form
             return;
         }
 
+        // The transcription and streaming triggers are toggles: invoking them
+        // mid-operation would stop the in-flight recording instead of retrying.
+        if (
+            _typelessController.IsRecording
+            || _typelessController.IsProcessing
+            || _transcriptionController.IsRecording
+            || _transcriptionController.IsTranscribing
+            || _realtimeTranscriptionController.IsStreaming
+        )
+        {
+            NotificationService.ShowWarning(
+                "An operation is already in progress. Wait for it to finish, then choose Retry Last Operation."
+            );
+            return;
+        }
+
         if (_retryLastItem != null)
             _retryLastItem.Enabled = false;
 
@@ -1120,7 +1136,7 @@ public class MainForm : Form
         }
         catch (Exception ex)
         {
-            Logger.Error($"Retry operation failed: type={ex.GetType().Name}");
+            Logger.Error($"Retry operation failed: type={ex.GetType().Name}, message={ex.Message}");
             NotificationService.ShowError(
                 "Retry failed. Check your API settings and choose Retry Last Operation again."
             );

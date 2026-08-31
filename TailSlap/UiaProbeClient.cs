@@ -154,6 +154,18 @@ internal static class UiaProbeClient
             return (null, $"Probe process timed out after {timeoutMs + StartupBufferMs}ms.");
         }
 
+        // WaitForExit returning true does not guarantee the redirected pipes
+        // have hit EOF. Bound the drain so a grandchild inheriting the handles
+        // cannot hang this call forever.
+        if (!Task.WhenAll(stdoutTask, stderrTask).Wait(TimeSpan.FromSeconds(2)))
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch { }
+            return (null, "Probe process stream drain timed out.");
+        }
         string stdout = stdoutTask.GetAwaiter().GetResult().Trim();
         string stderr = stderrTask.GetAwaiter().GetResult().Trim();
 
