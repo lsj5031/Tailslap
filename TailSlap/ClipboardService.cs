@@ -16,7 +16,9 @@ public sealed class ClipboardService : IClipboardService
 
     private readonly IConfigService _configService;
 
-    // Performance metrics
+    // Performance metrics. Captures run on per-call STA threads, so access
+    // must be synchronized.
+    private static readonly object _captureStatsLock = new();
     private static readonly System.Collections.Generic.Dictionary<string, int> _captureStats =
         new();
 
@@ -60,14 +62,41 @@ public sealed class ClipboardService : IClipboardService
     [DllImport("user32.dll")]
     private static extern uint GetClipboardSequenceNumber();
 
-    [DllImport("user32.dll")]
-    private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    // Foreign windows may be hung; a plain SendMessage would block the calling
+    // thread (often the UI thread) indefinitely, so every cross-process window
+    // message goes through SendMessageTimeout with SMTO_ABORTIFHUNG.
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd,
+        uint Msg,
+        IntPtr wParam,
+        IntPtr lParam,
+        uint fuFlags,
+        uint uTimeout,
+        out IntPtr lpdwResult
+    );
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int SendMessage(IntPtr hWnd, uint Msg, int wParam, StringBuilder lParam);
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd,
+        uint Msg,
+        IntPtr wParam,
+        StringBuilder lParam,
+        uint fuFlags,
+        uint uTimeout,
+        out IntPtr lpdwResult
+    );
 
-    [DllImport("user32.dll")]
-    private static extern int SendMessage(IntPtr hWnd, uint Msg, out int wParam, out int lParam);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd,
+        uint Msg,
+        out int wParam,
+        out int lParam,
+        uint fuFlags,
+        uint uTimeout,
+        out IntPtr lpdwResult
+    );
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
@@ -106,6 +135,9 @@ public sealed class ClipboardService : IClipboardService
     private const uint WM_GETTEXT = 0x000D;
     private const uint WM_GETTEXTLENGTH = 0x000E;
     private const uint EM_GETSEL = 0x00B0;
+    private const uint SMTO_ABORTIFHUNG = 0x0002;
+    private const uint ForeignQueryTimeoutMs = 1000;
+    private const uint ForeignActionTimeoutMs = 2000;
     private const int INPUT_KEYBOARD = 1;
     private const uint KEYEVENTF_KEYUP = 0x0002;
     private const uint KEYEVENTF_SCANCODE = 0x0008;
@@ -1154,6 +1186,7 @@ public sealed class ClipboardService : IClipboardService
         {
             LogPasteDiagnostic("PasteAsync");
 
+            bool restoredForeground = false;
             var foregroundWindow = NativeMethods.GetForegroundWindow();
             if (
                 expectedForegroundWindow.HasValue
@@ -1186,6 +1219,7 @@ public sealed class ClipboardService : IClipboardService
                 )
                 {
                     foregroundWindow = expectedForegroundWindow.Value;
+                    restoredForeground = true;
                     Logger.Log(
                         $"PasteAsync: Restored expected target window 0x{foregroundWindow.ToInt64():X} before paste"
                     );
@@ -1228,7 +1262,14 @@ public sealed class ClipboardService : IClipboardService
                 return false;
             }
 
-            if (!TailSlap.NativeInputSimulator.WaitForModifierRelease(1000))
+            // WaitForModifierRelease polls with Thread.Sleep; run it on the
+            // thread pool so a held hotkey does not freeze the UI thread the
+            // paste is marshaled to.
+            bool modifiersReleased = await Task.Run(() =>
+                    TailSlap.NativeInputSimulator.WaitForModifierRelease(1000)
+                )
+                .ConfigureAwait(true);
+            if (!modifiersReleased)
             {
                 try
                 {
@@ -1239,7 +1280,12 @@ public sealed class ClipboardService : IClipboardService
                 catch { }
             }
 
-            await Task.Delay(250).ConfigureAwait(true); // Increased delay for better focus restoration
+            if (restoredForeground)
+            {
+                // Only a freshly restored window needs time to accept focus
+                // before it can receive the paste chord.
+                await Task.Delay(250).ConfigureAwait(true);
+            }
             bool success = await PasteWithMultipleMethodsAsync(
                 foregroundWindow,
                 expectedForegroundWindow
@@ -1348,10 +1394,12 @@ public sealed class ClipboardService : IClipboardService
         // land, which keeps a fallback chord from duplicating a successful one.
         string? valueBefore = null;
         string? clipboardText = null;
+        IntPtr verificationWindow = IntPtr.Zero;
         if (!supportsNativePaste)
         {
             clipboardText = TryReadClipboardText();
-            valueBefore = await TryReadFocusedValueAsync();
+            verificationWindow = NativeMethods.GetForegroundWindow();
+            valueBefore = await TryReadFocusedValueAsync(verificationWindow);
             try
             {
                 Logger.Log(
@@ -1409,7 +1457,8 @@ public sealed class ClipboardService : IClipboardService
                     // asynchronous) and decide.
                     string? valueAfter = await PollForPasteDeliveryAsync(
                         valueBefore,
-                        clipboardText
+                        clipboardText,
+                        verificationWindow
                     );
                     if (valueAfter == null)
                     {
@@ -1453,7 +1502,7 @@ public sealed class ClipboardService : IClipboardService
                         try
                         {
                             Logger.Log(
-                                $"{method}: paste verification reported NOT delivered (focused value length {valueBefore.Length} -> {valueAfter.Length} after polling); stopping to avoid a duplicate paste"
+                                $"{method}: paste verification reported NOT delivered (focused value length {valueBefore.Length} -> {valueAfter.Length} after polling)"
                             );
                         }
                         catch { }
@@ -1469,6 +1518,20 @@ public sealed class ClipboardService : IClipboardService
                             catch { }
                             return true;
                         }
+
+                        // The injection itself failed and verification confirmed
+                        // nothing landed, so no paste chord reached the target;
+                        // trying the next method (including the plain-text
+                        // Ctrl+Shift+V last resort) cannot duplicate the text.
+                        try
+                        {
+                            Logger.Log(
+                                $"{method}: injection failed and verification confirmed no delivery; trying the next method"
+                            );
+                        }
+                        catch { }
+                        await Task.Delay(50).ConfigureAwait(true);
+                        continue;
                     }
                 }
                 else if (success)
@@ -1577,9 +1640,87 @@ public sealed class ClipboardService : IClipboardService
                 () =>
                 {
                     NormalizeInputState();
-                    SendMessage(targetWindow, WM_PASTE, IntPtr.Zero, IntPtr.Zero);
+                    TrySendForeignMessage(
+                        targetWindow,
+                        WM_PASTE,
+                        IntPtr.Zero,
+                        IntPtr.Zero,
+                        ForeignActionTimeoutMs,
+                        out _
+                    );
                 }
             );
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TrySendForeignMessage(
+        IntPtr hWnd,
+        uint msg,
+        IntPtr wParam,
+        IntPtr lParam,
+        uint timeoutMs,
+        out IntPtr result
+    )
+    {
+        result = IntPtr.Zero;
+        try
+        {
+            return SendMessageTimeout(
+                    hWnd,
+                    msg,
+                    wParam,
+                    lParam,
+                    SMTO_ABORTIFHUNG,
+                    timeoutMs,
+                    out result
+                ) != IntPtr.Zero;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetWindowTextLength(IntPtr hWnd, out int length)
+    {
+        length = 0;
+        if (
+            !TrySendForeignMessage(
+                hWnd,
+                WM_GETTEXTLENGTH,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                ForeignQueryTimeoutMs,
+                out var result
+            )
+        )
+        {
+            return false;
+        }
+
+        length = (int)result;
+        return true;
+    }
+
+    private static bool TryGetNativeSelection(IntPtr hWnd, out int selStart, out int selEnd)
+    {
+        selStart = 0;
+        selEnd = 0;
+        try
+        {
+            return SendMessageTimeout(
+                    hWnd,
+                    EM_GETSEL,
+                    out selStart,
+                    out selEnd,
+                    SMTO_ABORTIFHUNG,
+                    ForeignQueryTimeoutMs,
+                    out _
+                ) != IntPtr.Zero;
         }
         catch
         {
@@ -1592,27 +1733,69 @@ public sealed class ClipboardService : IClipboardService
         Action pasteAction
     )
     {
-        int lengthBefore = (int)SendMessage(
-            targetWindow,
-            WM_GETTEXTLENGTH,
-            IntPtr.Zero,
-            IntPtr.Zero
-        );
+        if (!TryGetWindowTextLength(targetWindow, out int lengthBefore))
+        {
+            // The target is not answering messages, so pasting into it or
+            // reading the result back would only pile onto a hung queue.
+            // Nothing has been injected yet, so a later method may retry.
+            try
+            {
+                Logger.LogWarning(
+                    "Paste verification skipped: target did not answer WM_GETTEXTLENGTH"
+                );
+            }
+            catch { }
+            return false;
+        }
+
+        bool hadSelection =
+            TryGetNativeSelection(targetWindow, out int selStartBefore, out int selEndBefore)
+            && selEndBefore > selStartBefore;
+
         pasteAction();
         await Task.Delay(75).ConfigureAwait(true);
-        int lengthAfter = (int)SendMessage(
-            targetWindow,
-            WM_GETTEXTLENGTH,
-            IntPtr.Zero,
-            IntPtr.Zero
-        );
-        bool delivered = lengthAfter > lengthBefore;
+
+        if (!TryGetWindowTextLength(targetWindow, out int lengthAfter))
+        {
+            // The paste chord was already sent. Treating a lost read-back as a
+            // failure would trigger another paste method and risk duplicating
+            // the text, so trust the injection.
+            try
+            {
+                Logger.LogWarning(
+                    "Paste verification inconclusive after injection; treating the attempt as delivered to avoid a duplicate paste"
+                );
+            }
+            catch { }
+            return true;
+        }
+
+        // Pasting over a highlighted selection can shrink or preserve the
+        // total length (refined text is often shorter than the selection it
+        // replaces), so any length change counts as delivered. An equal-length
+        // replacement is detected by the selection collapsing or moving.
+        bool delivered = lengthAfter != lengthBefore;
+        if (!delivered && hadSelection)
+        {
+            if (TryGetNativeSelection(targetWindow, out int selStartAfter, out int selEndAfter))
+            {
+                delivered =
+                    selStartAfter == selEndAfter
+                    || selStartAfter != selStartBefore
+                    || selEndAfter != selEndBefore;
+            }
+            else
+            {
+                delivered = true;
+            }
+        }
+
         if (!delivered)
         {
             try
             {
                 Logger.LogWarning(
-                    $"Paste verification failed: target text length unchanged ({lengthBefore}->{lengthAfter})"
+                    $"Paste verification failed: target text unchanged ({lengthBefore}->{lengthAfter})"
                 );
             }
             catch { }
@@ -1874,33 +2057,24 @@ public sealed class ClipboardService : IClipboardService
             var ctrl = ResolveFocusHwnd(hwndForeground);
             if (ctrl == IntPtr.Zero)
                 return null;
-            int len = 0;
-            try
-            {
-                len = (int)SendMessage(ctrl, WM_GETTEXTLENGTH, IntPtr.Zero, IntPtr.Zero);
-            }
-            catch
-            {
-                len = 0;
-            }
-            if (len <= 0)
+            if (!TryGetWindowTextLength(ctrl, out int len) || len <= 0)
                 return null;
-            int selStart = 0,
-                selEnd = 0;
-            try
-            {
-                SendMessage(ctrl, EM_GETSEL, out selStart, out selEnd);
-            }
-            catch
-            {
-                selStart = selEnd = 0;
-            }
+            if (!TryGetNativeSelection(ctrl, out int selStart, out int selEnd))
+                return null;
             if (selEnd <= selStart)
                 return null;
             var sb = new StringBuilder(len + 1);
             try
             {
-                SendMessage(ctrl, WM_GETTEXT, sb.Capacity, sb);
+                SendMessageTimeout(
+                    ctrl,
+                    WM_GETTEXT,
+                    (IntPtr)sb.Capacity,
+                    sb,
+                    SMTO_ABORTIFHUNG,
+                    ForeignQueryTimeoutMs,
+                    out _
+                );
             }
             catch { }
             var value = sb.ToString();
@@ -2078,11 +2252,14 @@ public sealed class ClipboardService : IClipboardService
                     );
                     break;
                 case CopyMethod.WmCopy:
-                    try
-                    {
-                        SendMessage(targetForMessage, WM_COPY, IntPtr.Zero, IntPtr.Zero);
-                    }
-                    catch { }
+                    TrySendForeignMessage(
+                        targetForMessage,
+                        WM_COPY,
+                        IntPtr.Zero,
+                        IntPtr.Zero,
+                        ForeignActionTimeoutMs,
+                        out _
+                    );
                     break;
                 case CopyMethod.CtrlInsert:
                     NormalizeInputState();
@@ -2140,7 +2317,15 @@ public sealed class ClipboardService : IClipboardService
                         }
                     }
                     catch { }
-                    break;
+                    // The per-attempt waits above already spent the timeout
+                    // budget; falling through to the shared wait below would
+                    // double it for the same unchanged clipboard sequence.
+                    try
+                    {
+                        Logger.Log($"TryCopyAndRead no change: method={method}");
+                    }
+                    catch { }
+                    return false;
                 case CopyMethod.DoubleCtrlC:
                     NormalizeInputState();
                     _ = SendChordScancode(new ushort[] { 0x11 }, 0x43);
@@ -2211,6 +2396,7 @@ public sealed class ClipboardService : IClipboardService
     {
         clipboardChanged = false;
         var start = Environment.TickCount;
+        int changedAt = 0;
         while (Environment.TickCount - start < timeoutMs)
         {
             uint seqNow = 0;
@@ -2221,7 +2407,11 @@ public sealed class ClipboardService : IClipboardService
             catch { }
             if (IsClipboardSequenceChanged(seqBefore, seqNow))
             {
-                clipboardChanged = true;
+                if (!clipboardChanged)
+                {
+                    clipboardChanged = true;
+                    changedAt = Environment.TickCount;
+                }
                 try
                 {
                     if (Clipboard.ContainsText())
@@ -2232,6 +2422,12 @@ public sealed class ClipboardService : IClipboardService
                     }
                 }
                 catch { }
+
+                // The clipboard changed but holds no text (files, an image,
+                // or an owner mid-update). Allow a short grace for the owner
+                // to publish text, then stop burning the remaining timeout.
+                if (Environment.TickCount - changedAt >= 200)
+                    return null;
             }
             Thread.Sleep(25);
         }
@@ -2591,7 +2787,8 @@ public sealed class ClipboardService : IClipboardService
 
     private static async System.Threading.Tasks.Task<string?> PollForPasteDeliveryAsync(
         string valueBefore,
-        string? clipboardText
+        string? clipboardText,
+        IntPtr expectedWindow
     )
     {
         // Browsers commit a paste asynchronously in the renderer process, so a
@@ -2602,7 +2799,7 @@ public sealed class ClipboardService : IClipboardService
         // safety net for the previous method's late commit: any change stops
         // the loop, so a slow paste from method N is noticed while verifying
         // method N+1 and never duplicated.
-        string? latest = await TryReadFocusedValueAsync();
+        string? latest = await TryReadFocusedValueAsync(expectedWindow);
         if (latest == null)
         {
             return null;
@@ -2616,7 +2813,7 @@ public sealed class ClipboardService : IClipboardService
             }
 
             await Task.Delay(150).ConfigureAwait(true);
-            latest = await TryReadFocusedValueAsync();
+            latest = await TryReadFocusedValueAsync(expectedWindow);
             if (latest == null)
             {
                 return null;
@@ -2626,11 +2823,29 @@ public sealed class ClipboardService : IClipboardService
         return latest;
     }
 
-    private static async System.Threading.Tasks.Task<string?> TryReadFocusedValueAsync()
+    private static async System.Threading.Tasks.Task<string?> TryReadFocusedValueAsync(
+        IntPtr expectedWindow
+    )
     {
         var foregroundWindow = NativeMethods.GetForegroundWindow();
         if (foregroundWindow == IntPtr.Zero)
         {
+            return null;
+        }
+
+        // The before/after values must come from the same window tree the
+        // paste targeted. If focus moved between reads, comparing values from
+        // different windows would report a spurious "delivered" result, so
+        // treat the verification as lost instead.
+        if (expectedWindow != IntPtr.Zero && foregroundWindow != expectedWindow)
+        {
+            try
+            {
+                Logger.LogWarning(
+                    "TryReadFocusedValueAsync: foreground window changed; paste verification lost"
+                );
+            }
+            catch { }
             return null;
         }
 
@@ -2801,17 +3016,27 @@ public sealed class ClipboardService : IClipboardService
     private static void RecordCaptureSuccess(string method, bool success)
     {
         string key = success ? $"{method}_success" : $"{method}_fail";
-        _captureStats.TryGetValue(key, out int count);
-        _captureStats[key] = count + 1;
+        string? statsSnapshot = null;
+        lock (_captureStatsLock)
+        {
+            _captureStats.TryGetValue(key, out int count);
+            _captureStats[key] = count + 1;
 
-        // Log stats every 10 captures
-        if ((_captureStats.Values.Sum() % 10) == 0)
+            // Log stats every 10 captures
+            if ((_captureStats.Values.Sum() % 10) == 0)
+            {
+                statsSnapshot = string.Join(
+                    ", ",
+                    _captureStats.Select(kvp => $"{kvp.Key}={kvp.Value}")
+                );
+            }
+        }
+
+        if (statsSnapshot != null)
         {
             try
             {
-                Logger.Log(
-                    $"Capture stats: {string.Join(", ", _captureStats.Select(kvp => $"{kvp.Key}={kvp.Value}"))}"
-                );
+                Logger.Log($"Capture stats: {statsSnapshot}");
             }
             catch { }
         }
