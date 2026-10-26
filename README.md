@@ -1,5 +1,14 @@
 # TailSlap
 
+> [!IMPORTANT]
+> **TailSlap (tailslap-lite) is deprecated and no longer actively developed.**
+> Its Rust successor, `tailslap-rs`, is deprecated as well. Existing builds and
+> source remain available for reference. New users should use
+> [HEX](https://github.com/anomalyco/hex), a local-first, MIT-licensed dictation
+> app built on `transcribe.cpp`, with streaming transcription, Modes, history,
+> signed auto-updates, and macOS, Windows, and Linux builds. HEX's Windows and
+> Linux builds are betas, and its Windows installer is not yet code-signed.
+
 <div align="center">
   <img src="TailSlap/Icons/icon.png" alt="TailSlap Logo" width="128" height="128">
   
@@ -31,6 +40,10 @@
 - **Auto-start Option**: Launch on Windows startup
 
 ## Installation
+
+> TailSlap is deprecated, along with `tailslap-rs`. New users should install
+> [HEX](https://github.com/anomalyco/hex) instead. The instructions below are
+> retained for existing builds and reference installs.
 
 1. Download one of these assets from the [releases page](https://github.com/lsj5031/Tailslap/releases):
    - `TailSlap-self-contained-win-x64.zip`: Recommended for most users. No separate .NET install required.
